@@ -4,7 +4,6 @@ import { useEffect } from "react";
 import { ThemeSection } from "./ThemeSection";
 import { DisplaySection } from "./DisplaySection";
 import { SearchSection } from "./SearchSection";
-import { SortSection } from "./SortSection";
 import { FoldersSection } from "./FoldersSection";
 import { EncoderSection } from "./EncoderSection";
 import { StatsSection } from "./StatsSection";
@@ -25,9 +24,8 @@ interface SettingsDrawerProps {
  * 1. Theme
  * 2. Display (column count, tile scale, animation level)
  * 3. Search (similar / semantic result counts, tag filter mode)
- * 4. Sort order
- * 5. Folders (add / remove / toggle / list)
- * 6. Reset
+ * 4. Folders (add / remove / toggle / list)
+ * 5. Reset
  *
  * The shell here owns purely structural concerns: enter/exit animation,
  * backdrop click-to-dismiss, the Escape-key handler, header chrome, and
@@ -84,7 +82,6 @@ export function SettingsDrawer({ open, onClose }: SettingsDrawerProps) {
               <ThemeSection />
               <DisplaySection />
               <SearchSection />
-              <SortSection />
               <FoldersSection />
               <EncoderSection />
               <StatsSection />

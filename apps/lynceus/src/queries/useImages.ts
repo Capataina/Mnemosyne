@@ -5,8 +5,6 @@ import {
   fetchImages,
   removeTagFromImage,
   setManualColSpan,
-  setManualOrder,
-  type SortMode,
 } from "../services/images";
 
 export function useImages(filters?: {
@@ -15,13 +13,6 @@ export function useImages(filters?: {
   /** When true, match images that have ALL selected tags (AND).
    *  When false (default), match images with ANY selected tag (OR). */
   matchAllTags?: boolean;
-  /** User's preferred sort. Defaults to "id" (stable). */
-  sortMode?: SortMode;
-  /** Seed for shuffle mode. Same seed always produces the same order.
-   *  Bumped only on deliberate refresh actions, not on indexing-progress
-   *  invalidations — that way progressive thumbnail loading doesn't
-   *  cause the grid to reshuffle every couple of seconds. */
-  shuffleSeed?: number;
 }) {
   const tagIds = filters?.tagIds ?? [];
   // searchText is intentionally NOT in the queryKey: the backend ignores
@@ -30,17 +21,16 @@ export function useImages(filters?: {
   // data. We still pass it through to fetchImages for future-proofing.
   const searchText = filters?.searchText ?? "";
   const matchAllTags = filters?.matchAllTags ?? false;
-  const sortMode = filters?.sortMode ?? "id";
-  const shuffleSeed = filters?.shuffleSeed ?? 0;
 
   return useQuery<ImageItem[]>({
-    // Include sortMode + shuffleSeed in the key so a sort change or
-    // a deliberate reshuffle invalidates the cache. Indexing-progress
-    // invalidates with the SAME key, which means the seed stays
-    // constant and the order stays stable.
-    queryKey: ["images", tagIds, matchAllTags, sortMode, shuffleSeed],
-    queryFn: () =>
-      fetchImages(tagIds, searchText, matchAllTags, sortMode, shuffleSeed),
+    // Ordering (shuffle) and thumbnail-gating happen client-side in
+    // useShuffledFeed, keyed by a seed the route owns — so this query is
+    // just the raw filtered catalogue in stable id order. Indexing-
+    // progress invalidations refetch this same key; because the shuffle
+    // key is derived per-image, existing tiles never move — only
+    // newly-thumbnailed images pop into the feed.
+    queryKey: ["images", tagIds, matchAllTags],
+    queryFn: () => fetchImages(tagIds, searchText, matchAllTags),
     enabled: true,
   });
 }
@@ -87,45 +77,11 @@ export function useAssignTagToImage() {
   });
 }
 
-/**
- * Persist a drag-reorder. Optimistically stamps `manualOrder` on the
- * cached images so "custom" sort mode's re-sort keeps the just-dropped
- * order immediately — without this, the grid would snap back to the
- * pre-drag order for one frame while the mutation round-trips.
- */
-export function useSetManualOrder() {
-  const queryClient = useQueryClient();
-
-  return useMutation({
-    mutationFn: (orderedIds: number[]) => setManualOrder(orderedIds),
-
-    onMutate: async (orderedIds) => {
-      await queryClient.cancelQueries({ queryKey: ["images"] });
-      const prevImages = queryClient.getQueryData(["images"]);
-
-      const positionById = new Map(orderedIds.map((id, i) => [id, i]));
-      queryClient.setQueriesData<ImageItem[]>(
-        { queryKey: ["images"], exact: false },
-        (old = []) =>
-          old.map((img) =>
-            positionById.has(img.id)
-              ? { ...img, manualOrder: positionById.get(img.id) }
-              : img,
-          ),
-      );
-
-      return { prevImages };
-    },
-
-    onError: (_err, _vars, context) => {
-      if (context?.prevImages) {
-        queryClient.setQueryData(["images"], context.prevImages);
-      }
-    },
-  });
-}
-
-/** Persist a drag-resize. Same optimistic-stamp reasoning as above. */
+/** Persist a drag-resize. Optimistically stamps `manualColSpan` on the
+ *  cached images so the resized tile keeps its new width immediately
+ *  instead of snapping back for one frame while the mutation round-trips.
+ *  Resize is the only manual layout property that persists (position is
+ *  re-rolled per feed entry). */
 export function useSetManualColSpan() {
   const queryClient = useQueryClient();
 

@@ -1,15 +1,16 @@
-import { useEffect, useState, useMemo, Profiler } from "react";
+import { useEffect, useRef, useState, useMemo, Profiler } from "react";
 import Masonry from "../components/Masonry";
 import {
   useImages,
   useAssignTagToImage,
   useRemoveTagFromImage,
-  useSetManualOrder,
   useSetManualColSpan,
 } from "../queries/useImages";
 import { useTieredSimilarImages } from "../queries/useSimilarImages";
 import { useSemanticSearch } from "../queries/useSemanticSearch";
 import { useDebouncedValue } from "../hooks/useDebouncedValue";
+import { useShuffledFeed, newShuffleSeed } from "../hooks/useShuffledFeed";
+import { useIndexingStatus } from "../hooks/useIndexingStatus";
 import { ImageItem, Tag } from "../types";
 import { AnimatePresence, motion } from "framer-motion";
 import { useLocation, useNavigate } from "react-router";
@@ -95,19 +96,40 @@ export default function Home() {
   const shouldUseSemanticSearch =
     semanticQuery.length > 0 && !semanticQuery.startsWith("#") && !selectedItem;
 
-  // shuffleSeed bumped only on deliberate refresh actions (currently:
-  // closing the inspect modal). Indexing-progress invalidations
-  // refetch with the SAME seed so the order stays stable through
-  // background updates.
-  const [shuffleSeed, setShuffleSeed] = useState<number>(0);
+  // The feed re-shuffles on each "entry": launch (a random initial seed)
+  // and returning to the feed from a search / similar view (the effect
+  // below). Indexing-progress refetches keep the SAME seed, so existing
+  // tiles hold their positions and only newly-thumbnailed images pop in.
+  const [shuffleSeed, setShuffleSeed] = useState<number>(() =>
+    newShuffleSeed(),
+  );
+  // In-session drag-reorder: a full id ordering applied on top of the
+  // shuffle, NOT persisted — a reshuffle (new entry) clears it.
+  const [sessionOrder, setSessionOrder] = useState<number[] | null>(null);
 
   const images = useImages({
     tagIds: searchTags.map((t) => t.id),
     searchText: searchText,
     matchAllTags: prefs.tagFilterMode === "all",
-    sortMode: prefs.sortMode,
-    shuffleSeed,
   });
+
+  // The main feed: stable-key shuffle + thumbnail-gate + any in-session
+  // reorder. Search / similar results bypass this and keep their ranking.
+  const feed = useShuffledFeed(images.data, shuffleSeed, sessionOrder);
+  const { isIndexing } = useIndexingStatus();
+
+  // Re-shuffle whenever the user leaves a results view (search or
+  // similar) back to the main feed. Launch is covered by the random
+  // initial seed above.
+  const isResultsView = !!selectedItem || shouldUseSemanticSearch;
+  const prevResultsView = useRef(isResultsView);
+  useEffect(() => {
+    if (prevResultsView.current && !isResultsView) {
+      setShuffleSeed(newShuffleSeed());
+      setSessionOrder(null);
+    }
+    prevResultsView.current = isResultsView;
+  }, [isResultsView]);
 
   // Per-image notes (Phase 11). Lazy-loaded when the inspector opens.
   const [activeNotes, setActiveNotes] = useState<string>("");
@@ -141,7 +163,6 @@ export default function Home() {
   const deleteTagMutation = useDeleteTag();
   const assignTagMutation = useAssignTagToImage();
   const removeTagMutation = useRemoveTagFromImage();
-  const setManualOrderMutation = useSetManualOrder();
   const setManualColSpanMutation = useSetManualColSpan();
   // Pass the user's chosen image-image encoder so switching it in
   // Settings auto-refetches (the encoder_id is part of the query key).
@@ -167,6 +188,7 @@ export default function Home() {
         id: sim.id,
         url: sim.url,
         thumbnailUrl: sim.thumbnailUrl,
+        hasThumbnail: true,
         width: sim.width,
         height: sim.height,
         name: sim.name || "",
@@ -180,6 +202,7 @@ export default function Home() {
         id: sim.id,
         url: sim.url,
         thumbnailUrl: sim.thumbnailUrl,
+        hasThumbnail: true,
         width: sim.width,
         height: sim.height,
         name: sim.name || "",
@@ -187,14 +210,14 @@ export default function Home() {
       }));
     }
 
-    // 3. Default: show all images (with optional tag filter)
-    return images.data;
+    // 3. Default: the main feed (shuffled + thumbnail-gated + reordered).
+    return feed;
   }, [
     selectedItem,
     tieredSimilarImages.data,
     shouldUseSemanticSearch,
     semanticSearchResults.data,
-    images.data,
+    feed,
   ]);
 
   // Find selected item from URL.
@@ -233,22 +256,16 @@ export default function Home() {
   // Determine if we're in a loading state
   const isSearchLoading = shouldUseSemanticSearch && semanticSearchResults.isFetching;
 
-  // Drag-to-reorder is only offered on the full, unfiltered catalogue
-  // in "custom" sort mode. `setManualOrder` persists the WHOLE visible
-  // ordering as a fresh 0..N-1 sequence (see its doc comment in
-  // services/images.ts) — reordering a tag-filtered or search-result
-  // subset would silently clobber the relative order of every image
-  // outside that subset, so the affordance is withheld until the view
-  // is the true unfiltered set.
+  // Drag-to-reorder is a live in-session nudge, offered on the full,
+  // unfiltered feed only — reordering a tag-filtered or search subset
+  // is ambiguous against the shuffle, so it's withheld there. Not
+  // persisted: a reshuffle (new entry) clears it.
   const reorderEnabled =
-    prefs.sortMode === "custom" &&
-    !selectedItem &&
-    !shouldUseSemanticSearch &&
-    searchTags.length === 0;
+    !selectedItem && !shouldUseSemanticSearch && searchTags.length === 0;
 
   const handleReorder = (orderedIds: number[]) => {
     recordAction("masonry_reorder", { count: orderedIds.length });
-    setManualOrderMutation.mutate(orderedIds);
+    setSessionOrder(orderedIds);
   };
 
   const handleResizeCommit = (itemId: number, colSpan: number | null) => {
@@ -259,13 +276,8 @@ export default function Home() {
   const handleClose = () => {
     recordAction("image_close", { id: selectedItem?.id });
     setIsInspecting(false);
-    // Bump the shuffle seed so the next render produces a fresh order
-    // when sortMode is "shuffle". For other sort modes this is a
-    // no-op because the cache key includes shuffleSeed but the sort
-    // function ignores it.
-    if (prefs.sortMode === "shuffle") {
-      setShuffleSeed(Date.now() & 0x7fffffff);
-    }
+    // Navigating home clears selectedItem; the entry effect above treats
+    // that as a return to the feed and re-shuffles.
     navigate("/");
   };
 
@@ -430,11 +442,26 @@ export default function Home() {
           </div>
         </div>
 
-        {/* First-launch / empty-state hint */}
+        {/* First-launch / empty-state hint. The feed is thumbnail-gated,
+            so during early indexing it can be empty while images already
+            exist — show an "indexing" state then, and "no images yet"
+            only when the library is genuinely empty and nothing is in
+            flight. */}
         {!selectedItem &&
           !shouldUseSemanticSearch &&
-          images.data &&
-          images.data.length === 0 && (
+          feed.length === 0 &&
+          (isIndexing || (images.data && images.data.length > 0) ? (
+            <div className="mb-8 rounded-xl bg-card p-6 text-center shadow-md border border-border">
+              <h2 className="mb-2 text-lg font-semibold text-foreground">
+                Indexing your library…
+              </h2>
+              <p className="mb-4 text-sm text-muted-foreground">
+                Tiles appear here as each image's thumbnail is generated.
+                You can keep using the app while indexing runs in the
+                background.
+              </p>
+            </div>
+          ) : images.data && images.data.length === 0 ? (
             <div className="mb-8 rounded-xl bg-card p-6 text-center shadow-md border border-border">
               <h2 className="mb-2 text-lg font-semibold text-foreground">
                 No images yet
@@ -445,7 +472,7 @@ export default function Home() {
                 and let it sweep through every subfolder.
               </p>
             </div>
-          )}
+          ) : null)}
 
         {/* Section header when viewing similar images */}
         <AnimatePresence>

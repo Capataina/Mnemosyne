@@ -23,8 +23,13 @@ export type ImageItem = {
   id: number;
   /** Full resolution image URL */
   url: string;
-  /** Thumbnail image URL (for grid display) */
+  /** Base (smallest-bucket) thumbnail URL for grid display. Undefined
+   *  until the thumbnail has been generated — see `hasThumbnail`. */
   thumbnailUrl?: string;
+  /** True once a thumbnail exists on disk. The main feed only shows
+   *  images where this is true, so nothing pops in blank during
+   *  indexing. */
+  hasThumbnail: boolean;
   width: number;
   height: number;
   name: string;

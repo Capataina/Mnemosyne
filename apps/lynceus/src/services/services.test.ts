@@ -147,9 +147,13 @@ describe("services/images", () => {
     expect(items).toHaveLength(1);
     expect(items[0].url).toContain("photo.jpg");
     expect(items[0].thumbnailUrl).toContain("thumb.jpg");
+    expect(items[0].hasThumbnail).toBe(true);
   });
 
-  it("fetchImages falls back to full-image URL when no thumbnail_path", async () => {
+  it("fetchImages leaves thumbnailUrl undefined and hasThumbnail false when no thumbnail_path", async () => {
+    // The feed is thumbnail-gated on `hasThumbnail`, so an un-thumbnailed
+    // row must report false and carry no thumbnail URL (it's held back
+    // from the grid until its thumbnail lands, then pops in).
     const { fetchImages } = await import("./images");
     mockInvoke.mockResolvedValueOnce([
       {
@@ -162,7 +166,8 @@ describe("services/images", () => {
       },
     ]);
     const items = await fetchImages();
-    expect(items[0].thumbnailUrl).toContain("photo.jpg");
+    expect(items[0].hasThumbnail).toBe(false);
+    expect(items[0].thumbnailUrl).toBeUndefined();
   });
 
   it("setScanRoot sends only the path argument", async () => {

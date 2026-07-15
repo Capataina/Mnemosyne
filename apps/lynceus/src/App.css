@@ -158,7 +158,13 @@
 
 @layer base {
   * {
-    @apply border-border outline-ring/50;
+    @apply border-border;
+  }
+  /* Scope the accent outline to actual keyboard focus. Applying it to
+   * every element (the shadcn default) meant the amber ring caught light
+   * through the old 3D-tilt transform — the "yellow line" edge flare. */
+  *:focus-visible {
+    @apply outline-ring/50;
   }
   body {
     @apply bg-background text-foreground;

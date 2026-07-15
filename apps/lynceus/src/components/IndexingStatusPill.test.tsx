@@ -1,33 +1,35 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import type { IndexingProgress } from "../hooks/useIndexingProgress";
+import type { IndexingStatus } from "../hooks/useIndexingStatus";
 
 /**
  * Tests for the IndexingStatusPill component.
  *
- * The pill listens to the `useIndexingProgress` hook for state, then
- * decides whether to render and how. We mock the hook so each test
- * can inject any IndexingProgress shape we want and exercise the
- * rendering / visibility rules without firing real Tauri events.
+ * The pill reads the `useIndexingStatus` hook and decides whether to
+ * render and how. We mock the hook so each test injects a status shape
+ * and exercises the visibility / rendering rules without real Tauri
+ * events or DB queries. Displayed numbers come from `overall` (the
+ * DB-derived aggregate), never from a raw event — that's the whole point
+ * of the single-source-of-truth rework.
  */
 
-// Mutable mock value the mocked hook will return.
-let mockProgressState: IndexingProgress | null = null;
-
-vi.mock("../hooks/useIndexingProgress", async () => {
-  // We import the type by re-exporting; runtime impl is replaced by
-  // the mock below.
+function status(overrides: Partial<IndexingStatus>): IndexingStatus {
   return {
-    useIndexingProgress: () => ({
-      progress: mockProgressState,
-      isIndexing:
-        mockProgressState !== null &&
-        mockProgressState.phase !== "ready" &&
-        mockProgressState.phase !== "error",
-    }),
+    isIndexing: false,
+    phase: null,
+    message: null,
+    overall: { processed: 0, total: 0, fraction: 0 },
+    stats: null,
+    ...overrides,
   };
-});
+}
+
+let mockStatus: IndexingStatus = status({});
+
+vi.mock("../hooks/useIndexingStatus", () => ({
+  useIndexingStatus: () => mockStatus,
+}));
 
 import { IndexingStatusPill } from "./IndexingStatusPill";
 
@@ -41,104 +43,69 @@ function renderPill() {
 }
 
 beforeEach(() => {
-  mockProgressState = null;
+  mockStatus = status({});
 });
 
 describe("IndexingStatusPill", () => {
-  it("renders nothing when no progress event has arrived", () => {
-    mockProgressState = null;
+  it("renders nothing when idle (no phase, not indexing)", () => {
+    mockStatus = status({});
     renderPill();
     expect(screen.queryByText(/Scanning/i)).not.toBeInTheDocument();
-    expect(screen.queryByText(/Downloading/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Encoding/i)).not.toBeInTheDocument();
   });
 
-  it("renders 'Scanning' label during the scan phase", () => {
-    mockProgressState = {
-      phase: "scan",
-      processed: 47,
-      total: 1500,
-      message: null,
-    };
+  it("renders 'Scanning' during the scan phase", () => {
+    mockStatus = status({ isIndexing: true, phase: "scan" });
     renderPill();
     expect(screen.getByText(/Scanning/i)).toBeInTheDocument();
   });
 
-  it("renders 'Downloading models' label during model download", () => {
-    mockProgressState = {
-      phase: "model-download",
-      processed: 100_000_000,
-      total: 1_200_000_000,
-      message: "Downloading model_image.onnx — 100 / 1200 MB",
-    };
+  it("shows the DB-derived aggregate percentage while encoding", () => {
+    mockStatus = status({
+      isIndexing: true,
+      phase: "encode",
+      overall: { processed: 61, total: 84, fraction: 61 / 84 },
+    });
     renderPill();
-    expect(screen.getByText(/Downloading models/i)).toBeInTheDocument();
+    expect(screen.getByText(/Encoding embeddings/i)).toBeInTheDocument();
+    // 61 / 84 = 72.6% → rounds to 73%.
+    expect(screen.getByText("73%")).toBeInTheDocument();
   });
 
-  it("formats counter as MB during model-download phase", () => {
-    mockProgressState = {
-      phase: "model-download",
-      processed: 100 * 1_048_576,
-      total: 1200 * 1_048_576,
-      message: null,
-    };
-    renderPill();
-    // 100 / 1200 MB
-    expect(screen.getByText(/100 \/ 1200 MB/)).toBeInTheDocument();
-  });
-
-  it("formats counter as plain count for non-download phases", () => {
-    mockProgressState = {
-      phase: "thumbnail",
-      processed: 247,
-      total: 1500,
-      message: null,
-    };
-    renderPill();
-    expect(screen.getByText("247 / 1500")).toBeInTheDocument();
-  });
-
-  it("renders 'Ready' label with completion message when done", () => {
-    mockProgressState = {
-      phase: "ready",
-      processed: 1842,
-      total: 1842,
-      message: "1842 images indexed",
-    };
-    renderPill();
-    expect(screen.getByText(/Ready/i)).toBeInTheDocument();
-    expect(screen.getByText("1842 images indexed")).toBeInTheDocument();
-  });
-
-  it("renders 'Error' label when phase is error", () => {
-    mockProgressState = {
+  it("renders the 'Error' state when phase is error", () => {
+    mockStatus = status({
       phase: "error",
-      processed: 0,
-      total: 0,
       message: "Indexing failed: model not found",
-    };
+    });
     renderPill();
     expect(screen.getByText(/Error/i)).toBeInTheDocument();
   });
 
-  it("does not render the counter when total is 0 (indeterminate)", () => {
-    mockProgressState = {
-      phase: "scan",
-      processed: 0,
-      total: 0,
-      message: "Starting...",
-    };
+  it("does not show a percentage bar when not actively indexing", () => {
+    mockStatus = status({ phase: "error", message: "boom" });
     renderPill();
-    // No "0 / 0" should appear.
-    expect(screen.queryByText("0 / 0")).not.toBeInTheDocument();
+    expect(screen.queryByText(/%$/)).not.toBeInTheDocument();
   });
 
-  it("uses progress.message as the title attribute when set", () => {
-    mockProgressState = {
+  it("shows a 'Ready' confirmation once a run finishes", () => {
+    mockStatus = status({ isIndexing: true, phase: "encode" });
+    const { rerender } = renderPill();
+    // Run completes: still on the encode phase label, but no longer active.
+    mockStatus = status({ isIndexing: false, phase: "encode" });
+    rerender(
+      <QueryClientProvider client={new QueryClient()}>
+        <IndexingStatusPill />
+      </QueryClientProvider>,
+    );
+    expect(screen.getByText(/Ready/i)).toBeInTheDocument();
+  });
+
+  it("uses the status message as the title attribute", () => {
+    mockStatus = status({
+      isIndexing: true,
       phase: "scan",
-      processed: 50,
-      total: 100,
       message: "Scanning /Users/me/photos",
-    };
+    });
     const { container } = renderPill();
     const pill = container.querySelector("[title]");
     expect(pill).toHaveAttribute("title", "Scanning /Users/me/photos");

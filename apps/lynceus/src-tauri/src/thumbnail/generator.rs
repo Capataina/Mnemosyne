@@ -14,10 +14,18 @@ use fast_image_resize::{
 
 /// Thumbnail generator that creates smaller versions of images for faster loading.
 /// Follows the same pattern as the Encoder struct for consistency.
+///
+/// Sizing is **width-based**, not a bounding box. The masonry grid
+/// derives each tile's *height* from the original image dimensions
+/// (stored in the DB), so a thumbnail only ever needs enough pixels for
+/// its rendered *width*. A single `max_width` cap — rather than the old
+/// `max_width × max_height` box — is what keeps a portrait or a
+/// multi-column tile crisp instead of over-shrinking it to satisfy an
+/// arbitrary height bound. `max_width` is the *base* bucket width
+/// (480); larger buckets are produced on demand via `ensure_variant`.
 pub struct ThumbnailGenerator {
     thumbnail_dir: PathBuf,
     max_width: u32,
-    max_height: u32,
 }
 
 impl ThumbnailGenerator {
@@ -25,35 +33,31 @@ impl ThumbnailGenerator {
     ///
     /// # Arguments
     /// * `thumbnail_dir` - Directory where thumbnails will be stored
-    /// * `max_width` - Maximum width for thumbnails (maintains aspect ratio)
-    /// * `max_height` - Maximum height for thumbnails (maintains aspect ratio)
-    pub fn new(
-        thumbnail_dir: &Path,
-        max_width: u32,
-        max_height: u32,
-    ) -> Result<Self, Box<dyn Error>> {
+    /// * `max_width` - Maximum thumbnail width (aspect ratio preserved,
+    ///   never upscaled). Height follows from the source aspect ratio.
+    pub fn new(thumbnail_dir: &Path, max_width: u32) -> Result<Self, Box<dyn Error>> {
         // Create thumbnail directory if it doesn't exist
         fs::create_dir_all(thumbnail_dir)?;
 
         info!("=== Initializing ThumbnailGenerator ===");
         info!("Thumbnail directory: {}", thumbnail_dir.to_string_lossy());
-        info!("Max dimensions: {}x{}", max_width, max_height);
+        info!("Max width: {}", max_width);
 
         Ok(ThumbnailGenerator {
             thumbnail_dir: thumbnail_dir.to_path_buf(),
             max_width,
-            max_height,
         })
     }
 
-    /// Generate a thumbnail for a single image.
+    /// Generate a base thumbnail for a single image.
     ///
     /// Returns the thumbnail path and the original image dimensions
     /// (width, height). The thumbnail lands in
     /// `<thumbnail_dir>/root_<root_id>/thumb_<image_id>.jpg` when a
     /// root_id is supplied (Phase 9 per-root organisation), or in
     /// `<thumbnail_dir>/thumb_<image_id>.jpg` when None (legacy
-    /// fallback for un-rooted rows).
+    /// fallback for un-rooted rows). This is the *base* (`self.max_width`,
+    /// 480) bucket; on-demand larger buckets go through `ensure_variant`.
     #[tracing::instrument(name = "thumbnail.generate", skip(self, image_path), fields(image_id, root_id))]
     pub fn generate_thumbnail(
         &self,
@@ -63,39 +67,15 @@ impl ThumbnailGenerator {
     ) -> Result<ThumbnailResult, Box<dyn Error>> {
         // Determine thumbnail filename based on image ID and per-root subfolder
         let thumbnail_filename = format!("thumb_{}.jpg", image_id);
-        let thumbnail_path = match root_id {
-            Some(rid) => {
-                let dir = self.thumbnail_dir.join(format!("root_{rid}"));
-                if !dir.exists() {
-                    fs::create_dir_all(&dir)?;
-                }
-                dir.join(&thumbnail_filename)
-            }
-            None => self.thumbnail_dir.join(&thumbnail_filename),
-        };
+        let thumbnail_path = self.resolve_root_dir(root_id)?.join(&thumbnail_filename);
 
-        // R7 — for JPEG sources, prefer the scaled-decode fast path:
-        // jpeg-decoder's Decoder::scale(target_w, target_h) does scaled
-        // IDCT (1/8, 1/4, 1/2, or 1×) at decode time, producing a
-        // pre-shrunk RGB buffer instead of fully decoding 6000×3376
-        // pixels just to throw 95% of them away. Falls back to the
-        // generic ImageReader path for non-JPEG sources or any decode
-        // failure.
-        let (rgb, original_width, original_height) = match self
-            .decode_jpeg_scaled(image_path)
-        {
-            Some(out) => out,
-            None => {
-                // Generic fallback: image-rs decodes the full image,
-                // we get RGB8 + dimensions.
-                let img = ImageReader::open(image_path)?
-                    .with_guessed_format()?
-                    .decode()?
-                    .to_rgb8();
-                let (w, h) = img.dimensions();
-                (img, w, h)
-            }
-        };
+        // Decode the source at (a scaled version of) the base width. We
+        // decode before the existence check because the caller needs the
+        // *original* dimensions back for the DB row regardless of whether
+        // the file already existed. The indexing pipeline only calls this
+        // for rows that lack a thumbnail, so the cache-hit branch below is
+        // effectively the idempotent-rerun safety net rather than a hot path.
+        let (rgb, original_width, original_height) = self.decode_source(image_path, self.max_width)?;
 
         // Check if thumbnail already exists
         if thumbnail_path.exists() {
@@ -140,6 +120,97 @@ impl ThumbnailGenerator {
         })
     }
 
+    /// Ensure an on-demand higher-resolution bucket exists, returning its
+    /// path. Buckets are cached as `thumb_<image_id>_<target_width>.jpg`
+    /// alongside the base thumbnail in the same per-root directory.
+    ///
+    /// Unlike `generate_thumbnail`, a cache hit returns immediately
+    /// **without decoding the source** — this is the hot path called per
+    /// visible tile from the `get_thumbnail` IPC command, so we must not
+    /// pay a JPEG decode just to hand back a path that already exists.
+    ///
+    /// Never upscales: `size_for_width` caps the output width at the
+    /// source width, so requesting a 960-wide bucket for a 500-wide
+    /// source yields a 500-wide file rather than a blurry upscale. (The
+    /// `get_thumbnail` command additionally short-circuits to the
+    /// original image when a bucket would meet or exceed the source
+    /// width, so this path is normally only reached for genuine
+    /// downscales.)
+    pub fn ensure_variant(
+        &self,
+        image_path: &Path,
+        image_id: i64,
+        root_id: Option<i64>,
+        target_width: u32,
+    ) -> Result<PathBuf, Box<dyn Error>> {
+        let filename = format!("thumb_{}_{}.jpg", image_id, target_width);
+        let out_path = self.resolve_root_dir(root_id)?.join(&filename);
+        if out_path.exists() {
+            return Ok(out_path);
+        }
+
+        let (rgb, original_width, original_height) = self.decode_source(image_path, target_width)?;
+        let (thumb_width, thumb_height) = size_for_width(target_width, original_width, original_height);
+        let resized = self.resize_with_fir(&rgb, thumb_width, thumb_height)?;
+        let dyn_img = image::DynamicImage::ImageRgb8(resized);
+        dyn_img.save_with_format(&out_path, image::ImageFormat::Jpeg)?;
+
+        debug!(
+            "Generated {}px bucket: {} ({}x{} -> {}x{})",
+            target_width,
+            image_path.file_name().unwrap_or_default().to_string_lossy(),
+            original_width,
+            original_height,
+            thumb_width,
+            thumb_height
+        );
+        Ok(out_path)
+    }
+
+    /// Resolve (and create) the thumbnail directory for a root. `Some`
+    /// routes into the per-root subfolder (`root_<id>/`); `None` uses the
+    /// flat top-level dir (legacy un-rooted rows). Shared by both the
+    /// base and the on-demand bucket paths so their files always land
+    /// side by side.
+    fn resolve_root_dir(&self, root_id: Option<i64>) -> Result<PathBuf, Box<dyn Error>> {
+        let dir = match root_id {
+            Some(rid) => self.thumbnail_dir.join(format!("root_{rid}")),
+            None => self.thumbnail_dir.clone(),
+        };
+        if !dir.exists() {
+            fs::create_dir_all(&dir)?;
+        }
+        Ok(dir)
+    }
+
+    /// Decode a source image to RGB8, targeting `max_width` for the
+    /// JPEG scaled-decode fast path. Returns `(rgb, original_w, original_h)`.
+    ///
+    /// Tries the jpeg-decoder scaled path first (see `decode_jpeg_scaled`);
+    /// on any miss or failure falls back to image-rs's general decoder,
+    /// which has wider format support and better tolerance for malformed
+    /// files. Shared by `generate_thumbnail` and `ensure_variant` so the
+    /// two size classes decode identically.
+    fn decode_source(
+        &self,
+        image_path: &Path,
+        max_width: u32,
+    ) -> Result<(image::RgbImage, u32, u32), Box<dyn Error>> {
+        match self.decode_jpeg_scaled(image_path, max_width) {
+            Some(out) => Ok(out),
+            None => {
+                // Generic fallback: image-rs decodes the full image,
+                // we get RGB8 + dimensions.
+                let img = ImageReader::open(image_path)?
+                    .with_guessed_format()?
+                    .decode()?
+                    .to_rgb8();
+                let (w, h) = img.dimensions();
+                Ok((img, w, h))
+            }
+        }
+    }
+
     /// R7 — JPEG scaled-decode fast path.
     ///
     /// Returns `Some((rgb, original_w, original_h))` if the source is a
@@ -154,12 +225,17 @@ impl ThumbnailGenerator {
     ///      follows only has a small downsample left to do.
     ///   3. Set Decoder.scale(scaled_w, scaled_h) and decode.
     ///
+    /// `max_width` is the desired thumbnail width; the target is derived
+    /// from it via `size_for_width` so the scaled buffer stays at least
+    /// as large as the eventual thumbnail on both axes.
+    ///
     /// On any error this returns None — the generic decoder above
     /// will then attempt the file with image-rs, which has wider
     /// format support and better tolerance for malformed JPEGs.
     fn decode_jpeg_scaled(
         &self,
         image_path: &Path,
+        max_width: u32,
     ) -> Option<(image::RgbImage, u32, u32)> {
         let ext = image_path.extension().and_then(|e| e.to_str()).map(|s| s.to_ascii_lowercase());
         if !matches!(ext.as_deref(), Some("jpg") | Some("jpeg")) {
@@ -176,8 +252,7 @@ impl ThumbnailGenerator {
         // the scaled buffer is >= the target thumbnail dims. Going
         // smaller would force fast_image_resize to upscale, which
         // defeats the purpose.
-        let (target_w, target_h) =
-            self.calculate_thumbnail_size(orig_w, orig_h);
+        let (target_w, target_h) = size_for_width(max_width, orig_w, orig_h);
         let mut factor: u16 = 8;
         while factor > 1
             && ((orig_w / factor as u32) < target_w
@@ -266,17 +341,12 @@ impl ThumbnailGenerator {
         })
     }
 
-    /// Calculate thumbnail dimensions maintaining aspect ratio.
-    /// Will not upscale images smaller than max dimensions.
+    /// Calculate thumbnail dimensions maintaining aspect ratio, capped at
+    /// `self.max_width`. Will not upscale images narrower than the cap.
+    /// Thin wrapper over the free `size_for_width` so callers that need a
+    /// different bucket width (the on-demand path) share the same maths.
     fn calculate_thumbnail_size(&self, width: u32, height: u32) -> (u32, u32) {
-        let width_ratio = self.max_width as f32 / width as f32;
-        let height_ratio = self.max_height as f32 / height as f32;
-        let ratio = width_ratio.min(height_ratio).min(1.0); // Don't upscale
-
-        let new_width = (width as f32 * ratio).round() as u32;
-        let new_height = (height as f32 * ratio).round() as u32;
-
-        (new_width.max(1), new_height.max(1)) // Ensure at least 1px
+        size_for_width(self.max_width, width, height)
     }
 
     /// Generate thumbnails for all images that don't have them yet.
@@ -350,6 +420,28 @@ impl ThumbnailGenerator {
     }
 }
 
+/// Width-based thumbnail sizing.
+///
+/// Scales so the output width is `min(max_width, source_width)`,
+/// preserving aspect ratio and never upscaling; height follows from the
+/// source aspect ratio. This replaces the old bounding-box maths: the
+/// masonry grid derives a tile's height from the original dimensions and
+/// only ever renders at a given *width*, so capping width (not a
+/// width×height box) is what keeps portrait and multi-column tiles crisp
+/// instead of over-shrinking them to satisfy an arbitrary height bound.
+///
+/// The multiply-before-divide is done in `u64`/`f64` so a large source
+/// (e.g. 8000px) times a bucket width can't overflow a `u32` mid-calc.
+fn size_for_width(max_width: u32, width: u32, height: u32) -> (u32, u32) {
+    if width == 0 || height == 0 {
+        return (1, 1); // Degenerate source; never divide by zero.
+    }
+    let new_width = max_width.min(width);
+    let new_height =
+        ((height as u64 * new_width as u64) as f64 / width as f64).round() as u32;
+    (new_width.max(1), new_height.max(1)) // Ensure at least 1px
+}
+
 /// Result of thumbnail generation containing paths and dimensions.
 pub struct ThumbnailResult {
     pub thumbnail_path: PathBuf,
@@ -361,34 +453,42 @@ pub struct ThumbnailResult {
 mod tests {
     use super::*;
 
+    /// Base bucket width the index-time thumbnails (and the generator's
+    /// default in these tests) are produced at. Bumped from the old
+    /// 400×300 box to a 480-wide cap so a 1-column tile is crisp on
+    /// retina.
+    const BASE_WIDTH: u32 = 480;
+
     #[test]
     fn test_calculate_thumbnail_size_landscape() {
         let temp_dir = std::env::temp_dir().join("thumb_test");
-        let gen = ThumbnailGenerator::new(&temp_dir, 400, 300).unwrap();
+        let gen = ThumbnailGenerator::new(&temp_dir, BASE_WIDTH).unwrap();
 
-        // Landscape image 2000x1500 should scale to 400x300
+        // Landscape 2000x1500 → width-capped to 480, height follows aspect.
         let (w, h) = gen.calculate_thumbnail_size(2000, 1500);
-        assert_eq!(w, 400);
-        assert_eq!(h, 300);
+        assert_eq!(w, 480);
+        assert_eq!(h, 360);
     }
 
     #[test]
     fn test_calculate_thumbnail_size_portrait() {
         let temp_dir = std::env::temp_dir().join("thumb_test");
-        let gen = ThumbnailGenerator::new(&temp_dir, 400, 300).unwrap();
+        let gen = ThumbnailGenerator::new(&temp_dir, BASE_WIDTH).unwrap();
 
-        // Portrait image 1500x2000 should scale to 225x300 (height constrained)
+        // Portrait 1500x2000 → width-capped to 480; height is now free to
+        // exceed the width (the old box model wrongly clamped it to 300).
+        // A tall tile needs those height pixels to render sharply.
         let (w, h) = gen.calculate_thumbnail_size(1500, 2000);
-        assert_eq!(w, 225);
-        assert_eq!(h, 300);
+        assert_eq!(w, 480);
+        assert_eq!(h, 640);
     }
 
     #[test]
     fn test_calculate_thumbnail_size_no_upscale() {
         let temp_dir = std::env::temp_dir().join("thumb_test");
-        let gen = ThumbnailGenerator::new(&temp_dir, 400, 300).unwrap();
+        let gen = ThumbnailGenerator::new(&temp_dir, BASE_WIDTH).unwrap();
 
-        // Small image 100x100 should not be upscaled
+        // Small image 100x100 should not be upscaled to the 480 cap.
         let (w, h) = gen.calculate_thumbnail_size(100, 100);
         assert_eq!(w, 100);
         assert_eq!(h, 100);
@@ -397,20 +497,62 @@ mod tests {
     #[test]
     fn test_calculate_thumbnail_size_wide() {
         let temp_dir = std::env::temp_dir().join("thumb_test");
-        let gen = ThumbnailGenerator::new(&temp_dir, 400, 300).unwrap();
+        let gen = ThumbnailGenerator::new(&temp_dir, BASE_WIDTH).unwrap();
 
-        // Very wide image 4000x1000 should be width-constrained
+        // Very wide image 4000x1000 is width-constrained to 480 → 120 tall.
         let (w, h) = gen.calculate_thumbnail_size(4000, 1000);
-        assert_eq!(w, 400);
-        assert_eq!(h, 100);
+        assert_eq!(w, 480);
+        assert_eq!(h, 120);
     }
 
     #[test]
     fn test_get_thumbnail_path() {
         let temp_dir = std::env::temp_dir().join("thumb_test");
-        let gen = ThumbnailGenerator::new(&temp_dir, 400, 300).unwrap();
+        let gen = ThumbnailGenerator::new(&temp_dir, BASE_WIDTH).unwrap();
 
         let path = gen.get_thumbnail_path(42);
         assert!(path.to_string_lossy().contains("thumb_42.jpg"));
+    }
+
+    // ================================================================
+    //  Bucket sizing — the on-demand multi-resolution ladder. These
+    //  exercise `size_for_width` directly at the bucket widths the
+    //  `get_thumbnail` command selects, independent of any generator
+    //  instance.
+    // ================================================================
+
+    #[test]
+    fn size_for_width_hits_exact_bucket_width_when_source_is_larger() {
+        // A 6000x4000 source at the 960 bucket → exactly 960 wide,
+        // 640 tall (aspect preserved).
+        assert_eq!(size_for_width(960, 6000, 4000), (960, 640));
+        // Same source at the 1440 and 2048 buckets.
+        assert_eq!(size_for_width(1440, 6000, 4000), (1440, 960));
+        assert_eq!(size_for_width(2048, 6000, 4000), (2048, 1365));
+    }
+
+    #[test]
+    fn size_for_width_never_upscales_past_source_width() {
+        // A 500-wide source can never exceed 500, whatever bucket is asked.
+        assert_eq!(size_for_width(960, 500, 400), (500, 400));
+        assert_eq!(size_for_width(2048, 500, 400), (500, 400));
+    }
+
+    #[test]
+    fn size_for_width_survives_degenerate_dimensions() {
+        // Zero-dim sources must not divide by zero; clamp to 1x1.
+        assert_eq!(size_for_width(480, 0, 100), (1, 1));
+        assert_eq!(size_for_width(480, 100, 0), (1, 1));
+        // A 1px source stays 1px.
+        assert_eq!(size_for_width(480, 1, 1), (1, 1));
+    }
+
+    #[test]
+    fn size_for_width_handles_large_sources_without_overflow() {
+        // 8000-wide source × a 2048 bucket would overflow u32 if the
+        // height maths multiplied in u32; the u64/f64 widening prevents it.
+        let (w, h) = size_for_width(2048, 8000, 6000);
+        assert_eq!(w, 2048);
+        assert_eq!(h, 1536);
     }
 }

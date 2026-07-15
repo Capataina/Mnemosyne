@@ -1,10 +1,10 @@
 import { motion, AnimatePresence } from "framer-motion";
 import { Loader2, AlertCircle, CheckCircle2 } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
-  useIndexingProgress,
+  useIndexingStatus,
   type IndexingPhase,
-} from "../hooks/useIndexingProgress";
+} from "../hooks/useIndexingStatus";
 
 const PHASE_LABELS: Record<IndexingPhase, string> = {
   scan: "Scanning",
@@ -18,50 +18,45 @@ const PHASE_LABELS: Record<IndexingPhase, string> = {
 /**
  * Floating status pill in the top-right corner.
  *
- * Visibility:
- * - Hidden until the first event arrives (no flash on cold launch).
- * - Shown for any active phase.
- * - "ready" lingers 4s as a "X images indexed" confirmation, fades.
- * - "error" sticks until the user dismisses (×) or a new run starts.
- *
- * Visual: minimal — icon + label + counter + thin progress bar. We
- * deliberately dropped the redundant "message" detail line that the
- * previous design had; the phase label tells you what the counter
- * counts. The full message is available on hover via `title=`.
+ * All numbers come from `useIndexingStatus` (the DB-backed snapshot), so
+ * the pill can never disagree with the settings drawer — that was the
+ * "stuck at 0/21 while the drawer shows 100%" bug. The pill shows an
+ * aggregate percentage across the whole pipeline (thumbnails + every
+ * encoder), which is monotonic and reaches 100%; it lingers briefly as a
+ * "Ready" confirmation when a run finishes, then fades.
  */
 export function IndexingStatusPill() {
-  const { progress } = useIndexingProgress();
+  const { isIndexing, phase, message, overall } = useIndexingStatus();
   const [dismissed, setDismissed] = useState(false);
   const [showFinal, setShowFinal] = useState(false);
+  const wasIndexing = useRef(false);
+
+  const isError = phase === "error";
 
   useEffect(() => {
-    if (!progress) return;
-    if (progress.phase === "ready") {
+    // A run just finished (was active, now isn't, and not an error) →
+    // show a brief "Ready" confirmation, then fade.
+    if (wasIndexing.current && !isIndexing && !isError) {
       setShowFinal(true);
       setDismissed(false);
       const t = setTimeout(() => setShowFinal(false), 4000);
+      wasIndexing.current = isIndexing;
       return () => clearTimeout(t);
     }
-    if (progress.phase === "error") {
-      setShowFinal(false);
+    wasIndexing.current = isIndexing;
+    if (isIndexing) {
       setDismissed(false);
-      return;
+      setShowFinal(false);
     }
-    setDismissed(false);
-    setShowFinal(false);
-  }, [progress?.phase]);
+  }, [isIndexing, isError]);
 
-  if (!progress) return null;
-  if (dismissed) return null;
-  if (progress.phase === "ready" && !showFinal) return null;
+  const visible = (isIndexing || showFinal || isError) && !dismissed;
+  if (!visible || phase === null) return null;
 
-  const isError = progress.phase === "error";
-  const isReady = progress.phase === "ready";
-  const label = PHASE_LABELS[progress.phase];
-
-  const fill =
-    progress.total > 0 ? Math.min(1, progress.processed / progress.total) : 0;
-  const showBar = progress.total > 0 && !isError && !isReady;
+  const isReady = showFinal && !isIndexing && !isError;
+  const label = isReady ? PHASE_LABELS.ready : PHASE_LABELS[phase];
+  const pct = Math.round(overall.fraction * 100);
+  const showBar = isIndexing && !isError;
 
   return (
     <AnimatePresence>
@@ -78,7 +73,7 @@ export function IndexingStatusPill() {
           "min-w-[240px] max-w-[380px]",
           isError ? "border-destructive/40" : "border-border",
         ].join(" ")}
-        title={progress.message ?? undefined}
+        title={message ?? undefined}
       >
         <div className="shrink-0">
           {isError ? (
@@ -100,9 +95,9 @@ export function IndexingStatusPill() {
             >
               {label}
             </span>
-            {progress.total > 0 && !isError && !isReady && (
+            {showBar && (
               <span className="text-[10px] tabular-nums text-muted-foreground">
-                {humanize(progress.processed, progress.total, progress.phase)}
+                {pct}%
               </span>
             )}
           </div>
@@ -112,16 +107,14 @@ export function IndexingStatusPill() {
               <motion.div
                 className="h-full bg-primary"
                 initial={false}
-                animate={{ width: `${fill * 100}%` }}
+                animate={{ width: `${pct}%` }}
                 transition={{ type: "spring", stiffness: 200, damping: 30 }}
               />
             </div>
           )}
 
-          {isReady && progress.message && (
-            <span className="text-[10px] text-muted-foreground">
-              {progress.message}
-            </span>
+          {isReady && message && (
+            <span className="text-[10px] text-muted-foreground">{message}</span>
           )}
         </div>
 
@@ -138,19 +131,4 @@ export function IndexingStatusPill() {
       </motion.div>
     </AnimatePresence>
   );
-}
-
-/**
- * Format the counter line. For model-download events the totals are
- * in bytes (we want MB), for everything else they're item counts.
- */
-function humanize(
-  processed: number,
-  total: number,
-  phase: IndexingPhase,
-): string {
-  if (phase === "model-download") {
-    return `${(processed / 1_048_576).toFixed(0)} / ${(total / 1_048_576).toFixed(0)} MB`;
-  }
-  return `${processed} / ${total}`;
 }

@@ -102,7 +102,8 @@ fn thumbnail_generator_produces_files_under_per_root_subdir() {
     }
 
     // Generate thumbnails for each image into root_<id>/ subfolder.
-    let generator = ThumbnailGenerator::new(&thumb_dir, 128, 128).unwrap();
+    // 128 = a small width cap for the fixture images (width-based sizing).
+    let generator = ThumbnailGenerator::new(&thumb_dir, 128).unwrap();
     let needs = db.get_images_without_thumbnails().unwrap();
     assert_eq!(needs.len(), 4);
     for image in &needs {

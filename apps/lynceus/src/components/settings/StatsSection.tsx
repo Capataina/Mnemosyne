@@ -1,5 +1,4 @@
-import { useEffect, useState } from "react";
-import { getPipelineStats, type PipelineStats } from "../../services/stats";
+import { useIndexingStatus } from "../../hooks/useIndexingStatus";
 import { Section } from "./controls";
 
 /**
@@ -7,9 +6,11 @@ import { Section } from "./controls";
  * indexing pipeline. Lets the user see at a glance how much of the
  * library has been indexed (thumbnails generated, embeddings computed).
  *
- * Polls every 5 seconds while the drawer is open. The query is a
- * single SELECT on the backend so the polling cost is negligible
- * regardless of library size.
+ * Reads the shared `useIndexingStatus` snapshot (react-query keyed
+ * `["pipelineStats"]`), which is the same authoritative source the
+ * top-right status pill uses — one poll, one source of truth, so the two
+ * surfaces can never disagree. The query is a single SELECT on the
+ * backend so the polling cost is negligible regardless of library size.
  *
  * Why this exists: when indexing is in flight, the user has no way to
  * know how many of their images already have thumbnails vs how many
@@ -18,39 +19,7 @@ import { Section } from "./controls";
  * state of the index.
  */
 export function StatsSection() {
-  const [stats, setStats] = useState<PipelineStats | null>(null);
-  const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    let cancelled = false;
-    const fetchOnce = async () => {
-      try {
-        const s = await getPipelineStats();
-        if (!cancelled) {
-          setStats(s);
-          setError(null);
-        }
-      } catch (e) {
-        if (!cancelled) {
-          setError(e instanceof Error ? e.message : String(e));
-        }
-      }
-    };
-    fetchOnce();
-    const interval = setInterval(fetchOnce, 5000);
-    return () => {
-      cancelled = true;
-      clearInterval(interval);
-    };
-  }, []);
-
-  if (error) {
-    return (
-      <Section title="Indexing progress">
-        <p className="text-xs text-destructive">{error}</p>
-      </Section>
-    );
-  }
+  const { stats } = useIndexingStatus();
 
   if (!stats) {
     return (

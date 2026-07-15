@@ -431,7 +431,12 @@ fn run_pipeline_inner(
     //    microseconds vs ~100ms decode/encode, so contention there is
     //    negligible. On an M-series chip with 8-12 cores this gives
     //    a ~6-10x speedup vs the previous serial loop.
-    let thumbnail_generator = ThumbnailGenerator::new(&paths::thumbnails_dir(), 400, 400)?;
+    // Base thumbnails are produced at max-width 480 (the first bucket in
+    // the adaptive ladder). A 1-column masonry tile is ~480 CSS px, so on
+    // a retina display the base needs 480 real px to stay crisp; wider
+    // buckets (960/1440/2048) are generated on demand by the get_thumbnail
+    // command, never eagerly here, to keep indexing fast and disk lean.
+    let thumbnail_generator = ThumbnailGenerator::new(&paths::thumbnails_dir(), 480)?;
     let needs_thumbs = database.get_images_without_thumbnails()?;
     let total_thumbs = needs_thumbs.len();
     if total_thumbs > 0 {
@@ -576,6 +581,65 @@ fn run_pipeline_inner(
     Ok(())
 }
 
+/// Shared, monotonic aggregate for the concurrent encode phase.
+///
+/// The bug this replaces: each of the (up to three) encoder threads used
+/// to emit its OWN `processed/total` on the `encode` phase. With the
+/// threads interleaving, a thread that had only just started would emit
+/// `0/N` right after another thread had already reported real progress,
+/// so the top-right status pill snapped back to `0/21` and stuck there
+/// even while `get_pipeline_stats` (DB-backed) correctly climbed to
+/// `21/21`. There was no single coherent counter the frontend could
+/// trust, and no clean terminal `encode` value before `Phase::Ready`.
+///
+/// Now every encoder increments one shared counter. `processed` is the
+/// number of image-encode completions summed across every *running*
+/// encoder; `total` is the fixed sum of each running encoder's workload,
+/// computed up front so the counter climbs monotonically to exactly
+/// `total`. `record_with` guards wire ordering: the emit itself runs
+/// under `last_emitted`, so with three encoder threads reporting
+/// concurrently the pill only ever climbs — a thread that computed a
+/// lower cumulative value than one already emitted simply doesn't fire.
+/// (Doing the emit *outside* the lock would reopen the race: two threads
+/// could each decide to emit, then fire in the reverse order.)
+struct EncodeProgress {
+    /// Cumulative encodes completed across all running encoders. Atomic
+    /// so the count itself never loses an increment even though the emit
+    /// decision is mutex-guarded.
+    processed: AtomicUsize,
+    /// Last value actually emitted, guarding both the "only climb" test
+    /// and the emit ordering (the emit happens while this is locked).
+    last_emitted: std::sync::Mutex<usize>,
+    /// Fixed denominator: sum of every running encoder's workload.
+    total: usize,
+}
+
+impl EncodeProgress {
+    fn new(total: usize) -> Self {
+        Self {
+            processed: AtomicUsize::new(0),
+            last_emitted: std::sync::Mutex::new(0),
+            total,
+        }
+    }
+
+    /// Count `n` completed encodes, then — if that advances past the last
+    /// value emitted — run `emit_fn(done)` with the new cumulative total,
+    /// under the lock. `done` is captured from the atomic add itself, so
+    /// it is exact even when three encoders add concurrently; running
+    /// `emit_fn` inside the critical section is what makes the sequence of
+    /// emitted values strictly increasing on the wire rather than merely
+    /// non-decreasing in aggregate.
+    fn record_with<F: FnOnce(usize)>(&self, n: usize, emit_fn: F) {
+        let done = self.processed.fetch_add(n, Ordering::SeqCst) + n;
+        let mut last = self.last_emitted.lock().unwrap();
+        if done > *last {
+            *last = done;
+            emit_fn(done);
+        }
+    }
+}
+
 /// Encoder phase — runs the CLIP image encoder over every row that
 /// doesn't yet have an embedding, in batches of 32. Lives on its own
 /// thread (spawned from `run_pipeline_inner` in parallel with the
@@ -659,9 +723,58 @@ fn run_encoder_phase(
         intra_per_encoder
     );
 
+    // Precompute the aggregate encode workload so the `encode` phase can
+    // emit one coherent, monotonic counter instead of three interleaving
+    // per-encoder ones (the sticky-`0/21` bug). `total` is the sum, over
+    // every encoder that will actually run (enabled AND its model
+    // present), of the rows that encoder still has to embed. We count
+    // with the SAME query each encoder drives its loop from, so the
+    // shared counter climbs to exactly `total` and no further; a
+    // missing-model or already-complete encoder contributes 0 and never
+    // moves it. Each encoder is the sole writer of its own embeddings, so
+    // its count is stable between this precompute and the thread's own
+    // requery — no double-count risk.
+    let aggregate_total = {
+        let counts_db = ImageDatabase::new(db_path).map_err(|e| e.to_string())?;
+        counts_db.initialize().map_err(|e| e.to_string())?;
+        enabled
+            .iter()
+            .map(|id| match id.as_str() {
+                // CLIP's model presence is guaranteed by the caller (it
+                // only invokes run_encoder_phase when image_model_path
+                // exists). It counts via the legacy-column query its loop
+                // uses.
+                "clip_vit_b_32" => counts_db
+                    .get_images_without_embeddings()
+                    .map(|v| v.len())
+                    .unwrap_or(0),
+                "siglip2_base" if siglip2_path.exists() => counts_db
+                    .get_images_without_embedding_for("siglip2_base")
+                    .map(|v| v.len())
+                    .unwrap_or(0),
+                "dinov2_base" if dinov2_path.exists() => counts_db
+                    .get_images_without_embedding_for(
+                        crate::similarity_and_semantic_search::encoder_dinov2::DINOV2_ENCODER_ID,
+                    )
+                    .map(|v| v.len())
+                    .unwrap_or(0),
+                _ => 0,
+            })
+            .sum::<usize>()
+    };
+
+    let progress = Arc::new(EncodeProgress::new(aggregate_total));
+    // Prime the pill with a coherent 0/total the instant the phase
+    // starts, so it shows the real denominator rather than lingering on
+    // the previous phase's numbers. Skip entirely when there's nothing to
+    // encode (the phase does no work and Phase::Ready follows directly).
+    if aggregate_total > 0 {
+        emit(app, Phase::Encode, 0, aggregate_total, Some("Encoding".into()));
+    }
+
     // Spawn one thread per enabled encoder. Each thread is independent
-    // (own DB connection, own ORT session, own progress events) so
-    // they don't have to coordinate during the loop.
+    // (own DB connection, own ORT session) but all share the one
+    // `progress` aggregate above so their emits stay coherent.
     let mut handles: Vec<thread::JoinHandle<Result<(), String>>> = Vec::new();
 
     for encoder_id in &enabled {
@@ -672,6 +785,7 @@ fn run_encoder_phase(
         let siglip2_path = siglip2_path.clone();
         let dinov2_path = dinov2_path.clone();
         let intra = intra_per_encoder;
+        let progress = progress.clone();
 
         handles.push(thread::spawn(move || -> Result<(), String> {
             // Per-thread DB. Two connections (writer + read-only
@@ -687,7 +801,7 @@ fn run_encoder_phase(
 
             match encoder_id.as_str() {
                 "clip_vit_b_32" => {
-                    run_clip_encoder_with_intra(&app, &database, &image_model_path, intra)
+                    run_clip_encoder_with_intra(&app, &database, &image_model_path, intra, &progress)
                 }
                 "siglip2_base" => {
                     if siglip2_path.exists() {
@@ -696,6 +810,7 @@ fn run_encoder_phase(
                             &database,
                             "siglip2_base",
                             || crate::similarity_and_semantic_search::encoder_siglip2::Siglip2ImageEncoder::new_with_intra(&siglip2_path, intra),
+                            &progress,
                         )
                     } else {
                         warn!(
@@ -712,6 +827,7 @@ fn run_encoder_phase(
                             &database,
                             crate::similarity_and_semantic_search::encoder_dinov2::DINOV2_ENCODER_ID,
                             || crate::similarity_and_semantic_search::encoder_dinov2::Dinov2ImageEncoder::new_with_intra(&dinov2_path, intra),
+                            &progress,
                         )
                     } else {
                         warn!(
@@ -784,6 +900,7 @@ fn run_clip_encoder_with_intra(
     database: &ImageDatabase,
     model_path: &Path,
     intra_threads: usize,
+    progress: &EncodeProgress,
 ) -> Result<(), String> {
     let needs_embed = database
         .get_images_without_embeddings()
@@ -792,7 +909,10 @@ fn run_clip_encoder_with_intra(
     if total == 0 {
         return Ok(());
     }
-    emit(app, Phase::Encode, 0, total, Some("Encoding (CLIP)".into()));
+    // No per-encoder start emit here anymore — the phase-level 0/total is
+    // emitted once by run_encoder_phase, and every chunk below reports the
+    // shared aggregate counter, so three concurrent encoders can never
+    // stomp each other back to 0.
 
     let run_started = std::time::Instant::now();
     let mut encoder = ClipImageEncoder::new_with_intra(model_path, intra_threads)
@@ -861,7 +981,12 @@ fn run_clip_encoder_with_intra(
             }
         }
         processed += chunk.len();
-        emit(app, Phase::Encode, processed, total, Some("Encoding (CLIP)".into()));
+        // Report against the shared aggregate. The emit only fires (and
+        // only while locked) if it climbs past the last value emitted, so
+        // a slower encoder can never blip the pill backwards.
+        progress.record_with(chunk.len(), |done| {
+            emit(app, Phase::Encode, done, progress.total, Some("Encoding".into()));
+        });
         // R3 — drain the WAL between batches so it can't grow without
         // bound under wal_autocheckpoint=0. PASSIVE never blocks
         // foreground readers; it just folds whatever pages are clean
@@ -897,6 +1022,7 @@ fn run_trait_encoder<F, E>(
     database: &ImageDatabase,
     encoder_id: &str,
     make_encoder: F,
+    progress: &EncodeProgress,
 ) -> Result<(), String>
 where
     F: FnOnce() -> Result<E, Box<dyn std::error::Error>>,
@@ -910,8 +1036,9 @@ where
     if total == 0 {
         return Ok(());
     }
-    let label = format!("Encoding ({encoder_id})");
-    emit(app, Phase::Encode, 0, total, Some(label.clone()));
+    // No per-encoder start emit — see run_clip_encoder_with_intra: the
+    // phase-level 0/total and the shared aggregate below replace the old
+    // per-encoder counter that produced the sticky-0/21 bug.
 
     let run_started = std::time::Instant::now();
     let mut encoder = make_encoder().map_err(|e| e.to_string())?;
@@ -965,7 +1092,10 @@ where
             }
         }
         processed += chunk.len();
-        emit(app, Phase::Encode, processed, total, Some(label.clone()));
+        // Report against the shared aggregate (see the CLIP path).
+        progress.record_with(chunk.len(), |done| {
+            emit(app, Phase::Encode, done, progress.total, Some("Encoding".into()));
+        });
         // R3 — drain WAL between batches under wal_autocheckpoint=0.
         let _ = database.checkpoint_passive();
     }
@@ -1159,5 +1289,58 @@ mod tests {
                 "Phase {expected_str:?} did not serialise as expected: {json}"
             );
         }
+    }
+
+    #[test]
+    fn encode_progress_reports_monotonic_and_reaches_total() {
+        // Single-threaded: sequential records fire strictly increasing
+        // values and land exactly on total.
+        let p = EncodeProgress::new(100);
+        let mut emitted = Vec::new();
+        for _ in 0..10 {
+            p.record_with(10, |done| emitted.push(done));
+        }
+        assert_eq!(emitted, (1..=10).map(|k| k * 10).collect::<Vec<_>>());
+        assert_eq!(p.processed.load(Ordering::SeqCst), 100);
+        assert_eq!(*p.last_emitted.lock().unwrap(), 100);
+    }
+
+    #[test]
+    fn encode_progress_never_regresses_under_concurrent_encoders() {
+        // Mirror the real phase: three encoders, each with a 500-image
+        // workload, summed into one aggregate; every one advances the
+        // shared counter a single image at a time.
+        let total = 3 * 500;
+        let progress = Arc::new(EncodeProgress::new(total));
+        let observed = Arc::new(std::sync::Mutex::new(Vec::<usize>::new()));
+
+        let mut handles = Vec::new();
+        for _ in 0..3 {
+            let progress = Arc::clone(&progress);
+            let observed = Arc::clone(&observed);
+            handles.push(thread::spawn(move || {
+                for _ in 0..500 {
+                    progress.record_with(1, |done| observed.lock().unwrap().push(done));
+                }
+            }));
+        }
+        for h in handles {
+            h.join().unwrap();
+        }
+
+        let observed = observed.lock().unwrap();
+        // Every increment is counted exactly once — no lost updates.
+        assert_eq!(progress.processed.load(Ordering::SeqCst), total);
+        // The counter reached exactly total, never past it.
+        assert_eq!(*observed.last().unwrap(), total);
+        assert_eq!(*progress.last_emitted.lock().unwrap(), total);
+        // Because every emit runs under the lock, the observed sequence is
+        // strictly increasing on the wire — the property the whole struct
+        // exists to guarantee, and exactly what the old per-encoder emits
+        // violated (a late 0/N stomping a real value).
+        assert!(
+            observed.windows(2).all(|w| w[0] < w[1]),
+            "emitted progress must be strictly increasing, got {observed:?}"
+        );
     }
 }

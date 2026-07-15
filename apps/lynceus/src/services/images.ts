@@ -18,20 +18,10 @@ import { formatApiError } from "./apiError";
 const PLACEHOLDER_WIDTH = 400;
 const PLACEHOLDER_HEIGHT = 400;
 
-/** Frontend-side sort modes. Backend always returns stable order
- *  (by id ASC); we apply name/added/shuffle/custom here. The shuffle
- *  uses a seed argument so refetches with the same seed yield the
- *  same order — only when the seed changes does the order change.
- *  "custom" sorts by the persisted `manualOrder` (drag-reorder),
- *  falling back to id order for any image never manually placed. */
-export type SortMode = "id" | "name" | "added" | "shuffle" | "custom";
-
 export async function fetchImages(
   filterTagIds: number[] = [],
   filterString: string = "",
   matchAllTags: boolean = false,
-  sortMode: SortMode = "id",
-  shuffleSeed: number = 0,
 ): Promise<ImageItem[]> {
   try {
     const imagesDB: ImageData[] = await perfInvoke("get_images", {
@@ -40,105 +30,33 @@ export async function fetchImages(
       matchAllTags,
     });
 
-    // Convert backend data to frontend ImageItem format.
-    //
-    // Phase 12a fix: render every scanned image, with a 1:1 square
-    // placeholder for rows whose thumbnail hasn't been generated yet
-    // (NULL width/height). Phase 11a tried to fix the layout-jank
-    // problem by FILTERING OUT those rows, which produced the worse
-    // bug of "No images yet" appearing for a fully-scanned library
-    // whose initial get_images call landed before the first thumbnail
-    // batch finished.
-    //
-    // Square placeholder is the symmetric least-bad: minimal reflow
-    // when actual aspect arrives, looks visually intentional as a
-    // loading state. The status pill still shows real progress.
+    // Backend returns stable id-ASC order. The main feed re-orders via
+    // useShuffledFeed (stable-key shuffle); search / similar results keep
+    // this order. `hasThumbnail` gates feed eligibility — un-thumbnailed
+    // rows are held back until their thumbnail lands (nothing pops in
+    // blank), which is why the placeholder width/height still matter: a
+    // row can be returned here before its real dimensions are known.
     const images: ImageItem[] = imagesDB.map((img) => {
       const url = convertFileSrc(img.path);
-      const thumbnailUrl = img.thumbnail_path
-        ? convertFileSrc(img.thumbnail_path)
-        : url;
-
+      const hasThumbnail = !!img.thumbnail_path;
       return {
         id: img.id,
         name: img.name,
         url,
-        thumbnailUrl,
+        thumbnailUrl: hasThumbnail
+          ? convertFileSrc(img.thumbnail_path as string)
+          : undefined,
+        hasThumbnail,
         width: img.width ?? PLACEHOLDER_WIDTH,
         height: img.height ?? PLACEHOLDER_HEIGHT,
         tags: img.tags,
-        manualOrder: img.manual_order ?? null,
         manualColSpan: img.manual_col_span ?? null,
       };
     });
 
-    // Apply sort mode frontend-side. Backend returned stable order
-    // by id; we re-order here as the user prefers.
-    return applySortMode(images, sortMode, shuffleSeed);
+    return images;
   } catch (error) {
     throw new Error(formatApiError(error));
-  }
-}
-
-/**
- * Apply the user's preferred sort to a list of images.
- *
- * Critically, "shuffle" uses a deterministic seeded shuffle: the
- * same input + same seed always produces the same output. The
- * frontend controls when the seed changes (e.g. on modal close, on
- * pull-to-refresh, or on a deliberate "shuffle again" button), so
- * progressive thumbnail loading during indexing doesn't keep
- * re-rolling the order mid-session.
- */
-export function applySortMode(
-  items: ImageItem[],
-  mode: SortMode,
-  seed: number,
-): ImageItem[] {
-  // Don't mutate the input — return a copy so React state changes
-  // are detected via reference inequality.
-  const out = items.slice();
-  switch (mode) {
-    case "id":
-    case "added":
-      // Backend already returns ASC by id. "added" is the same thing
-      // because newer rows get higher ids.
-      out.sort((a, b) => a.id - b.id);
-      return out;
-    case "name":
-      out.sort((a, b) => a.name.localeCompare(b.name));
-      return out;
-    case "shuffle": {
-      if (seed === 0) {
-        // Seed 0 = "no shuffle yet". Return stable order so the
-        // grid doesn't reshuffle on a session-fresh load until the
-        // user explicitly refreshes.
-        out.sort((a, b) => a.id - b.id);
-        return out;
-      }
-      // Mulberry32 — small, fast, seedable PRNG. Same seed → same
-      // output. Used here for Fisher-Yates shuffle.
-      let s = seed >>> 0;
-      const rand = () => {
-        s = (s + 0x6d2b79f5) >>> 0;
-        let t = s;
-        t = Math.imul(t ^ (t >>> 15), t | 1);
-        t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
-        return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-      };
-      for (let i = out.length - 1; i > 0; i--) {
-        const j = Math.floor(rand() * (i + 1));
-        [out[i], out[j]] = [out[j], out[i]];
-      }
-      return out;
-    }
-    case "custom":
-      // Sort by the persisted manual position; anything never manually
-      // placed (manualOrder null) falls back to its id, which is the
-      // same order a fresh migration's all-NULL rows already render
-      // in — so this is a no-op grid until the user drags something.
-      out.sort((a, b) => (a.manualOrder ?? a.id) - (b.manualOrder ?? b.id));
-      return out;
   }
 }
 
@@ -199,6 +117,21 @@ export async function pickScanFolder(): Promise<string | null> {
   return null;
 }
 
+/**
+ * Resolve an adaptive-resolution thumbnail for `imageId` at least
+ * `targetPx` wide. The backend snaps `targetPx` up to the nearest bucket
+ * ({480, 960, 1440, 2048}), returns the original image for targets beyond
+ * the ladder (or when a bucket would meet/exceed the source width), and
+ * generates-then-caches the bucket on demand. Returns an absolute path to
+ * convert with `convertFileSrc`.
+ */
+export async function getThumbnail(
+  imageId: number,
+  targetPx: number,
+): Promise<string> {
+  return await invoke<string>("get_thumbnail", { id: imageId, targetPx });
+}
+
 export async function getScanRoot(): Promise<string | null> {
   try {
     return (await invoke<string | null>("get_scan_root")) ?? null;
@@ -223,24 +156,10 @@ export async function setScanRoot(path: string): Promise<void> {
 }
 
 /**
- * Persist a drag-reorder. Pass the FULL new ordering of image ids —
- * the backend rewrites every id's `manual_order` as a fresh 0..N-1
- * sequence in one transaction. Only meaningful when called with the
- * complete unfiltered catalogue (see Masonry's reorder gating): a
- * partial/filtered list would clobber the relative order of images
- * outside that filter.
- */
-export async function setManualOrder(orderedIds: number[]): Promise<void> {
-  try {
-    await invoke("set_manual_order", { orderedIds });
-  } catch (error) {
-    throw new Error(formatApiError(error));
-  }
-}
-
-/**
  * Persist a drag-resize. `colSpan` of `null` clears back to the
- * default single-column width.
+ * default single-column width. Resize is the one manual layout property
+ * that survives a reshuffle (position is re-rolled per entry; size is
+ * a per-image property).
  */
 export async function setManualColSpan(
   imageId: number,

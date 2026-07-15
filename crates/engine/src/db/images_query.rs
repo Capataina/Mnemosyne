@@ -94,6 +94,12 @@ type AggregatedValue = (
     Option<i64>,
 );
 
+/// Source row for on-demand thumbnail resolution: `(path, root_id,
+/// original width)`. A named alias keeps `get_image_source_for_thumbnail`
+/// clippy-clean (clippy::type_complexity) — same reasoning as the
+/// `AggregatedRow` aliases above.
+type ThumbnailSource = (String, Option<ID>, Option<u32>);
+
 fn aggregate_image_rows(
     rows: &mut rusqlite::Rows<'_>,
 ) -> rusqlite::Result<Vec<AggregatedRow>> {
@@ -463,6 +469,39 @@ impl ImageDatabase {
             Ok(row.get("id")?)
         } else {
             Err(rusqlite::Error::QueryReturnedNoRows)
+        }
+    }
+
+    /// Everything the `get_thumbnail` command needs to resolve (and, if
+    /// necessary, generate) a thumbnail for an image id in one read:
+    /// its original file `path`, its `root_id` (which per-root folder the
+    /// thumbnail lives in, `None` for legacy un-rooted rows), and the
+    /// original image `width` recorded during base-thumbnail generation.
+    ///
+    /// `width` is `None` when the row hasn't been through the thumbnail
+    /// phase yet; the command treats an unknown width as "can't take the
+    /// no-upscale shortcut" and generates the bucket instead (the resize
+    /// caps at the source width regardless, so this is safe — just not
+    /// free).
+    ///
+    /// Returns `Ok(None)` when no row has that id, so the command can map
+    /// it to a typed `NotFound` rather than a panic.
+    pub fn get_image_source_for_thumbnail(
+        &self,
+        id: ID,
+    ) -> rusqlite::Result<Option<ThumbnailSource>> {
+        // R2 — foreground IPC read, route through the reader connection.
+        let conn = self.read_lock();
+        let mut stmt =
+            conn.prepare("SELECT path, root_id, width FROM images WHERE id = ?1 LIMIT 1")?;
+        let mut rows = stmt.query([id])?;
+        if let Some(row) = rows.next()? {
+            let path: String = row.get(0)?;
+            let root_id: Option<ID> = row.get(1)?;
+            let width: Option<i64> = row.get(2)?;
+            Ok(Some((path, root_id, width.map(|w| w as u32))))
+        } else {
+            Ok(None)
         }
     }
 

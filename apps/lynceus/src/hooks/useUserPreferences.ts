@@ -12,7 +12,6 @@ import { useEffect, useState, useCallback } from "react";
  */
 
 export type ThemeMode = "system" | "dark" | "light";
-export type SortMode = "shuffle" | "name" | "added" | "custom";
 export type AnimationLevel = "off" | "subtle" | "standard";
 export type TagFilterMode = "any" | "all";
 
@@ -26,8 +25,6 @@ export interface UserPreferences {
   columnCount: number;
   /** Min tile width in pixels when columnCount is auto. */
   tileMinWidth: number;
-  /** Sort order for the catalog. */
-  sortMode: SortMode;
   /** Tile aspect-preserving size scale, multiplier of the base. */
   tileScale: number;
   /** Animation magnitude. */
@@ -58,12 +55,6 @@ const DEFAULTS: UserPreferences = {
   theme: "system",
   columnCount: 0,
   tileMinWidth: 236,
-  // Default to stable order (oldest first). Previously "shuffle" was
-  // the default but combined with progressive thumbnail loading it
-  // caused the visible "entire app refreshes" behaviour — every
-  // refetch reshuffled the grid. Users who actively want shuffle can
-  // pick it in Settings.
-  sortMode: "added",
   tileScale: 1.0,
   animationLevel: "standard",
   similarResultCount: 35,

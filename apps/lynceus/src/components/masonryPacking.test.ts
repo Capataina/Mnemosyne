@@ -18,6 +18,7 @@ function tile(
   return {
     id,
     url: `mock://${id}`,
+    hasThumbnail: true,
     width: w,
     height: h,
     name: `tile-${id}`,

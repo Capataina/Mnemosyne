@@ -1,7 +1,7 @@
 // Prevents additional console window on Windows in release, DO NOT REMOVE!!
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-use image_browser_lib::{db, paths, perf};
+use lynceus_lib::{db, paths, perf};
 use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 
 fn main() {
@@ -46,7 +46,7 @@ fn main() {
     // what the human-readable terminal output shows.
     let _ = profiling; // currently unused; kept above for future use
     let env_filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| {
-        EnvFilter::new("warn,image_browser_lib=info,image_browser=info")
+        EnvFilter::new("warn,lynceus_lib=info,lynceus=info,mnemosyne=info")
     });
 
     let registry = tracing_subscriber::registry()
@@ -97,5 +97,5 @@ fn main() {
     let database = db::ImageDatabase::new(&db_path).expect("failed to init db");
     database.initialize().expect("failed to create tables");
 
-    image_browser_lib::run(database, db_path);
+    lynceus_lib::run(database, db_path);
 }

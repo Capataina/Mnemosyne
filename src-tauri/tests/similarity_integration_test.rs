@@ -1,5 +1,5 @@
-use image_browser_lib::similarity_and_semantic_search::cosine_similarity::CosineIndex;
-use image_browser_lib::similarity_and_semantic_search::encoder::ClipImageEncoder;
+use lynceus_lib::similarity_and_semantic_search::cosine_similarity::CosineIndex;
+use lynceus_lib::similarity_and_semantic_search::encoder::ClipImageEncoder;
 use ndarray::Array1;
 use std::fs;
 use std::path::PathBuf;

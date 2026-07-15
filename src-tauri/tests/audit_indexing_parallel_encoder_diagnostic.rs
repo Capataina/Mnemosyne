@@ -19,7 +19,7 @@
 //! regression gate.
 
 use std::sync::atomic::Ordering;
-use image_browser_lib::indexing::{IndexingState, IndexingProgress, Phase};
+use lynceus_lib::indexing::{IndexingState, IndexingProgress, Phase};
 
 #[test]
 #[ignore = "audit diagnostic — documents the dead-parameter contract of run_encoder_phase"]

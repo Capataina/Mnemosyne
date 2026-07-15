@@ -2202,40 +2202,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "image-browser"
-version = "0.1.0"
-dependencies = [
- "accelerate-src",
- "base64 0.22.1",
- "bincode",
- "blas-src",
- "bytemuck",
- "dirs",
- "fast_image_resize",
- "image",
- "jpeg-decoder",
- "ndarray 0.17.1",
- "notify",
- "notify-debouncer-mini",
- "ort",
- "rand 0.9.2",
- "rayon",
- "rusqlite",
- "serde",
- "serde_json",
- "sysinfo",
- "tauri",
- "tauri-build",
- "tauri-plugin-dialog",
- "tauri-plugin-opener",
- "tempfile",
- "tokenizers",
- "tracing",
- "tracing-subscriber",
- "ureq",
-]
-
-[[package]]
 name = "image-webp"
 version = "0.2.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2645,6 +2611,41 @@ dependencies = [
 ]
 
 [[package]]
+name = "lynceus"
+version = "0.2.0"
+dependencies = [
+ "accelerate-src",
+ "base64 0.22.1",
+ "bincode",
+ "blas-src",
+ "bytemuck",
+ "dirs",
+ "fast_image_resize",
+ "image",
+ "jpeg-decoder",
+ "mnemosyne",
+ "ndarray 0.17.1",
+ "notify",
+ "notify-debouncer-mini",
+ "ort",
+ "rand 0.9.2",
+ "rayon",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "sysinfo",
+ "tauri",
+ "tauri-build",
+ "tauri-plugin-dialog",
+ "tauri-plugin-opener",
+ "tempfile",
+ "tokenizers",
+ "tracing",
+ "tracing-subscriber",
+ "ureq",
+]
+
+[[package]]
 name = "mac"
 version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2773,6 +2774,24 @@ dependencies = [
  "log",
  "wasi 0.11.1+wasi-snapshot-preview1",
  "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "mnemosyne"
+version = "0.2.0"
+dependencies = [
+ "bincode",
+ "bytemuck",
+ "dirs",
+ "ndarray 0.17.1",
+ "rand 0.9.2",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "sysinfo",
+ "tempfile",
+ "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]

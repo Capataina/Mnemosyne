@@ -8,9 +8,9 @@
 //! orphan-detection pass — all the moving parts that broke in
 //! recent sessions.
 
-use image_browser_lib::db::ImageDatabase;
-use image_browser_lib::filesystem::ImageScanner;
-use image_browser_lib::thumbnail::ThumbnailGenerator;
+use lynceus_lib::db::ImageDatabase;
+use lynceus_lib::filesystem::ImageScanner;
+use lynceus_lib::thumbnail::ThumbnailGenerator;
 use std::fs;
 use std::path::PathBuf;
 

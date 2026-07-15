@@ -16,7 +16,7 @@
 //! `impl CosineIndex` side-effect.
 //!
 //! `cosine_similarity.rs` is preserved as a re-export shim so existing
-//! `crate::similarity_and_semantic_search::cosine_similarity::CosineIndex`
+//! `crate::cosine_similarity::CosineIndex`
 //! imports continue to work without any caller changes.
 
 mod cache;

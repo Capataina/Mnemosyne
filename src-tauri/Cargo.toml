@@ -1,8 +1,8 @@
 [package]
-name = "image-browser"
-version = "0.1.0"
-description = "A Tauri App"
-authors = ["you"]
+name = "lynceus"
+version = "0.2.0"
+description = "Lynceus — local-first semantic image browser; the image vertical of the Mnemosyne engine."
+authors = ["Ata Caner Cetinkaya"]
 edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
@@ -11,7 +11,7 @@ edition = "2021"
 # The `_lib` suffix may seem redundant but it is necessary
 # to make the lib name unique and wouldn't conflict with the bin name.
 # This seems to be only an issue on Windows, see https://github.com/rust-lang/cargo/issues/8519
-name = "image_browser_lib"
+name = "lynceus_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]
@@ -19,6 +19,9 @@ tauri-build = { version = "2", features = [] }
 
 # Cross-platform deps that don't change per OS.
 [dependencies]
+# Mnemosyne — the media-agnostic catalogue + retrieval engine. Path dependency
+# with no frozen API until a second product proves the seams.
+mnemosyne = { path = "../crates/engine" }
 rusqlite = { version = "0.37.0", features = ["bundled"] }
 tauri = { version = "2", features = ["protocol-asset"] }
 tauri-plugin-opener = "2"

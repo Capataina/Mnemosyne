@@ -23,7 +23,7 @@
 //! recommends changing; running it as part of CI would lock in the
 //! current shape.
 
-use image_browser_lib::settings::Settings;
+use lynceus_lib::settings::Settings;
 
 const TEXT_CAPABLE: &[&str] = &["clip_vit_b_32", "siglip2_base"];
 

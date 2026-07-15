@@ -12,6 +12,10 @@ dist
 dist-ssr
 *.local
 
+# Cargo build output. Now a workspace-root target/ (the crates share one
+# build directory); the per-crate src-tauri/.gitignore covered the old layout.
+/target/
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json

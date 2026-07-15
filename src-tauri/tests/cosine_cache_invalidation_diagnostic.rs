@@ -1,8 +1,8 @@
 use std::sync::{Arc, Mutex};
 
-use image_browser_lib::db::ImageDatabase;
-use image_browser_lib::similarity_and_semantic_search::cosine::CosineIndex;
-use image_browser_lib::CosineIndexState;
+use lynceus_lib::db::ImageDatabase;
+use lynceus_lib::similarity_and_semantic_search::cosine::CosineIndex;
+use lynceus_lib::CosineIndexState;
 
 fn fresh_db() -> (tempfile::TempDir, ImageDatabase) {
     let dir = tempfile::tempdir().unwrap();

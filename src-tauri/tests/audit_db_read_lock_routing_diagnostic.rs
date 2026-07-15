@@ -26,7 +26,7 @@
 //! Marked `#[ignore]` because the assertions document audit findings
 //! rather than guard regressions.
 
-use image_browser_lib::db::ImageDatabase;
+use lynceus_lib::db::ImageDatabase;
 
 fn fresh_db() -> (tempfile::TempDir, ImageDatabase) {
     let dir = tempfile::tempdir().unwrap();

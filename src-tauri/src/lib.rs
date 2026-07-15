@@ -19,19 +19,21 @@ use crate::{
 };
 
 // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
+//
+// Media-agnostic modules now live in the Mnemosyne engine crate. They are
+// re-exported here under their original crate-root paths so every existing
+// `crate::paths::…`, `crate::db::…`, `crate::perf::…` call site keeps
+// resolving unchanged — the engine extraction is a move, not an API change.
+pub use mnemosyne::{db, image_struct, paths, perf, perf_report, root_struct, tag_struct};
+
+// Product-specific modules — the image encoders, thumbnailer, indexing
+// pipeline, watcher, and Tauri command surface — stay in this crate.
 pub mod commands;
-pub mod db;
 pub mod filesystem;
-pub mod image_struct;
 pub mod indexing;
 pub mod model_download;
-pub mod paths;
-pub mod perf;
-pub mod perf_report;
-pub mod root_struct;
 pub mod settings;
 pub mod similarity_and_semantic_search;
-pub mod tag_struct;
 pub mod thumbnail;
 pub mod watcher;
 

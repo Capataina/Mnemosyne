@@ -367,6 +367,7 @@ export default function Home() {
         {selectedItem && isInspecting && (
           <PinterestModal
             item={selectedItem}
+            timerCandidates={tieredSimilarImages.data ?? []}
             onClose={handleCloseInspect}
             onNavigate={handleNavigate}
             tags={tags.data}

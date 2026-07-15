@@ -10,16 +10,25 @@ import type React from "react";
 
 export function Section({
   title,
+  description,
   children,
 }: {
   title: string;
+  description?: string;
   children: React.ReactNode;
 }) {
   return (
-    <section className="space-y-4 border-b border-border pb-7 last:border-b-0 last:pb-1">
-      <h3 className="text-[13px] font-[620] tracking-[-0.015em] text-foreground">
-        {title}
-      </h3>
+    <section className="space-y-4 border-b border-border py-6 first:pt-0 last:border-b-0 last:pb-0">
+      <div className="space-y-1">
+        <h3 className="text-[13px] font-[640] tracking-[-0.015em] text-foreground">
+          {title}
+        </h3>
+        {description && (
+          <p className="max-w-[38ch] text-[11px] leading-[1.55] text-muted-foreground">
+            {description}
+          </p>
+        )}
+      </div>
       {children}
     </section>
   );
@@ -35,11 +44,11 @@ export function Field({
   children: React.ReactNode;
 }) {
   return (
-    <div className="space-y-2">
-      <div className="flex items-start justify-between gap-4 text-[12px]">
+    <div className="space-y-2.5">
+      <div className="flex items-start justify-between gap-4">
         <span className="font-[540] leading-snug text-foreground">{label}</span>
         {hint && (
-          <span className="shrink-0 text-right text-[11px] leading-snug tabular-nums text-muted-foreground">
+          <span className="shrink-0 text-right text-[10.5px] leading-snug tabular-nums text-muted-foreground">
             {hint}
           </span>
         )}
@@ -85,14 +94,14 @@ export function SegmentedButtons<T extends string>({
   options: Array<{ value: T; label: string; icon?: React.ReactNode }>;
 }) {
   return (
-    <div className="flex rounded-[11px] border border-border bg-surface-sunken/55 p-1">
+    <div className="flex rounded-[10px] border border-border bg-surface-sunken/55 p-1">
       {options.map((opt) => (
         <button
           key={opt.value}
           onClick={() => onChange(opt.value)}
           aria-pressed={value === opt.value}
           className={[
-            "flex min-h-8 flex-1 items-center justify-center gap-1.5 rounded-lg border px-2 py-1.5 text-[11px] font-[560] transition-[color,background-color,border-color,box-shadow,transform] duration-200 active:scale-[0.98]",
+            "flex min-h-8 flex-1 items-center justify-center gap-1.5 rounded-[7px] border px-2 py-1.5 text-[11px] font-[580] transition-[color,background-color,border-color,box-shadow,transform] duration-200 active:scale-[0.98]",
             value === opt.value
               ? "border-primary/25 bg-primary/10 text-foreground shadow-[inset_0_1px_0_oklch(0.98_0.005_245/0.05)]"
               : "border-transparent text-muted-foreground hover:bg-accent/55 hover:text-foreground",

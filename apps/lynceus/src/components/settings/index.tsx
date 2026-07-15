@@ -64,14 +64,14 @@ export function SettingsDrawer({ open, onClose }: SettingsDrawerProps) {
             animate={{ x: 0 }}
             exit={{ x: "100%" }}
             transition={{ type: "spring", stiffness: 360, damping: 36 }}
-            className="fixed top-0 right-0 z-[91] flex h-[100dvh] w-[420px] max-w-full flex-col border-l border-border bg-card shadow-[var(--shadow-float)]"
+            className="fixed top-0 right-0 z-[91] flex h-[100dvh] w-[min(430px,100vw)] flex-col border-l border-border bg-card shadow-[var(--shadow-float)]"
           >
             {/* Header */}
-            <div className="chrome-surface sticky top-0 z-10 flex items-center justify-between border-b px-6 py-5">
+            <div className="chrome-surface sticky top-0 z-10 flex items-center justify-between border-b px-6 py-[18px]">
               <div>
                 <h2 className="text-[17px] font-[620] tracking-[-0.025em]">Settings</h2>
                 <p className="mt-0.5 text-[11px] text-muted-foreground">
-                  Library and viewing preferences
+                  Library, search, and display
                 </p>
               </div>
               <button
@@ -83,14 +83,16 @@ export function SettingsDrawer({ open, onClose }: SettingsDrawerProps) {
               </button>
             </div>
 
-            <div className="flex-1 space-y-7 overflow-y-auto px-6 py-6 text-sm">
+            <div className="flex-1 overflow-y-auto px-6 py-6 text-[12px]">
               <ThemeSection />
               <DisplaySection />
               <SearchSection />
               <FoldersSection />
               <EncoderSection />
               <StatsSection />
-              <ResetSection />
+              <div className="pt-6">
+                <ResetSection />
+              </div>
             </div>
           </motion.aside>
         </>

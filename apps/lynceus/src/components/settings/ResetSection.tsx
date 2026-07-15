@@ -26,10 +26,10 @@ export function ResetSection() {
       }}
       onMouseLeave={() => setArmed(false)}
       className={[
-        "flex h-10 w-full items-center justify-center gap-2 rounded-[10px] border px-3 text-[12px] font-[580] transition-[color,background-color,border-color,transform] active:scale-[0.98]",
+        "flex h-10 w-full items-center justify-start gap-2 rounded-[10px] border px-3 text-[11.5px] font-[580] transition-[color,background-color,border-color,transform] active:scale-[0.98]",
         armed
           ? "border-destructive/55 bg-destructive/10 text-destructive"
-          : "border-border bg-transparent text-destructive hover:border-destructive/40 hover:bg-destructive/[0.06]",
+          : "border-border bg-transparent text-destructive/90 hover:border-destructive/40 hover:bg-destructive/[0.06] hover:text-destructive",
       ].join(" ")}
     >
       <RotateCcw className="h-3.5 w-3.5" strokeWidth={1.8} />

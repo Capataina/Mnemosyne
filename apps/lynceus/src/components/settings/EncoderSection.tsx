@@ -123,16 +123,11 @@ export function EncoderSection() {
   }
 
   return (
-    <Section title="Encoders">
-      <p className="-mt-1 text-[11px] leading-relaxed text-muted-foreground">
-        Enabled encoders run during indexing and contribute to{" "}
-        <strong className="font-[620] text-foreground/85">multi-encoder fusion</strong> for image-image and
-        text-image search. Disabled encoders are skipped on the next
-        indexing pass and excluded from fusion. Existing embeddings stay
-        on disk, so re-enabling is instant.
-      </p>
-
-      <div className="space-y-2.5">
+    <Section
+      title="Encoders"
+      description="Enabled models contribute to search fusion. Disabling one skips future indexing without deleting its existing embeddings."
+    >
+      <div className="overflow-hidden rounded-[11px] border border-border bg-surface/35">
         {encoders.map((enc) => (
           <EncoderToggle
             key={enc.id}
@@ -159,27 +154,29 @@ function EncoderToggle({
   onChange: (want: boolean) => void;
 }) {
   return (
-    <div className="rounded-[11px] border border-border bg-surface/55 p-3.5 transition-colors hover:border-border-strong">
+    <div className="border-b border-border px-3.5 py-3 last:border-b-0">
       <div className="flex items-start justify-between gap-3">
-        <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-2">
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
             <span className="text-[12px] font-[620] text-foreground">
               {info.display_name}
             </span>
             <span className="text-[10px] tabular-nums text-muted-foreground">
-              {info.dim}-dim
+              {info.dim} dimensions
+            </span>
+            <span className="text-[10px] text-muted-foreground">
               {info.supports_image && info.supports_text
-                ? " · image + text"
+                ? "Image and text"
                 : info.supports_image
-                  ? " · image-only"
-                  : " · text-only"}
+                  ? "Image only"
+                  : "Text only"}
             </span>
           </div>
           <details className="mt-1.5 text-[10.5px] leading-relaxed text-muted-foreground">
-            <summary className="cursor-pointer transition-colors hover:text-foreground">
-              What does this encoder bring?
+            <summary className="w-fit cursor-pointer transition-colors hover:text-foreground">
+              Role in search
             </summary>
-            <p className="mt-1.5 border-l border-border pl-3 leading-relaxed">
+            <p className="mt-1.5 max-w-[34ch] leading-relaxed">
               {info.description}
             </p>
           </details>

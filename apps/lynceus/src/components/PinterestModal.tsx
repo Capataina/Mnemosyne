@@ -1,9 +1,10 @@
 import { useEffect, useState } from "react";
-import { ImageItem, Tag } from "../types";
+import { ImageItem, SimilarImageItem, Tag } from "../types";
 import { motion, AnimatePresence } from "framer-motion";
 import { X } from "lucide-react";
 import { TagDropdown } from "./TagDropdown";
 import { Badge } from "./ui/badge";
+import { GestureTimer } from "../features/gesture-timer/GestureTimer";
 
 interface PinterestModalProps {
   item: ImageItem | null;
@@ -17,6 +18,9 @@ interface PinterestModalProps {
   /** Free-text annotation for this image (Phase 11) */
   notes?: string;
   onSaveNotes?: (imageId: number, notes: string) => void;
+  /** The current image's similar-set (ranked most→least similar), fed to
+   *  the gesture-drawing timer mode as its candidate pool. */
+  timerCandidates?: SimilarImageItem[];
 }
 
 /**
@@ -114,6 +118,11 @@ export function PinterestModal(props: PinterestModalProps) {
               className="relative max-h-full max-w-full rounded-[14px] object-contain shadow-[0_24px_70px_-36px_var(--shadow-color)]"
               loading="eager"
               decoding="async"
+            />
+
+            <GestureTimer
+              startingImage={props.item}
+              candidateImages={props.timerCandidates ?? []}
             />
           </div>
 

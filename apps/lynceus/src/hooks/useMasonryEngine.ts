@@ -13,23 +13,6 @@ import {
   type MasonryItemPlacement,
 } from "../components/masonryPacking";
 
-/**
- * Live drag-resize preview for the single active tile: its footprint in
- * the packer is the rounded `span` (so the rest of the grid reflows in
- * whole-column steps), but the tile itself is rendered at a *continuous*
- * pixel width so the resize follows the pointer smoothly instead of
- * jumping a whole column at a time. On release the caller commits the
- * rounded span and the two converge.
- */
-export interface ResizePreview {
-  id: number;
-  /** Continuous rendered width in px for the active tile. */
-  px: number;
-  /** True for left-side corners: anchor the tile's right edge so it
-   *  grows leftward, matching which corner the pointer grabbed. */
-  leftAnchored: boolean;
-}
-
 interface MasonryEngineInput {
   items: ImageItem[] | undefined;
   selectedItem: ImageItem | null;
@@ -40,14 +23,13 @@ interface MasonryEngineInput {
   tileScale?: number;
   /** id → rounded span, for the resize footprint. */
   spanOverrides?: Record<number, number>;
-  /** Continuous-width override for the active resize tile. */
-  resizePreview?: ResizePreview | null;
   /** The tile currently being drag-reordered — never culled. */
   dragItemId: number | null;
   // Shell-owned refs the engine populates so the interaction hooks can
   // read live layout data without re-subscribing on every pointer move.
   containerRef: RefObject<HTMLDivElement | null>;
   placementsRef: RefObject<MasonryItemPlacement[]>;
+  placementByIdRef: RefObject<Map<number, MasonryItemPlacement>>;
   columnWidthRef: RefObject<number>;
   columnCountRef: RefObject<number>;
 }
@@ -81,32 +63,16 @@ function findScrollContainer(el: HTMLElement | null): HTMLElement | null {
   );
 }
 
-/** Apply the continuous-width resize preview to the active placement. */
-function applyResizePreview(
-  placements: MasonryItemPlacement[],
-  preview: ResizePreview | null | undefined,
-): MasonryItemPlacement[] {
-  if (!preview) return placements;
-  return placements.map((p) => {
-    if (p.itemData.id !== preview.id) return p;
-    const aspect = p.itemData.height / p.itemData.width;
-    const width = preview.px;
-    const height = width * aspect;
-    // Left corners anchor the tile's right edge (grow leftward); right
-    // corners keep x fixed (grow rightward).
-    const x = preview.leftAnchored ? p.x + p.width - width : p.x;
-    return { ...p, x, width, height };
-  });
-}
-
 /**
  * The headless masonry engine: pure layout (shortest-column packing via
  * computeMasonryLayout) plus viewport virtualization. It owns no
  * interaction state — drag-reorder and drag-resize live in their own
- * hooks and feed their preview state in through `spanOverrides`,
- * `resizePreview`, and `dragItemId`. Extracted from the old 514-line
- * Masonry component so the packing/virtualization is testable and the
- * component shell stays thin.
+ * hooks and feed only structural state through `spanOverrides` and
+ * `dragItemId`. Extracted from the old 514-line Masonry component so the
+ * packing/virtualization is testable and the component shell stays thin.
+ * Continuous gesture pixels never enter this hook: resize width and drag
+ * position are imperative writes to one tile, while this engine runs only
+ * for structural inputs and rounded footprints.
  */
 export function useMasonryEngine(input: MasonryEngineInput): MasonryEngine {
   const {
@@ -118,10 +84,10 @@ export function useMasonryEngine(input: MasonryEngineInput): MasonryEngine {
     columnCountOverride,
     tileScale,
     spanOverrides,
-    resizePreview,
     dragItemId,
     containerRef,
     placementsRef,
+    placementByIdRef,
     columnWidthRef,
     columnCountRef,
   } = input;
@@ -149,10 +115,10 @@ export function useMasonryEngine(input: MasonryEngineInput): MasonryEngine {
       tileScale,
       spanOverrides,
     });
-    const patched = applyResizePreview(out.placements, resizePreview);
     setHeight(out.height);
-    setPlacements(patched);
-    placementsRef.current = patched;
+    setPlacements(out.placements);
+    placementsRef.current = out.placements;
+    placementByIdRef.current = out.placementById;
     columnWidthRef.current = out.columnWidth;
     columnCountRef.current = out.columnCount;
   }, [
@@ -164,9 +130,9 @@ export function useMasonryEngine(input: MasonryEngineInput): MasonryEngine {
     columnCountOverride,
     tileScale,
     spanOverrides,
-    resizePreview,
     containerRef,
     placementsRef,
+    placementByIdRef,
     columnWidthRef,
     columnCountRef,
   ]);
@@ -179,7 +145,10 @@ export function useMasonryEngine(input: MasonryEngineInput): MasonryEngine {
   useEffect(() => {
     const onResize = () => refreshLayoutDebounced();
     window.addEventListener("resize", onResize);
-    return () => window.removeEventListener("resize", onResize);
+    return () => {
+      window.removeEventListener("resize", onResize);
+      refreshLayoutDebounced.cancel();
+    };
   }, [refreshLayoutDebounced]);
 
   useEffect(() => {

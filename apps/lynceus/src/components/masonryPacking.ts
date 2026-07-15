@@ -46,16 +46,19 @@ export interface MasonryLayoutInput {
   /** Multiplier on minItemWidth in auto mode. Default 1.0. */
   tileScale?: number;
   /**
-   * Live drag-resize preview: item id → column span, consulted ahead
-   * of `itemData.manualColSpan`. Lets Masonry.tsx re-flow the grid on
-   * every pointer-move during an active resize without waiting for
-   * the persisted value to round-trip through the backend.
+   * Discrete drag-resize footprint: item id → rounded column span,
+   * consulted ahead of `itemData.manualColSpan`. Pixel-level preview is
+   * intentionally absent from the packer; the shell changes this value
+   * only when the pointer crosses a column boundary.
    */
   spanOverrides?: Record<number, number>;
 }
 
 export interface MasonryLayoutOutput {
   placements: MasonryItemPlacement[];
+  /** O(1) active-gesture lookup, built during the pack without a second
+   *  100k-item traversal in the rendering hook. */
+  placementById: Map<number, MasonryItemPlacement>;
   height: number;
   columnCount: number;
   /** Pixel width of a single column — needed by the resize handle to
@@ -79,7 +82,13 @@ export function computeMasonryLayout(
   } = input;
 
   if (containerWidth <= 0) {
-    return { placements: [], height: 0, columnCount: 0, columnWidth: 0 };
+    return {
+      placements: [],
+      placementById: new Map(),
+      height: 0,
+      columnCount: 0,
+      columnWidth: 0,
+    };
   }
 
   // Column count derivation: explicit override beats auto. Auto uses
@@ -94,6 +103,7 @@ export function computeMasonryLayout(
   const columnWidth =
     (containerWidth - (colCount - 1) * columnGap) / colCount;
   const placements: MasonryItemPlacement[] = [];
+  const placementById = new Map<number, MasonryItemPlacement>();
   const colHeights: number[] = new Array(colCount).fill(0);
 
   // Hero placement: selected item spans up to 3 columns at the top.
@@ -104,7 +114,7 @@ export function computeMasonryLayout(
     const ratio = selectedWidth / selectedItem.width;
     const selectedHeight = selectedItem.height * ratio;
 
-    placements.push({
+    const placement: MasonryItemPlacement = {
       itemData: selectedItem,
       x: 0,
       y: 0,
@@ -112,7 +122,9 @@ export function computeMasonryLayout(
       height: selectedHeight,
       isSelected: true,
       colSpan: selectedCols,
-    });
+    };
+    placements.push(placement);
+    placementById.set(selectedItem.id, placement);
 
     for (let i = 0; i < selectedCols; i++) {
       colHeights[i] = selectedHeight + verticalGap;
@@ -146,7 +158,7 @@ export function computeMasonryLayout(
     const placedWidth = columnWidth * span + columnGap * (span - 1);
     const ratio = placedWidth / img.width;
     const itemHeight = img.height * ratio;
-    placements.push({
+    const placement: MasonryItemPlacement = {
       itemData: img,
       x: bestStart * (columnWidth + columnGap),
       y: bestMax,
@@ -154,12 +166,20 @@ export function computeMasonryLayout(
       height: itemHeight,
       isSelected: false,
       colSpan: span,
-    });
+    };
+    placements.push(placement);
+    placementById.set(img.id, placement);
     for (let k = bestStart; k < bestStart + span; k++) {
       colHeights[k] = bestMax + itemHeight + verticalGap;
     }
   }
 
   const height = colHeights.length > 0 ? Math.max(...colHeights, 0) : 0;
-  return { placements, height, columnCount: colCount, columnWidth };
+  return {
+    placements,
+    placementById,
+    height,
+    columnCount: colCount,
+    columnWidth,
+  };
 }

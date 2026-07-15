@@ -7,6 +7,7 @@ export type ResizeCorner = "tl" | "tr" | "bl" | "br";
 function isLeftCorner(c: ResizeCorner): boolean {
   return c === "tl" || c === "bl";
 }
+
 /** Left corners invert the drag-delta sign so dragging "away from the
  *  tile" always grows it, regardless of which corner was grabbed. */
 function signForCorner(c: ResizeCorner): 1 | -1 {
@@ -16,11 +17,10 @@ function signForCorner(c: ResizeCorner): 1 | -1 {
 export interface ResizeState {
   id: number;
   corner: ResizeCorner;
-  /** Rounded span — the footprint the packer reflows the grid around. */
+  /** Span at pointer-down, used to avoid a no-op pack at gesture start. */
+  baseSpan: number;
+  /** Rounded span - the footprint the packer reflows the grid around. */
   previewSpan: number;
-  /** Continuous width in px — how wide the active tile actually renders,
-   *  so the resize follows the pointer smoothly. */
-  previewPx: number;
   leftAnchored: boolean;
 }
 
@@ -29,63 +29,183 @@ interface UseTileResizeInput {
   columnCountRef: RefObject<number>;
   columnGap: number;
   placementsRef: RefObject<MasonryItemPlacement[]>;
+  placementByIdRef: RefObject<Map<number, MasonryItemPlacement>>;
+  tileElementsRef: RefObject<Map<number, HTMLElement>>;
   onResizeCommit?: (id: number, colSpan: number | null) => void;
   /** Called on release so the click that follows a drag doesn't select. */
   suppressClick: () => void;
+}
+
+interface LiveResize {
+  id: number;
+  previewPx: number;
+  previewSpan: number;
 }
 
 /**
  * Drag-to-resize as a smooth pixel gesture that snaps to a whole column
  * span only on release.
  *
- * The old model set the span to `round(dx / columnWidth)` on every
- * pointer move, so nothing happened until the pointer crossed a full
- * column boundary and then the tile jumped a whole column — the "only
- * resizes when I cross the next column, looks weird" bug. Here the tile
- * renders at a continuous `previewPx` that tracks the pointer 1:1, while
- * `previewSpan` (the rounded footprint) is what the packer reflows the
- * rest of the grid around. On release we commit `previewSpan`, and the
- * visual width snaps to match its footprint.
+ * Continuous pointer positions deliberately never enter React state. Each
+ * pointermove only stores the latest x coordinate and schedules at most one
+ * requestAnimationFrame. That frame writes width + translate3d to the one
+ * active tile wrapper. React sees a state update only when the rounded span
+ * crosses a column boundary, which is the only moment the rest of the grid's
+ * footprint actually changes and an O(n) pack is warranted.
  */
 export function useTileResize(input: UseTileResizeInput) {
-  const { columnWidthRef, columnCountRef, columnGap, placementsRef } = input;
+  const {
+    columnWidthRef,
+    columnCountRef,
+    columnGap,
+    placementsRef,
+    placementByIdRef,
+    tileElementsRef,
+  } = input;
 
   const [resizeState, setResizeState] = useState<ResizeState | null>(null);
 
-  // Base captured at pointer-down; live layout read from refs so the
-  // move handler never needs to re-subscribe.
+  // Geometry captured at pointer-down. Live placements are read from the
+  // id map after discrete packs so rebasing the active wrapper stays O(1).
   const baseRef = useRef<{
     id: number;
     corner: ResizeCorner;
     startX: number;
     basePx: number;
   } | null>(null);
-  const stateRef = useRef<ResizeState | null>(null);
-  stateRef.current = resizeState;
-  // Callbacks via refs so the effect isn't torn down when the parent
-  // re-renders with fresh callback identities mid-drag.
+  const liveRef = useRef<LiveResize | null>(null);
+  const pendingClientXRef = useRef<number | null>(null);
+  const animationFrameRef = useRef<number | null>(null);
+
+  // Callbacks via refs so a parent render cannot tear down the active
+  // window listeners or make pointerup commit a stale callback.
   const commitRef = useRef(input.onResizeCommit);
   commitRef.current = input.onResizeCommit;
   const suppressRef = useRef(input.suppressClick);
   suppressRef.current = input.suppressClick;
 
-  const onResizeHandlePointerDown = useCallback(
-    (id: number, corner: ResizeCorner, e: React.PointerEvent<HTMLDivElement>) => {
-      const placement = placementsRef.current?.find(
-        (p) => p.itemData.id === id,
+  const writeTileVisual = useCallback(
+    (id: number, previewPx: number) => {
+      const node = tileElementsRef.current.get(id);
+      const placement = placementByIdRef.current.get(id);
+      const base = baseRef.current;
+      if (!node || !placement || !base) return;
+
+      // The packed anchor owns the rounded footprint. The child wrapper owns
+      // only the continuous difference. A left grip translates by that
+      // difference so the packed footprint's right edge remains anchored.
+      const offsetX = isLeftCorner(base.corner)
+        ? placement.width - previewPx
+        : 0;
+      node.style.width = `${previewPx}px`;
+      node.style.transform = `translate3d(${offsetX}px, 0, 0)`;
+    },
+    [placementByIdRef, tileElementsRef],
+  );
+
+  const applyPointerX = useCallback(
+    (clientX: number) => {
+      const base = baseRef.current;
+      if (!base) return;
+
+      const colWidth = columnWidthRef.current || 1;
+      const colCount = Math.max(1, columnCountRef.current || 1);
+      const fullWidth = colWidth * colCount + columnGap * (colCount - 1);
+      const dx = (clientX - base.startX) * signForCorner(base.corner);
+      const previewPx = Math.max(
+        colWidth,
+        Math.min(base.basePx + dx, fullWidth),
       );
+      const previewSpan = Math.max(
+        1,
+        Math.min(
+          Math.round((previewPx + columnGap) / (colWidth + columnGap)),
+          colCount,
+        ),
+      );
+
+      const previousSpan = liveRef.current?.previewSpan;
+      liveRef.current = { id: base.id, previewPx, previewSpan };
+      writeTileVisual(base.id, previewPx);
+
+      // This is the sole React update in the move path. It happens only at a
+      // rounded column boundary, not for every physical pointer pixel.
+      if (previewSpan !== previousSpan) {
+        setResizeState((previous) =>
+          previous ? { ...previous, previewSpan } : previous,
+        );
+      }
+    },
+    [columnCountRef, columnGap, columnWidthRef, writeTileVisual],
+  );
+
+  const cancelScheduledFrame = useCallback(() => {
+    if (animationFrameRef.current !== null) {
+      cancelAnimationFrame(animationFrameRef.current);
+      animationFrameRef.current = null;
+    }
+  }, []);
+
+  const schedulePointerX = useCallback(
+    (clientX: number) => {
+      pendingClientXRef.current = clientX;
+      if (animationFrameRef.current !== null) return;
+      animationFrameRef.current = requestAnimationFrame(() => {
+        animationFrameRef.current = null;
+        const pendingX = pendingClientXRef.current;
+        pendingClientXRef.current = null;
+        if (pendingX !== null) applyPointerX(pendingX);
+      });
+    },
+    [applyPointerX],
+  );
+
+  const flushPointerX = useCallback(
+    (clientX: number) => {
+      cancelScheduledFrame();
+      pendingClientXRef.current = null;
+      applyPointerX(clientX);
+    },
+    [applyPointerX, cancelScheduledFrame],
+  );
+
+  const clearTileVisual = useCallback(
+    (id: number) => {
+      const node = tileElementsRef.current.get(id);
+      if (!node) return;
+      node.style.width = "";
+      node.style.transform = "";
+      node.style.willChange = "";
+    },
+    [tileElementsRef],
+  );
+
+  const onResizeHandlePointerDown = useCallback(
+    (
+      id: number,
+      corner: ResizeCorner,
+      e: React.PointerEvent<HTMLDivElement>,
+    ) => {
+      const placement =
+        placementByIdRef.current.get(id) ??
+        placementsRef.current.find((candidate) => candidate.itemData.id === id);
       const basePx = placement?.width ?? columnWidthRef.current ?? 1;
       const baseSpan = placement?.colSpan ?? 1;
       baseRef.current = { id, corner, startX: e.clientX, basePx };
+      liveRef.current = { id, previewPx: basePx, previewSpan: baseSpan };
+
+      const node = tileElementsRef.current.get(id);
+      if (node) node.style.willChange = "width, transform";
+
       setResizeState({
         id,
         corner,
+        baseSpan,
         previewSpan: baseSpan,
-        previewPx: basePx,
         leftAnchored: isLeftCorner(corner),
       });
     },
-    [placementsRef, columnWidthRef],
+    [columnWidthRef, placementByIdRef, placementsRef, tileElementsRef],
   );
 
   const resizingId = resizeState?.id ?? null;
@@ -93,32 +213,25 @@ export function useTileResize(input: UseTileResizeInput) {
   useEffect(() => {
     if (resizingId === null) return;
 
-    const handleMove = (e: PointerEvent) => {
-      const base = baseRef.current;
-      if (!base) return;
-      const colWidth = columnWidthRef.current || 1;
-      const colCount = Math.max(1, columnCountRef.current || 1);
-      const fullWidth = colWidth * colCount + columnGap * (colCount - 1);
-      const dx = (e.clientX - base.startX) * signForCorner(base.corner);
-      const previewPx = Math.max(colWidth, Math.min(base.basePx + dx, fullWidth));
-      const previewSpan = Math.max(
-        1,
-        Math.min(Math.round((previewPx + columnGap) / (colWidth + columnGap)), colCount),
-      );
-      setResizeState((prev) =>
-        prev ? { ...prev, previewPx, previewSpan } : prev,
-      );
-    };
+    const handleMove = (e: PointerEvent) => schedulePointerX(e.clientX);
 
-    const handleUp = () => {
-      const s = stateRef.current;
-      if (s) {
-        commitRef.current?.(s.id, s.previewSpan === 1 ? null : s.previewSpan);
-        // The click that naturally follows this pointerup must not reach
-        // the tile's onClick (which would select the image).
+    const handleUp = (e: PointerEvent) => {
+      // Pointerup may beat the scheduled frame. Flush its exact coordinate so
+      // the committed span and final visual both reflect the release point.
+      flushPointerX(e.clientX);
+      const live = liveRef.current;
+      if (live) {
+        commitRef.current?.(
+          live.id,
+          live.previewSpan === 1 ? null : live.previewSpan,
+        );
+        // The click that naturally follows this pointerup must not reach the
+        // tile's onClick (which would select the image).
         suppressRef.current();
+        clearTileVisual(live.id);
       }
       baseRef.current = null;
+      liveRef.current = null;
       setResizeState(null);
     };
 
@@ -127,8 +240,23 @@ export function useTileResize(input: UseTileResizeInput) {
     return () => {
       window.removeEventListener("pointermove", handleMove);
       window.removeEventListener("pointerup", handleUp);
+      cancelScheduledFrame();
+      pendingClientXRef.current = null;
     };
-  }, [resizingId, columnWidthRef, columnCountRef, columnGap]);
+  }, [
+    cancelScheduledFrame,
+    clearTileVisual,
+    flushPointerX,
+    resizingId,
+    schedulePointerX,
+  ]);
 
-  return { resizeState, onResizeHandlePointerDown };
+  // Called by the shell after a discrete pack. It adjusts the child wrapper
+  // against its new packed anchor before paint, without changing React state.
+  const syncVisual = useCallback(() => {
+    const live = liveRef.current;
+    if (live) writeTileVisual(live.id, live.previewPx);
+  }, [writeTileVisual]);
+
+  return { resizeState, onResizeHandlePointerDown, syncVisual };
 }

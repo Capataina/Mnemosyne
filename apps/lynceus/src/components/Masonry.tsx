@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef } from "react";
 import { ImageItem } from "../types";
 import { MasonryItem } from "./MasonryItem";
 import { MasonryAnchor } from "./MasonryAnchor";
@@ -48,6 +48,11 @@ interface MasonryProps {
 export default function Masonry(props: MasonryProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const placementsRef = useRef<MasonryItemPlacement[]>([]);
+  const placementByIdRef = useRef<Map<number, MasonryItemPlacement>>(new Map());
+  // Only visible tiles have DOM nodes. Gesture hooks address the one active
+  // tile through this registry, keeping continuous pointer motion completely
+  // outside React while virtualization remains free to mount/unmount the rest.
+  const tileElementsRef = useRef<Map<number, HTMLElement>>(new Map());
   const columnWidthRef = useRef(0);
   const columnCountRef = useRef(0);
   // Consumed by the click handler right after a drag/resize pointerup, to
@@ -56,12 +61,20 @@ export default function Masonry(props: MasonryProps) {
   const suppressClick = useCallback(() => {
     suppressNextClickRef.current = true;
   }, []);
+  const registerTileElement = useCallback(
+    (id: number, node: HTMLElement | null) => {
+      if (node) tileElementsRef.current.set(id, node);
+      else tileElementsRef.current.delete(id);
+    },
+    [],
+  );
 
   const drag = useTileDrag({
     enabled: !!props.reorderEnabled,
     items: props.items,
     placementsRef,
-    containerRef,
+    placementByIdRef,
+    tileElementsRef,
     onReorder: props.onReorder,
     suppressClick,
   });
@@ -71,16 +84,22 @@ export default function Masonry(props: MasonryProps) {
     columnCountRef,
     columnGap: props.columnGap,
     placementsRef,
+    placementByIdRef,
+    tileElementsRef,
     onResizeCommit: props.onResizeCommit,
     suppressClick,
   });
 
   const rs = resize.resizeState;
   const effectiveItems = drag.workingOrder ?? props.items;
-  const spanOverrides = rs ? { [rs.id]: rs.previewSpan } : undefined;
-  const resizePreview = rs
-    ? { id: rs.id, px: rs.previewPx, leftAnchored: rs.leftAnchored }
-    : null;
+  // The packer's resize input is deliberately keyed only by the rounded
+  // footprint. Pixel motion lives in useTileResize's imperative rAF path, so
+  // dozens of pointer events within one column keep this object's identity
+  // stable and cannot retrigger an O(n) pack.
+  const spanOverrides = useMemo(() => {
+    if (!rs || rs.previewSpan === rs.baseSpan) return undefined;
+    return { [rs.id]: rs.previewSpan };
+  }, [rs?.id, rs?.previewSpan, rs?.baseSpan]);
 
   const { visiblePlacements, height } = useMasonryEngine({
     items: effectiveItems,
@@ -91,13 +110,23 @@ export default function Masonry(props: MasonryProps) {
     columnCountOverride: props.columnCountOverride,
     tileScale: props.tileScale,
     spanOverrides,
-    resizePreview,
     dragItemId: drag.dragItemId,
     containerRef,
     placementsRef,
+    placementByIdRef,
     columnWidthRef,
     columnCountRef,
   });
+
+  // A discrete pack can move the active tile's anchor beneath its imperative
+  // wrapper transform. Rebase that transform before paint so the resize edge
+  // or dragged tile remains exactly under the pointer through the reflow.
+  // This runs only after React work (span boundary, hover swap, viewport
+  // change), never for the continuous pointermove frames themselves.
+  useLayoutEffect(() => {
+    resize.syncVisual();
+    drag.syncVisual();
+  }, [visiblePlacements, resize.syncVisual, drag.syncVisual]);
 
   const handleItemClick = useCallback(
     (item: ImageItem) => {
@@ -134,15 +163,11 @@ export default function Masonry(props: MasonryProps) {
       {visiblePlacements.map((item) => {
         const id = item.itemData.id;
         const isDraggingThis = id === drag.dragItemId;
-        // The dragged tile is pinned under the pointer (dragVisual);
-        // every other tile sits at its packed slot and reflows around it.
-        const ax = isDraggingThis && drag.dragVisual ? drag.dragVisual.x : item.x;
-        const ay = isDraggingThis && drag.dragVisual ? drag.dragVisual.y : item.y;
         return (
           <MasonryAnchor
             key={`${id}-${item.itemData.url}`}
-            x={ax}
-            y={ay}
+            x={item.x}
+            y={item.y}
             width={item.width}
             onTop={item.isSelected || isDraggingThis || id === resizingId}
             snap={id === resizingId || isDraggingThis}
@@ -156,11 +181,10 @@ export default function Masonry(props: MasonryProps) {
               animationLevel={props.animationLevel}
               reorderEnabled={props.reorderEnabled}
               isDragging={id === drag.dragItemId}
-              onDragHandlePointerDown={(e) => drag.onDragHandlePointerDown(id, e)}
+              onDragHandlePointerDown={drag.onDragHandlePointerDown}
               activeResizeCorner={id === resizingId ? resizingCorner : null}
-              onResizeHandlePointerDown={(corner, e) =>
-                resize.onResizeHandlePointerDown(id, corner, e)
-              }
+              onResizeHandlePointerDown={resize.onResizeHandlePointerDown}
+              onTileElement={registerTileElement}
             />
           </MasonryAnchor>
         );

@@ -329,6 +329,14 @@ export default function Masonry(props: MasonryProps) {
           state.previewSpan === 1 ? null : state.previewSpan,
         );
       }
+      // The click that naturally follows this pointerup must never
+      // reach the tile's onClick (which would select the image) —
+      // MasonryItem's own resize-handle onClick already stops
+      // propagation for the direct case, but if the pointer strayed
+      // off the handle during the drag, the click's target may be a
+      // different element entirely by release time, so this ref is
+      // the only mechanism that reliably catches that case too.
+      suppressNextClickRef.current = true;
       setResizeState(null);
     };
 

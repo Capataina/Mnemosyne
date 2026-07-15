@@ -161,6 +161,15 @@ export const MasonryItem = memo(function MasonryItem(props: MasonryItemProps) {
           alt={props.item.name}
           loading={props.isSelected ? "eager" : "lazy"}
           decoding="async"
+          // <img> is natively draggable in every browser/webview unless
+          // told otherwise. Without this, starting a drag (reorder OR
+          // resize) over the image itself hands the gesture to the
+          // browser's own HTML5 drag-and-drop instead of our pointer
+          // handlers — which is exactly the "shows a + cursor and
+          // nothing happens" symptom, since native drag consumes the
+          // pointer stream and our pointermove/pointerup listeners
+          // never see it.
+          draggable={false}
         />
 
         {/* Subtle dimming on hover for non-selected tiles. Selected
@@ -182,6 +191,11 @@ export const MasonryItem = memo(function MasonryItem(props: MasonryItemProps) {
             Hidden on the hero card, which already spans via a
             separate promotion mechanism. */}
         {!props.isSelected && (
+          // Oversized invisible hit zone around a small visible glyph:
+          // the 16px grip was hard to land a pointer on precisely, so
+          // pointerdown kept slipping onto the image next to it. The
+          // outer div is the real (larger) interactive target; the
+          // inner div is what's actually drawn.
           <div
             role="slider"
             aria-label={`Resize ${props.item.name}`}
@@ -190,15 +204,27 @@ export const MasonryItem = memo(function MasonryItem(props: MasonryItemProps) {
               e.stopPropagation();
               props.onResizeHandlePointerDown?.(e);
             }}
-            className={[
-              "absolute bottom-1.5 right-1.5 h-4 w-4 cursor-ew-resize rounded-sm",
-              "flex items-center justify-center transition-opacity duration-150",
-              props.isResizing
-                ? "opacity-100 bg-primary"
-                : "opacity-0 group-hover:opacity-80 bg-black/50 hover:bg-primary",
-            ].join(" ")}
+            onClick={(e) => {
+              // A click landing squarely on the handle must never
+              // reach the tile's own onClick (which selects the
+              // image) — this is the direct case; the "pointer
+              // strayed off the handle mid-drag" case is handled by
+              // Masonry.tsx's suppressNextClickRef instead, since by
+              // then the click's target may not even be this element.
+              e.stopPropagation();
+            }}
+            className="absolute -bottom-1 -right-1 h-7 w-7 cursor-ew-resize flex items-center justify-center"
           >
-            <div className="h-2 w-0.5 rounded-full bg-white/90" />
+            <div
+              className={[
+                "h-4 w-4 rounded-sm flex items-center justify-center transition-opacity duration-150",
+                props.isResizing
+                  ? "opacity-100 bg-primary"
+                  : "opacity-0 group-hover:opacity-80 bg-black/50 hover:bg-primary",
+              ].join(" ")}
+            >
+              <div className="h-2 w-0.5 rounded-full bg-white/90" />
+            </div>
           </div>
         )}
       </motion.div>

@@ -23,9 +23,10 @@ Everything runs locally. Embeddings are generated on your machine using ONNX Run
 
 - **Pinterest-style masonry grid** with shortest-column packing and aspect-ratio-preserving thumbnails — handles tens of thousands of images without performance degradation
 - **Infinite scroll** with virtualised loading via TanStack Query
-- **Adjustable column count, animation level, and sort mode** (shuffle, name, added, or custom)
-- **Drag-to-reorder and drag-to-resize** in Custom sort mode — drag any tile to reposition it, or grab any of its four corners to widen or narrow its column span; aspect ratio is always preserved
-- **Hover micro-interactions** and 3D tilt animations (toggleable for low-power preference)
+- **Adjustable column count, tile scale, and animation level**
+- **Shuffle-on-entry feed** — the grid shuffles fresh each time you open it or return from a search, and newly-indexed images pop into place as their thumbnails finish, without existing tiles ever jumping
+- **Drag-to-reorder and smooth drag-to-resize** — drag any tile to reposition it within the current view, or grab any of its four corners to resize it smoothly (it snaps to a whole column span on release); aspect ratio is always preserved, and a stretched tile automatically loads a higher-resolution thumbnail so it stays crisp
+- **Hover micro-interactions** (toggleable for low-power preference)
 - **Fullscreen modal inspector** with prev/next navigation, keyboard shortcuts, and inline tag/note editing
 - **Slideshow mode** — fullscreen auto-advancing slideshow over any view: main feed, tag-filtered results, or search results
 
@@ -69,7 +70,6 @@ Everything runs locally. Embeddings are generated on your machine using ONNX Run
 - **Theme** — light, dark, or system
 - **Display** — column count, animation level, image scale
 - **Search** — result counts, tag-filter mode (AND/OR)
-- **Sort** — shuffle, name, added, or custom (enables drag-to-reorder)
 - **Folders** — add, remove, enable/disable scan roots; trigger manual rescans
 - **Encoders** — per-encoder enable/disable toggles for image and text directions
 - **Reset** — clear preferences without touching the library
@@ -167,7 +167,7 @@ Image Browser runs as a Tauri 2 desktop application — React 19 frontend, Rust 
 ┌──────────────────────────────▼──────────────────────────────┐
 │                       Rust Backend                          │
 │                                                             │
-│  • commands/   — 26 Tauri commands, grouped by concern       │
+│  • commands/   — 31 Tauri commands, grouped by concern       │
 │  • db/         — SQLite (WAL, writer + read-only secondary) │
 │  • indexing.rs — single-flight pipeline (scan → thumbs →    │
 │                  encoders → cosine cache repopulation)       │
@@ -195,7 +195,7 @@ Image Browser runs as a Tauri 2 desktop application — React 19 frontend, Rust 
 ┌──────────────────────────────▼──────────────────────────────┐
 │                       ONNX Runtime                          │
 │                                                             │
-│  • CLIP ViT-B/32 vision + text (OpenAI, 512-d)              │
+│  • CLIP ViT-B/32 vision + text (OpenCLIP, 512-d)            │
 │  • DINOv2-Base vision (Meta, 768-d)                         │
 │  • SigLIP-2 Base 256 vision + text (Google, 768-d shared)   │
 │                                                             │
@@ -245,7 +245,7 @@ Future asset browsers — **Syrinx** (audio) and **Daedalus** (3D) — join as s
 - **Performance at scale** — thumbnail caching, embedding precomputation, cosine cache persistence, and parallel encoder execution mean the UI stays fast regardless of library size.
 - **Offline ML inference** — every encoder runs entirely via ONNX Runtime. No Python, no external ML service, no GPU required (CUDA used on non-macOS when available).
 - **Modularity and toggleability** — encoders are swappable; per-encoder toggles let you enable any subset without rebuilding. The fusion ranker adapts to whichever encoders are active.
-- **Separation of concerns** — React frontend, Tauri IPC layer, Rust backend logic, and SQLite persistence are cleanly separated and independently testable. 143 Rust unit tests + 68 Vitest tests gate every change.
+- **Separation of concerns** — React frontend, Tauri IPC layer, Rust backend logic, and SQLite persistence are cleanly separated and independently testable. 137 Rust unit tests + 71 Vitest tests gate every change.
 - **Observability when you need it, zero overhead when you don't** — the profiling layer is opt-in via a CLI flag and produces a structured markdown report on exit.
 
 ---

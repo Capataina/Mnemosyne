@@ -1,4 +1,4 @@
-import { useCallback, useRef } from "react";
+import { useCallback, useEffect, useRef } from "react";
 import { ImageItem } from "../types";
 import { MasonryItem } from "./MasonryItem";
 import { MasonryAnchor } from "./MasonryAnchor";
@@ -109,6 +109,22 @@ export default function Masonry(props: MasonryProps) {
     },
     [props.onItemClick],
   );
+
+  // Prefetch the similar-set of every on-screen tile once the view
+  // settles, so opening any visible image is instant — the cascade you
+  // described: launch → click → instant → click → instant. react-query
+  // dedupes, so each image is computed at most once per session; the
+  // 200ms debounce coalesces scroll churn so a fast scroll doesn't fire a
+  // query per intermediate frame. This scales because it's always ~the
+  // visible ~20-30 tiles, never the whole library.
+  useEffect(() => {
+    const prefetch = props.onItemHover;
+    if (!prefetch) return;
+    const t = setTimeout(() => {
+      for (const p of visiblePlacements) prefetch(p.itemData.id);
+    }, 200);
+    return () => clearTimeout(t);
+  }, [visiblePlacements, props.onItemHover]);
 
   const resizingId = rs?.id ?? null;
   const resizingCorner = rs?.corner ?? null;

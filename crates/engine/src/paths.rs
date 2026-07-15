@@ -31,6 +31,7 @@ use std::borrow::Cow;
 use std::fs;
 use std::io;
 use std::path::PathBuf;
+use std::sync::OnceLock;
 
 /// Strip the Windows extended-path prefix `\\?\` if present. Returns
 /// the input borrow unchanged when the prefix is absent (the common
@@ -153,12 +154,67 @@ pub fn thumbnails_dir_for_root(root_id: i64) -> PathBuf {
 /// loaded from Tauri's read-only resource dir; wiring that resolution through
 /// here (the engine can't reach Tauri's resolver directly, so the product
 /// crate will pass it in) is tracked as a productisation follow-up.
+/// Set once at Tauri app startup (release builds only) with the
+/// resolved `BaseDirectory::Resource` path for the bundled `models/`
+/// tree — `tauri.conf.json`'s `bundle.resources` copies
+/// `../../models` into the signed `.app`'s `Contents/Resources/`
+/// (macOS) at build time, and only the product crate can resolve that
+/// path (`app.path().resolve(...)`, a Tauri API the engine crate
+/// deliberately doesn't depend on — see the module-level doc comment
+/// on this file about the engine staying media/framework-agnostic).
+/// A `OnceLock` rather than a parameter threaded through every path
+/// call keeps `models_dir()`'s signature unchanged for the ~10
+/// existing call sites; `set_bundled_resource_dir` is a one-time
+/// startup call, not something that varies per-call the way
+/// `model_precision` does.
+static BUNDLED_RESOURCE_DIR: OnceLock<PathBuf> = OnceLock::new();
+
+/// Called once from the Tauri app's `setup` callback in a bundled
+/// (release) build. No-op in dev — `LYNCEUS_MODELS_DIR` already covers
+/// that case and takes priority over this tier regardless. Calling
+/// this more than once is a logic error (`OnceLock::set` returns
+/// `Err` and is silently ignored here rather than panicking, since a
+/// stale resolved path from a prior call is still a valid directory,
+/// not corrupt state worth crashing over).
+pub fn set_bundled_resource_dir(dir: PathBuf) {
+    let _ = BUNDLED_RESOURCE_DIR.set(dir);
+}
+
+/// Resolution order:
+///
+/// 1. **`LYNCEUS_MODELS_DIR` env var** — dev workflow, see below.
+/// 2. **Bundled resource dir** (`set_bundled_resource_dir`, release
+///    builds only) — the weights shipped inside the signed `.app`,
+///    read-only. Only used if the directory actually contains files;
+///    an empty or unpopulated resource dir (e.g. a dev build that
+///    called `set_bundled_resource_dir` with nothing copied there
+///    yet) falls through to tier 3 rather than returning a directory
+///    with nothing in it.
+/// 3. **`<app_data_dir>/models`** — the historical default/fallback,
+///    also where a first-launch download (pre-bundling era) landed.
+///
+/// This is the resolution that App Store distribution depends on:
+/// once `bundle.resources` in `tauri.conf.json` ships the weights and
+/// `set_bundled_resource_dir` is wired into `lib.rs`'s setup
+/// callback, a fresh install works fully offline from first launch —
+/// no first-run download, no App Review risk from network flakiness
+/// during review (the concrete failure mode: "reviewer environment
+/// hits HuggingFace rate-limiting, app looks non-functional, gets
+/// rejected").
 pub fn models_dir() -> PathBuf {
     if let Ok(override_path) = std::env::var("LYNCEUS_MODELS_DIR") {
         if !override_path.is_empty() {
             let dir = PathBuf::from(override_path);
             let _ = ensure_dir(&dir);
             return dir;
+        }
+    }
+    if let Some(resource_dir) = BUNDLED_RESOURCE_DIR.get() {
+        let has_files = fs::read_dir(resource_dir)
+            .map(|mut entries| entries.next().is_some())
+            .unwrap_or(false);
+        if has_files {
+            return resource_dir.clone();
         }
     }
     let p = app_data_dir().join("models");

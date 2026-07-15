@@ -9,6 +9,7 @@
 #![allow(clippy::doc_lazy_continuation)]
 
 use std::sync::{Arc, Mutex};
+use tauri::Manager;
 use tracing::{error, info, warn};
 
 use crate::{
@@ -298,6 +299,27 @@ pub fn run(db: ImageDatabase, db_path: String) {
             let indexing_state = indexing_state.clone();
             let watcher_state = watcher_state.clone();
             move |app| {
+                // Resolve the bundled models/ resource dir (release
+                // builds only — tauri.conf.json's bundle.resources
+                // copies it into Contents/Resources/ on macOS, alongside
+                // the equivalent on other platforms) and register it
+                // with the engine crate's models_dir() resolution, so
+                // a shipped .app loads its own weights instead of
+                // requiring a first-launch download. Dev builds have
+                // no bundle at all, so `resolve` returning Err here is
+                // the expected, silent, no-op case, not a startup
+                // failure — LYNCEUS_MODELS_DIR (dev) or the app-data
+                // fallback (an unbundled release build, which
+                // shouldn't happen for a real Mac App Store artifact
+                // but degrades gracefully rather than crashing if it
+                // does) still resolve models_dir() correctly either way.
+                if let Ok(resource_models_dir) = app
+                    .path()
+                    .resolve("models", tauri::path::BaseDirectory::Resource)
+                {
+                    paths::set_bundled_resource_dir(resource_models_dir);
+                }
+
                 // Startup diagnostic: snapshot of what's on disk +
                 // what's already encoded. Lets the on-exit report's
                 // Diagnostics section show "this session started with

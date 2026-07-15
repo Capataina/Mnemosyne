@@ -59,6 +59,28 @@ pub struct Settings {
     /// its embeddings.
     #[serde(default)]
     pub enabled_encoders: Option<Vec<String>>,
+
+    /// Which weight precision to load for every encoder: "fp32"
+    /// (default), "fp16", or "int8". `None` means fp32 — the original,
+    /// unquantized weights `download_models.py` fetches.
+    ///
+    /// Quantized variants are additive: `scripts/quantize_models.py`
+    /// writes `<name>_fp16.onnx` / `<name>_int8.onnx` next to the FP32
+    /// original in the same models/ directory and never touches the
+    /// original file, so switching this setting back to fp32 always
+    /// has something to fall back to. `paths::model_path_for` resolves
+    /// the precision-suffixed filename and silently falls back to the
+    /// FP32 file if the quantized variant isn't on disk (e.g. the user
+    /// picked "int8" before ever running the quantization script) —
+    /// see its doc comment for the exact fallback rule.
+    ///
+    /// As of 2026-07-15: fp16 quantization is not yet available for
+    /// any encoder (a real ONNX graph-transform bug in the conversion
+    /// tooling, not a missing feature — see quantize_models.py's
+    /// module docstring); int8 is available for all five encoder
+    /// files once `quantize_models.py --precision int8` has been run.
+    #[serde(default)]
+    pub model_precision: Option<String>,
 }
 
 /// Default encoder set when `enabled_encoders` is `None` — every

@@ -38,6 +38,7 @@ fn dinov2_only_settings_resolves_with_zero_text_capable_encoders() {
         scan_root: None,
         priority_image_encoder: None,
         enabled_encoders: Some(vec!["dinov2_base".to_string()]),
+        model_precision: None,
     };
     let resolved = s.resolved_enabled_encoders();
     assert_eq!(resolved, vec!["dinov2_base".to_string()]);
@@ -69,6 +70,7 @@ fn empty_enabled_list_falls_back_to_default_with_text_capable_encoders() {
         scan_root: None,
         priority_image_encoder: None,
         enabled_encoders: Some(vec![]),
+        model_precision: None,
     };
     let resolved = s.resolved_enabled_encoders();
     let intersection: Vec<&str> = TEXT_CAPABLE

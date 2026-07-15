@@ -40,6 +40,8 @@ interface MasonryItemProps {
   item: ImageItem;
   isSelected?: boolean;
   onClick: (item: ImageItem) => void;
+  /** Fired on pointer-enter — used to prefetch the tile's similar-set. */
+  onHover?: (id: number) => void;
   /** Reduce / disable animations per user setting. */
   animationLevel?: "subtle" | "standard" | "off";
   /** True when drag-to-reorder is available (adds the grab affordance). */
@@ -105,6 +107,7 @@ export const MasonryItem = memo(function MasonryItem(props: MasonryItemProps) {
       }}
       exit={{ opacity: 0, scale: 0.97 }}
       onClick={() => props.onClick(props.item)}
+      onMouseEnter={() => props.onHover?.(props.item.id)}
       onPointerDown={
         props.reorderEnabled ? props.onDragHandlePointerDown : undefined
       }

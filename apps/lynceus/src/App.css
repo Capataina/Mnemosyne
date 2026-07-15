@@ -270,10 +270,11 @@
   animation: skeleton-shimmer 1.8s cubic-bezier(0.4, 0, 0.2, 1) infinite;
 }
 
-.masonry-tile {
-  content-visibility: auto;
-  contain-intrinsic-size: auto 300px;
-}
+/* `.masonry-tile` intentionally carries no `content-visibility` — it
+   skipped painting tiles the browser judged off-screen, which during a
+   fast drag/reflow blanked tiles out until you hovered them (they
+   "disappeared"). The grid already virtualises (only in-view tiles
+   mount), so it was redundant as well as buggy. */
 
 .gallery-range {
   height: 18px;

@@ -1,27 +1,41 @@
 import { RotateCcw } from "lucide-react";
+import { useState } from "react";
 import { useUserPreferences } from "../../hooks/useUserPreferences";
-import { Section } from "./controls";
 
+/**
+ * Single-line reset control (no section header). Two-click confirm with
+ * escalating red *highlights* (not a block of red): the label is red at
+ * rest; the first click arms it — border + a faint red wash join the red
+ * text ("are you sure") — and the second click resets. Moving the pointer
+ * away disarms it, so it can't stay armed by accident.
+ */
 export function ResetSection() {
   const { resetAll } = useUserPreferences();
+  const [armed, setArmed] = useState(false);
 
   return (
-    <Section title="Reset">
-      <button
-        onClick={() => {
-          if (
-            window.confirm(
-              "Reset all UI preferences to defaults? Your images, tags, and folder list are NOT affected.",
-            )
-          ) {
-            resetAll();
-          }
-        }}
-        className="flex h-9 items-center gap-2 rounded-[10px] border border-border bg-transparent px-3 text-[11px] font-[560] text-muted-foreground transition-[color,background-color,border-color,transform] hover:border-border-strong hover:bg-accent hover:text-foreground active:scale-[0.98]"
-      >
-        <RotateCcw className="h-3.5 w-3.5" strokeWidth={1.8} />
-        Reset all preferences
-      </button>
-    </Section>
+    <button
+      type="button"
+      onClick={() => {
+        if (!armed) {
+          setArmed(true);
+          return;
+        }
+        resetAll();
+        setArmed(false);
+      }}
+      onMouseLeave={() => setArmed(false)}
+      className={[
+        "flex h-10 w-full items-center justify-center gap-2 rounded-[10px] border px-3 text-[12px] font-[580] transition-[color,background-color,border-color,transform] active:scale-[0.98]",
+        armed
+          ? "border-destructive/55 bg-destructive/10 text-destructive"
+          : "border-border bg-transparent text-destructive hover:border-destructive/40 hover:bg-destructive/[0.06]",
+      ].join(" ")}
+    >
+      <RotateCcw className="h-3.5 w-3.5" strokeWidth={1.8} />
+      {armed
+        ? "Are you sure? Click again to reset all preferences"
+        : "Reset all preferences"}
+    </button>
   );
 }

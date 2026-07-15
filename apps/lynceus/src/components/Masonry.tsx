@@ -30,6 +30,9 @@ interface MasonryProps {
    * back to single-column). Resize persists per-image (unlike reorder).
    */
   onResizeCommit?: (itemId: number, colSpan: number | null) => void;
+  /** Fired when the pointer enters a tile — used to prefetch its
+   *  similar-set so opening it is instant. */
+  onItemHover?: (id: number) => void;
 }
 
 /**
@@ -132,6 +135,7 @@ export default function Masonry(props: MasonryProps) {
               item={item.itemData}
               isSelected={item.isSelected}
               onClick={handleItemClick}
+              onHover={props.onItemHover}
               renderedWidth={item.width}
               animationLevel={props.animationLevel}
               reorderEnabled={props.reorderEnabled}

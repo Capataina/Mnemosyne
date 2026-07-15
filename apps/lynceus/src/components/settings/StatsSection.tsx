@@ -44,7 +44,7 @@ export function StatsSection() {
   const encoderLabel = (id: string): string => {
     switch (id) {
       case "clip_vit_b_32":
-        return "CLIP";
+        return "OpenCLIP";
       case "siglip2_base":
         return "SigLIP-2";
       case "dinov2_base":

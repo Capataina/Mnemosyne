@@ -644,4 +644,58 @@ mod tests {
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].1, "/kept/a.jpg");
     }
+
+    #[test]
+    fn clip_needs_set_reads_per_encoder_table_not_legacy_column() {
+        // Regression: CLIP's needs-encoding set must come from the
+        // per-encoder embeddings table (encoder_id "clip_vit_b_32"), the
+        // same source SigLIP-2 / DINOv2 use — NOT the legacy
+        // `images.embedding IS NULL` column. Under legacy_clip_too = false
+        // that legacy column is never written, so the old query returned
+        // the whole library on every launch and CLIP re-encoded
+        // everything, flashing "Encoding 100%" in the pill on a
+        // fully-indexed library.
+        let db = fresh_db();
+        db.add_image("/has_clip.jpg".into(), None).unwrap();
+        db.add_image("/no_clip.jpg".into(), None).unwrap();
+        let has = db.get_image_id_by_path("/has_clip.jpg").unwrap();
+
+        // Only /has_clip.jpg gets a per-encoder CLIP embedding.
+        db.upsert_embedding(has, "clip_vit_b_32", &[1.0, 0.0]).unwrap();
+
+        let needs: Vec<String> = db
+            .get_images_without_embedding_for("clip_vit_b_32")
+            .unwrap()
+            .into_iter()
+            .map(|(_, path)| path)
+            .collect();
+
+        // Core of the fix: already-embedded image skipped, un-embedded
+        // image still present.
+        assert!(
+            !needs.iter().any(|p| p == "/has_clip.jpg"),
+            "an image already CLIP-embedded must be skipped, got {needs:?}"
+        );
+        assert!(
+            needs.iter().any(|p| p == "/no_clip.jpg"),
+            "an image with no CLIP embedding must still be in the needs-set, got {needs:?}"
+        );
+
+        // Decoupling guard: writing the LEGACY column must NOT remove an
+        // image from the per-encoder needs-set — the two stores are
+        // independent for the needs decision, which is exactly why reading
+        // the legacy column was the bug.
+        let no = db.get_image_id_by_path("/no_clip.jpg").unwrap();
+        db.update_image_embedding(no, vec![0.5, 0.5]).unwrap();
+        let needs_after: Vec<String> = db
+            .get_images_without_embedding_for("clip_vit_b_32")
+            .unwrap()
+            .into_iter()
+            .map(|(_, path)| path)
+            .collect();
+        assert!(
+            needs_after.iter().any(|p| p == "/no_clip.jpg"),
+            "a legacy-column write must not remove an image from the per-encoder CLIP needs-set"
+        );
+    }
 }

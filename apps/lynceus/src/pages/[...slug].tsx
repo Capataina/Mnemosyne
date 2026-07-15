@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, useMemo, Profiler } from "react";
+import { useCallback, useEffect, useRef, useState, useMemo, Profiler } from "react";
 import Masonry from "../components/Masonry";
 import {
   useImages,
@@ -23,7 +23,7 @@ import { PerfOverlay } from "@/components/PerfOverlay";
 import { isProfilingEnabled, recordAction, onRenderProfiler } from "@/services/perf";
 import { useQueryClient } from "@tanstack/react-query";
 import { FolderPlus, Settings as SettingsIcon } from "lucide-react";
-import { pickScanFolder } from "@/services/images";
+import { pickScanFolder, fetchFusedSimilarImages } from "@/services/images";
 import { useAddRoot, useRoots } from "@/queries/useRoots";
 import { useUserPreferences } from "@/hooks/useUserPreferences";
 import { getImageNotes, setImageNotes } from "@/services/notes";
@@ -173,11 +173,22 @@ export default function Home() {
 
   const location = useLocation();
   const navigate = useNavigate();
-  // queryClient kept around as an explicit import-presence even though
-  // unused at the moment — we'll use it again when wiring the perf
-  // overlay or other refetch triggers. Suppress the dead-import lint.
-  const _queryClient = useQueryClient();
-  void _queryClient;
+  const queryClient = useQueryClient();
+
+  // Prefetch an image's similar-set on hover so opening it is instant.
+  // The first similarity query otherwise pays a one-time cosine-cache
+  // warm + the fusion compute; react-query then caches the result per
+  // image. Hovering before clicking (the normal path) hides that latency.
+  const prefetchSimilar = useCallback(
+    (imageId: number) => {
+      queryClient.prefetchQuery({
+        queryKey: ["fused-similar-images", imageId, prefs.imageEncoder, 30],
+        queryFn: () => fetchFusedSimilarImages(imageId, 30),
+        staleTime: 5 * 60 * 1000,
+      });
+    },
+    [queryClient, prefs.imageEncoder],
+  );
 
   // Determine which images to display:
   // Priority: 1) Similar images (when image selected) > 2) Semantic search > 3) All images
@@ -601,6 +612,7 @@ export default function Home() {
             reorderEnabled={reorderEnabled}
             onReorder={handleReorder}
             onResizeCommit={handleResizeCommit}
+            onItemHover={prefetchSimilar}
           />
         </Profiler>
       </div>

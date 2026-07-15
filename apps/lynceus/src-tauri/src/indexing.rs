@@ -793,10 +793,12 @@ fn run_encoder_phase(
             .map(|id| match id.as_str() {
                 // CLIP's model presence is guaranteed by the caller (it
                 // only invokes run_encoder_phase when image_model_path
-                // exists). It counts via the legacy-column query its loop
-                // uses.
+                // exists). It counts via the SAME per-encoder query its
+                // loop now uses (`get_images_without_embedding_for`), so a
+                // fully-indexed launch contributes 0 here → total 0 → no
+                // encode phase → the pill doesn't flash.
                 "clip_vit_b_32" => counts_db
-                    .get_images_without_embeddings()
+                    .get_images_without_embedding_for("clip_vit_b_32")
                     .map(|v| v.len())
                     .unwrap_or(0),
                 "siglip2_base" if siglip2_path.exists() => counts_db
@@ -953,8 +955,20 @@ fn run_clip_encoder_with_intra(
     intra_threads: usize,
     progress: &EncodeProgress,
 ) -> Result<(), String> {
+    // Needs-set from the PER-ENCODER embeddings store (encoder_id
+    // "clip_vit_b_32"), exactly as SigLIP-2 / DINOv2 do — NOT the legacy
+    // `images.embedding IS NULL` column. Under R8 (legacy_clip_too =
+    // false) that legacy column is never written, so the old query
+    // returned the entire library on every launch and CLIP re-encoded
+    // everything, flashing "Encoding 100%" in the pill even on a
+    // fully-indexed library. Reading the per-encoder table means an
+    // already-encoded image is correctly skipped (fully-indexed launch →
+    // empty set → no encode work), and it also excludes orphaned rows
+    // (deleted files) the way the legacy query did not. Returns
+    // `Vec<(ID, String)>` rather than `Vec<ImageData>`, so the loop below
+    // is tuple-shaped like run_trait_encoder.
     let needs_embed = database
-        .get_images_without_embeddings()
+        .get_images_without_embedding_for("clip_vit_b_32")
         .map_err(|e| e.to_string())?;
     let total = needs_embed.len();
     if total == 0 {
@@ -974,7 +988,7 @@ fn run_clip_encoder_with_intra(
     let mut failed_paths: Vec<String> = Vec::new();
     let mut sample_emitted = false;
     for chunk in needs_embed.chunks(BATCH_SIZE) {
-        let batch_paths: Vec<&Path> = chunk.iter().map(|i| Path::new(&i.path)).collect();
+        let batch_paths: Vec<&Path> = chunk.iter().map(|(_, p)| Path::new(p)).collect();
         match encoder.encode_batch(&batch_paths) {
             Ok(embeddings) => {
                 // Preprocessing/embedding sample diagnostic — fires
@@ -984,10 +998,10 @@ fn run_clip_encoder_with_intra(
                 // image: 512-d, norm=1.000, range [-0.18, 0.21], no
                 // NaNs" — pinpoints encoder breakage early.
                 if !sample_emitted {
-                    if let (Some(first_path), Some(first_emb)) =
+                    if let (Some((_, first_path)), Some(first_emb)) =
                         (chunk.first(), embeddings.first())
                     {
-                        emit_preprocessing_sample("clip_vit_b_32", &first_path.path, first_emb);
+                        emit_preprocessing_sample("clip_vit_b_32", first_path, first_emb);
                         sample_emitted = true;
                     }
                 }
@@ -1002,7 +1016,7 @@ fn run_clip_encoder_with_intra(
                 let batch_rows: Vec<(crate::db::ID, Vec<f32>)> = chunk
                     .iter()
                     .zip(embeddings.iter())
-                    .map(|(image, emb)| (image.id, emb.clone()))
+                    .map(|((id, _), emb)| (*id, emb.clone()))
                     .collect();
                 let row_count = batch_rows.len();
                 match database.upsert_embeddings_batch(
@@ -1016,8 +1030,8 @@ fn run_clip_encoder_with_intra(
                         // every row as a write failure rather than
                         // pretending some succeeded.
                         let err_str = e.to_string();
-                        for image in chunk.iter() {
-                            failed_paths.push(format!("{}: db batch — {err_str}", image.path));
+                        for (_, path) in chunk.iter() {
+                            failed_paths.push(format!("{path}: db batch — {err_str}"));
                         }
                     }
                 }
@@ -1026,8 +1040,8 @@ fn run_clip_encoder_with_intra(
                 // Whole batch failed — record each path as a failure
                 // with the shared error rather than aborting indexing.
                 let err_str = e.to_string();
-                for image in chunk.iter() {
-                    failed_paths.push(format!("{}: encode_batch — {}", image.path, err_str));
+                for (_, path) in chunk.iter() {
+                    failed_paths.push(format!("{path}: encode_batch — {err_str}"));
                 }
             }
         }

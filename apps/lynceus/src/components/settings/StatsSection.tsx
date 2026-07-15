@@ -24,7 +24,11 @@ export function StatsSection() {
   if (!stats) {
     return (
       <Section title="Indexing progress">
-        <p className="text-xs text-muted-foreground">Loading…</p>
+        <div className="space-y-3" aria-label="Loading indexing progress">
+          <div className="skeleton-tile h-3 rounded-full" />
+          <div className="skeleton-tile h-3 w-4/5 rounded-full" />
+          <div className="skeleton-tile h-3 w-3/5 rounded-full" />
+        </div>
       </Section>
     );
   }
@@ -52,12 +56,12 @@ export function StatsSection() {
 
   return (
     <Section title="Indexing progress">
-      <p className="text-xs text-muted-foreground -mt-1">
+      <p className="-mt-1 text-[11px] leading-relaxed text-muted-foreground">
         Snapshot of how many images have been processed at each stage.
         Refreshes every 5 seconds.
       </p>
 
-      <div className="space-y-3">
+      <div className="space-y-4 rounded-[11px] border border-border bg-surface/45 p-3.5">
         <StatRow label="Total images" value={stats.total_images} />
         <ProgressRow
           label="Thumbnails"
@@ -102,11 +106,13 @@ function StatRow({
   tone?: "default" | "warn";
 }) {
   const labelClass =
-    tone === "warn" ? "text-amber-500 dark:text-amber-400" : "text-foreground";
+    tone === "warn" ? "text-warning" : "text-foreground";
   return (
-    <div className="flex items-center justify-between text-xs">
+    <div className="flex items-center justify-between gap-3 text-[11px]">
       <span className={labelClass}>{label}</span>
-      <span className="tabular-nums font-medium">{value.toLocaleString()}</span>
+      <span className="font-[620] tabular-nums text-foreground">
+        {value.toLocaleString()}
+      </span>
     </div>
   );
 }
@@ -123,16 +129,16 @@ function ProgressRow({
   pct: number;
 }) {
   return (
-    <div className="space-y-1">
-      <div className="flex items-center justify-between text-xs">
-        <span className="text-foreground">{label}</span>
-        <span className="text-muted-foreground tabular-nums">
+    <div className="space-y-1.5">
+      <div className="flex items-center justify-between gap-3 text-[11px]">
+        <span className="min-w-0 truncate text-foreground">{label}</span>
+        <span className="shrink-0 tabular-nums text-muted-foreground">
           {done.toLocaleString()} / {total.toLocaleString()} ({pct}%)
         </span>
       </div>
-      <div className="h-1.5 w-full rounded-full bg-secondary overflow-hidden">
+      <div className="h-[3px] w-full overflow-hidden rounded-full bg-input">
         <div
-          className="h-full bg-primary transition-all duration-500 ease-out"
+          className="h-full rounded-full bg-primary transition-[width] duration-500 ease-out"
           style={{ width: `${pct}%` }}
         />
       </div>

@@ -7,7 +7,7 @@ export function SearchSection() {
   return (
     <Section title="Search">
       <Field
-        label="More like this — result count"
+        label="Similar image results"
         hint={`${prefs.similarResultCount} images`}
       >
         <Slider
@@ -20,7 +20,7 @@ export function SearchSection() {
       </Field>
 
       <Field
-        label="Semantic search — result count"
+        label="Semantic search results"
         hint={`${prefs.semanticResultCount} images`}
       >
         <Slider

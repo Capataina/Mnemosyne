@@ -8,11 +8,32 @@ const RESIZE_CORNERS: Array<{
   corner: ResizeCorner;
   position: string;
   cursor: string;
+  bracket: string;
 }> = [
-  { corner: "tl", position: "top-1 left-1", cursor: "cursor-nwse-resize" },
-  { corner: "tr", position: "top-1 right-1", cursor: "cursor-nesw-resize" },
-  { corner: "bl", position: "bottom-1 left-1", cursor: "cursor-nesw-resize" },
-  { corner: "br", position: "bottom-1 right-1", cursor: "cursor-nwse-resize" },
+  {
+    corner: "tl",
+    position: "top-0 left-0",
+    cursor: "cursor-nwse-resize",
+    bracket: "border-l border-t rounded-tl-[5px]",
+  },
+  {
+    corner: "tr",
+    position: "top-0 right-0",
+    cursor: "cursor-nesw-resize",
+    bracket: "border-r border-t rounded-tr-[5px]",
+  },
+  {
+    corner: "bl",
+    position: "bottom-0 left-0",
+    cursor: "cursor-nesw-resize",
+    bracket: "border-l border-b rounded-bl-[5px]",
+  },
+  {
+    corner: "br",
+    position: "bottom-0 right-0",
+    cursor: "cursor-nwse-resize",
+    bracket: "border-r border-b rounded-br-[5px]",
+  },
 ];
 
 interface MasonryItemProps {
@@ -83,9 +104,12 @@ export const MasonryItem = memo(function MasonryItem(props: MasonryItemProps) {
         props.reorderEnabled ? props.onDragHandlePointerDown : undefined
       }
       className={[
-        "masonry-tile group relative overflow-hidden rounded-xl bg-card",
-        "shadow-md transition-shadow duration-200 hover:shadow-xl",
-        props.isSelected ? "ring-2 ring-foreground/25 shadow-2xl" : "",
+        "masonry-tile group relative isolate overflow-hidden rounded-[14px] bg-surface-sunken",
+        "ring-1 ring-inset ring-border transition-[box-shadow,filter] duration-300 ease-[cubic-bezier(0.16,1,0.3,1)]",
+        "shadow-[var(--shadow-soft)] hover:shadow-[var(--shadow-float)]",
+        props.isSelected
+          ? "ring-2 ring-primary/70 shadow-[var(--shadow-float)]"
+          : "hover:ring-border-strong",
         props.reorderEnabled
           ? "cursor-grab active:cursor-grabbing"
           : "cursor-pointer",
@@ -93,7 +117,7 @@ export const MasonryItem = memo(function MasonryItem(props: MasonryItemProps) {
       ].join(" ")}
     >
       <img
-        className="w-full block"
+        className="block w-full select-none transition-[filter] duration-300 ease-out group-hover:brightness-[1.025]"
         src={displayUrl}
         alt={props.item.name}
         loading={props.isSelected ? "eager" : "lazy"}
@@ -105,16 +129,24 @@ export const MasonryItem = memo(function MasonryItem(props: MasonryItemProps) {
         draggable={false}
       />
 
-      {/* Subtle dim on hover for non-selected tiles. */}
+      {/* A quiet edge treatment gives the image material definition without
+          putting labels or decorative chrome over the artwork. */}
       {!props.isSelected && (
-        <div className="absolute inset-0 bg-black/0 group-hover:bg-black/15 transition-colors duration-200 pointer-events-none" />
+        <div className="pointer-events-none absolute inset-0 bg-gradient-to-b from-foreground/[0.035] via-transparent to-background/10 opacity-0 transition-opacity duration-300 group-hover:opacity-100" />
       )}
+
+      <div
+        className={[
+          "pointer-events-none absolute inset-0 rounded-[inherit] ring-1 ring-inset transition-colors duration-300",
+          props.isSelected ? "ring-primary/45" : "ring-foreground/[0.04]",
+        ].join(" ")}
+      />
 
       {/* Resize grips — all four corners. Neutral + functional; the v2
           visual pass owns the styling. Each stops propagation so it never
           starts a reorder drag or selects the image. */}
       {!props.isSelected &&
-        RESIZE_CORNERS.map(({ corner, position, cursor }) => (
+        RESIZE_CORNERS.map(({ corner, position, cursor, bracket }) => (
           <div
             key={corner}
             role="slider"
@@ -126,14 +158,14 @@ export const MasonryItem = memo(function MasonryItem(props: MasonryItemProps) {
               props.onResizeHandlePointerDown?.(corner, e);
             }}
             onClick={(e) => e.stopPropagation()}
-            className={`absolute ${position} flex h-5 w-5 items-center justify-center ${cursor}`}
+            className={`absolute z-10 ${position} flex h-8 w-8 items-center justify-center ${cursor}`}
           >
             <span
               className={[
-                "h-2.5 w-2.5 rounded-[3px] border border-white/80 bg-black/40 backdrop-blur-sm transition-opacity duration-150",
+                `h-3 w-3 ${bracket} transition-[opacity,transform,border-color] duration-200 ease-out`,
                 props.activeResizeCorner === corner
-                  ? "opacity-100"
-                  : "opacity-0 group-hover:opacity-70",
+                  ? "scale-110 border-primary opacity-100"
+                  : "scale-90 border-foreground/80 opacity-0 group-hover:scale-100 group-hover:opacity-75",
               ].join(" ")}
             />
           </div>

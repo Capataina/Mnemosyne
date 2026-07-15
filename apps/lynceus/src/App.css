@@ -1,42 +1,22 @@
 @import "tailwindcss";
 @import "tw-animate-css";
 
-/*
- * Note: the DM Sans @import was previously here as a CSS @import; that
- * triggered a postcss warning ("@import must precede all other statements")
- * because the inlined Tailwind output puts it after non-import rules. The
- * font is now loaded via <link> tags in index.html, which is also better
- * for performance (parallel fetch + preconnect).
- */
-
 @custom-variant dark (&:is(.dark *));
 
 /*
- * Theme tokens.
+ * Lynceus presentation tokens.
  *
- * The :root values are the LIGHT palette (kept tuned-up for users who
- * pick "Light" in the settings drawer). The .dark overrides are the
- * default — we apply `class="dark"` to <html> in main.tsx unless the
- * user explicitly set a theme preference.
- *
- * Design notes:
- * - Dark mode targets a "premium photo viewer" feel: deep neutral
- *   greys, no warm tint to the chrome, warm amber accent reserved
- *   for active/focused state and progress fills only. The chrome
- *   should fade and let the images stay the visual focus.
- * - All accents and borders are sized in oklch so the gradient feels
- *   perceptually linear rather than RGB-blocky.
- * - Light mode keeps the original Pinterest-inspired palette
- *   (off-white background + Pinterest red accent) for contrast — if
- *   the user wants their accent to differ between light and dark we
- *   can split this later but uniform-by-mode is the simpler default.
+ * The palette is deliberately media-neutral: cold graphite surfaces and a
+ * single mineral-cyan accent. The accent indicates focus, selection, active
+ * controls, and real progress; it is not decorative chrome. These semantic
+ * names are intentionally portable to the future sibling media apps.
  */
-
 @theme inline {
   --radius-sm: calc(var(--radius) - 4px);
   --radius-md: calc(var(--radius) - 2px);
   --radius-lg: var(--radius);
   --radius-xl: calc(var(--radius) + 4px);
+
   --color-background: var(--background);
   --color-foreground: var(--foreground);
   --color-card: var(--card);
@@ -55,6 +35,15 @@
   --color-border: var(--border);
   --color-input: var(--input);
   --color-ring: var(--ring);
+
+  --color-surface: var(--surface);
+  --color-surface-raised: var(--surface-raised);
+  --color-surface-overlay: var(--surface-overlay);
+  --color-surface-sunken: var(--surface-sunken);
+  --color-border-strong: var(--border-strong);
+  --color-success: var(--success);
+  --color-warning: var(--warning);
+
   --color-chart-1: var(--chart-1);
   --color-chart-2: var(--chart-2);
   --color-chart-3: var(--chart-3);
@@ -71,119 +60,181 @@
 }
 
 :root {
-  --radius: 1rem;
+  color-scheme: light;
+  --radius: 0.75rem;
 
-  /* LIGHT — kept Pinterest-inspired (red accent) */
-  --background: #fafafa;
-  --foreground: #111111;
-  --card: #ffffff;
-  --card-foreground: #111111;
-  --popover: #ffffff;
-  --popover-foreground: #111111;
-  --primary: #e60023;
-  --primary-foreground: #ffffff;
-  --secondary: #efefef;
-  --secondary-foreground: #111111;
-  --muted: #f5f5f5;
-  --muted-foreground: #767676;
-  --accent: #efefef;
-  --accent-foreground: #111111;
-  --destructive: #e60023;
-  --border: #e0e0e0;
-  --input: #efefef;
-  --ring: #111111;
-  --chart-1: oklch(0.646 0.222 41.116);
-  --chart-2: oklch(0.6 0.118 184.704);
-  --chart-3: oklch(0.398 0.07 227.392);
-  --chart-4: oklch(0.828 0.189 84.429);
-  --chart-5: oklch(0.769 0.188 70.08);
-  --sidebar: #ffffff;
-  --sidebar-foreground: #111111;
-  --sidebar-primary: #e60023;
-  --sidebar-primary-foreground: #ffffff;
-  --sidebar-accent: #efefef;
-  --sidebar-accent-foreground: #111111;
-  --sidebar-border: #e0e0e0;
-  --sidebar-ring: #111111;
+  --background: oklch(0.975 0.004 245);
+  --foreground: oklch(0.19 0.014 250);
+  --card: oklch(0.995 0.002 245);
+  --card-foreground: var(--foreground);
+  --popover: oklch(0.995 0.002 245);
+  --popover-foreground: var(--foreground);
+
+  --surface: oklch(0.955 0.006 245);
+  --surface-raised: oklch(0.995 0.002 245);
+  --surface-overlay: oklch(0.985 0.004 245 / 0.94);
+  --surface-sunken: oklch(0.925 0.008 245);
+
+  --primary: oklch(0.52 0.105 218);
+  --primary-foreground: oklch(0.985 0.004 245);
+  --secondary: oklch(0.93 0.008 245);
+  --secondary-foreground: oklch(0.24 0.014 250);
+  --muted: oklch(0.945 0.006 245);
+  --muted-foreground: oklch(0.47 0.018 250);
+  --accent: oklch(0.91 0.018 225);
+  --accent-foreground: oklch(0.24 0.024 230);
+  --destructive: oklch(0.56 0.18 25);
+  --success: oklch(0.51 0.105 158);
+  --warning: oklch(0.58 0.12 75);
+  --border: oklch(0.66 0.018 245 / 0.24);
+  --border-strong: oklch(0.48 0.02 245 / 0.34);
+  --input: oklch(0.91 0.009 245);
+  --ring: var(--primary);
+
+  --chart-1: var(--primary);
+  --chart-2: oklch(0.58 0.09 175);
+  --chart-3: oklch(0.55 0.085 265);
+  --chart-4: oklch(0.62 0.1 85);
+  --chart-5: oklch(0.56 0.11 330);
+  --sidebar: var(--card);
+  --sidebar-foreground: var(--foreground);
+  --sidebar-primary: var(--primary);
+  --sidebar-primary-foreground: var(--primary-foreground);
+  --sidebar-accent: var(--accent);
+  --sidebar-accent-foreground: var(--accent-foreground);
+  --sidebar-border: var(--border);
+  --sidebar-ring: var(--ring);
+
+  --shadow-color: oklch(0.22 0.025 250 / 0.16);
+  --shadow-soft: 0 1px 1px oklch(0.22 0.025 250 / 0.04), 0 12px 32px -20px var(--shadow-color);
+  --shadow-float: 0 24px 72px -30px oklch(0.22 0.025 250 / 0.34);
 }
 
 .dark {
-  /*
-   * DARK — deep neutral greys with a warm amber accent.
-   *
-   * Backgrounds: #0c0c0e (page) -> #16161a (surface) -> #1f1f23 (raised).
-   * Borders:     #26262b (subtle definition without halos).
-   * Text:        warm white #e5e5e7 (primary), #a1a1aa (secondary), #71717a (muted).
-   * Accent:      warm amber #fbbf24 used for active/focused state, progress
-   *              bar fills, the create-tag plus icon — sparingly.
-   */
-  --background: oklch(0.13 0.005 285);   /* near-black, slight cool tint */
-  --foreground: oklch(0.92 0.005 285);   /* warm-leaning white */
-  --card: oklch(0.17 0.006 285);
-  --card-foreground: oklch(0.92 0.005 285);
-  --popover: oklch(0.18 0.006 285);
-  --popover-foreground: oklch(0.92 0.005 285);
+  color-scheme: dark;
 
-  /* Primary = warm amber accent. Used for buttons, active-state rings,
-   * progress fills, and the create-tag plus icon. Reserve for clear
-   * intent — over-using turns the UI loud. */
-  --primary: oklch(0.82 0.15 80);
-  --primary-foreground: oklch(0.16 0.01 285);
+  --background: oklch(0.115 0.008 252);
+  --foreground: oklch(0.935 0.008 245);
+  --card: oklch(0.145 0.01 252);
+  --card-foreground: var(--foreground);
+  --popover: oklch(0.18 0.012 252);
+  --popover-foreground: var(--foreground);
 
-  --secondary: oklch(0.22 0.006 285);
-  --secondary-foreground: oklch(0.92 0.005 285);
-  --muted: oklch(0.18 0.006 285);
-  --muted-foreground: oklch(0.65 0.01 285);
-  --accent: oklch(0.22 0.006 285);
-  --accent-foreground: oklch(0.92 0.005 285);
-  --destructive: oklch(0.65 0.2 25);
-  --border: oklch(0.25 0.006 285);
-  --input: oklch(0.22 0.006 285);
-  --ring: oklch(0.82 0.15 80);
+  --surface: oklch(0.155 0.01 252);
+  --surface-raised: oklch(0.19 0.012 252);
+  --surface-overlay: oklch(0.16 0.012 252 / 0.92);
+  --surface-sunken: oklch(0.09 0.007 252);
 
-  --chart-1: oklch(0.488 0.243 264.376);
-  --chart-2: oklch(0.696 0.17 162.48);
-  --chart-3: oklch(0.769 0.188 70.08);
-  --chart-4: oklch(0.627 0.265 303.9);
-  --chart-5: oklch(0.645 0.246 16.439);
-  --sidebar: oklch(0.16 0.006 285);
-  --sidebar-foreground: oklch(0.92 0.005 285);
-  --sidebar-primary: oklch(0.82 0.15 80);
-  --sidebar-primary-foreground: oklch(0.16 0.01 285);
-  --sidebar-accent: oklch(0.22 0.006 285);
-  --sidebar-accent-foreground: oklch(0.92 0.005 285);
-  --sidebar-border: oklch(0.25 0.006 285);
-  --sidebar-ring: oklch(0.82 0.15 80);
+  --primary: oklch(0.75 0.085 216);
+  --primary-foreground: oklch(0.13 0.018 230);
+  --secondary: oklch(0.185 0.01 252);
+  --secondary-foreground: oklch(0.9 0.008 245);
+  --muted: oklch(0.17 0.01 252);
+  --muted-foreground: oklch(0.64 0.016 245);
+  --accent: oklch(0.215 0.015 242);
+  --accent-foreground: oklch(0.93 0.008 245);
+  --destructive: oklch(0.67 0.17 25);
+  --success: oklch(0.72 0.11 158);
+  --warning: oklch(0.74 0.11 78);
+  --border: oklch(0.72 0.018 245 / 0.13);
+  --border-strong: oklch(0.78 0.018 245 / 0.24);
+  --input: oklch(0.21 0.012 252);
+  --ring: var(--primary);
+
+  --chart-1: var(--primary);
+  --chart-2: oklch(0.72 0.09 175);
+  --chart-3: oklch(0.69 0.085 265);
+  --chart-4: oklch(0.74 0.1 85);
+  --chart-5: oklch(0.7 0.1 330);
+  --sidebar: var(--card);
+  --sidebar-foreground: var(--foreground);
+  --sidebar-primary: var(--primary);
+  --sidebar-primary-foreground: var(--primary-foreground);
+  --sidebar-accent: var(--accent);
+  --sidebar-accent-foreground: var(--accent-foreground);
+  --sidebar-border: var(--border);
+  --sidebar-ring: var(--ring);
+
+  --shadow-color: oklch(0.035 0.012 252 / 0.7);
+  --shadow-soft: 0 1px 1px oklch(0.96 0.01 245 / 0.025), 0 18px 48px -28px var(--shadow-color);
+  --shadow-float: 0 32px 96px -32px oklch(0.035 0.012 252 / 0.88);
 }
 
 @layer base {
   * {
     @apply border-border;
-  }
-  /* Scope the accent outline to actual keyboard focus. Applying it to
-   * every element (the shadcn default) meant the amber ring caught light
-   * through the old 3D-tilt transform — the "yellow line" edge flare. */
-  *:focus-visible {
-    @apply outline-ring/50;
-  }
-  body {
-    @apply bg-background text-foreground;
-    font-family: 'DM Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-    -webkit-font-smoothing: antialiased;
-    -moz-osx-font-smoothing: grayscale;
+    box-sizing: border-box;
   }
 
-  /* Image rendering: keep crisp at all zoom levels; the OS WebView
-   * sometimes applies aggressive smoothing that softens splash arts. */
+  html,
+  body,
+  #root {
+    min-height: 100%;
+  }
+
+  body {
+    @apply bg-background text-foreground;
+    margin: 0;
+    font-family: "DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    font-size: 14px;
+    line-height: 1.5;
+    letter-spacing: -0.006em;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    text-rendering: optimizeLegibility;
+  }
+
+  button,
+  input,
+  textarea {
+    font: inherit;
+  }
+
+  button,
+  [role="button"] {
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  *:focus-visible {
+    outline: 2px solid color-mix(in oklab, var(--ring), transparent 28%);
+    outline-offset: 2px;
+  }
+
+  ::selection {
+    color: var(--foreground);
+    background: color-mix(in oklab, var(--primary), transparent 70%);
+  }
+
   img {
     image-rendering: -webkit-optimize-contrast;
   }
 }
 
-/* Scrollbar styling — subtle in dark mode, almost invisible until hover */
+.app-canvas {
+  background:
+    linear-gradient(180deg, color-mix(in oklab, var(--surface), transparent 40%) 0, transparent 180px),
+    var(--background);
+}
+
+.chrome-surface {
+  border-color: var(--border);
+  background: var(--surface-overlay);
+  box-shadow: inset 0 1px 0 oklch(0.96 0.01 245 / 0.045), var(--shadow-soft);
+  -webkit-backdrop-filter: blur(22px) saturate(125%);
+  backdrop-filter: blur(22px) saturate(125%);
+}
+
+.floating-surface {
+  border-color: var(--border-strong);
+  background: var(--surface-overlay);
+  box-shadow: inset 0 1px 0 oklch(0.96 0.01 245 / 0.06), var(--shadow-float);
+  -webkit-backdrop-filter: blur(28px) saturate(125%);
+  backdrop-filter: blur(28px) saturate(125%);
+}
+
 ::-webkit-scrollbar {
-  width: 10px;
-  height: 10px;
+  width: 8px;
+  height: 8px;
 }
 
 ::-webkit-scrollbar-track {
@@ -191,65 +242,80 @@
 }
 
 ::-webkit-scrollbar-thumb {
-  background: oklch(0.30 0.005 285);
-  border-radius: 5px;
+  min-height: 36px;
   border: 2px solid transparent;
+  border-radius: 999px;
+  background: color-mix(in oklab, var(--muted-foreground), transparent 72%);
   background-clip: padding-box;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: oklch(0.40 0.005 285);
+  background: color-mix(in oklab, var(--muted-foreground), transparent 52%);
   background-clip: padding-box;
-  border: 2px solid transparent;
 }
 
-:root ::-webkit-scrollbar-thumb {
-  background: #d1d1d1;
-}
-:root ::-webkit-scrollbar-thumb:hover {
-  background: #b0b0b0;
-}
-
-/*
- * Skeleton-tile pulse animation. Used while thumbnails are still being
- * generated — gives the grid a sense of "incoming" rather than "blank
- * forever".
- */
-@keyframes skeleton-pulse {
-  0%, 100% {
-    opacity: 1;
-  }
-  50% {
-    opacity: 0.5;
-  }
+@keyframes skeleton-shimmer {
+  from { background-position: 200% 0; }
+  to { background-position: -200% 0; }
 }
 
 .skeleton-tile {
   background: linear-gradient(
-    90deg,
-    oklch(0.22 0.006 285) 0%,
-    oklch(0.26 0.006 285) 50%,
-    oklch(0.22 0.006 285) 100%
+    100deg,
+    var(--surface) 8%,
+    var(--surface-raised) 18%,
+    var(--surface) 33%
   );
-  background-size: 200% 100%;
-  animation: skeleton-shimmer 1.6s ease-in-out infinite;
+  background-size: 220% 100%;
+  animation: skeleton-shimmer 1.8s cubic-bezier(0.4, 0, 0.2, 1) infinite;
 }
 
-@keyframes skeleton-shimmer {
-  0% {
-    background-position: 200% 0;
-  }
-  100% {
-    background-position: -200% 0;
-  }
-}
-
-/*
- * Performance hint for offscreen tiles. Lets the WebView skip layout
- * and paint for tiles outside the current viewport. Free perf win at
- * large grid sizes.
- */
 .masonry-tile {
   content-visibility: auto;
   contain-intrinsic-size: auto 300px;
+}
+
+.gallery-range {
+  height: 18px;
+  appearance: none;
+  background: transparent;
+  cursor: pointer;
+}
+
+.gallery-range::-webkit-slider-runnable-track {
+  height: 3px;
+  border-radius: 999px;
+  background: var(--input);
+  box-shadow: inset 0 1px 1px var(--shadow-color);
+}
+
+.gallery-range::-webkit-slider-thumb {
+  width: 14px;
+  height: 14px;
+  margin-top: -5.5px;
+  appearance: none;
+  border: 2px solid var(--surface-raised);
+  border-radius: 999px;
+  background: var(--primary);
+  box-shadow: 0 1px 5px var(--shadow-color);
+}
+
+@media (prefers-reduced-transparency: reduce) {
+  .chrome-surface,
+  .floating-surface {
+    background: var(--surface-raised);
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
 }

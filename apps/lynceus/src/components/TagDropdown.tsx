@@ -96,16 +96,16 @@ export function TagDropdown(props: TagDropdownProps) {
     <Popover open={props.open} onOpenChange={props.setOpen} modal={true}>
       <PopoverTrigger asChild>
         <Button
-          variant="outline"
-          role="combobox"
-          aria-expanded={props.open}
-          className="w-[200px] justify-between"
-        >
-          Add Tags
-          <ChevronsUpDownIcon className="ml-2 h-4 w-4 shrink-0 opacity-50" />
-        </Button>
+        variant="outline"
+        role="combobox"
+        aria-expanded={props.open}
+        className="w-full justify-between bg-surface-raised/60"
+      >
+          <span>Add tags</span>
+          <ChevronsUpDownIcon className="ml-2 h-4 w-4 shrink-0 text-muted-foreground" strokeWidth={1.7} />
+      </Button>
       </PopoverTrigger>
-      <PopoverContent className="w-[220px] p-0 z-[200]" align="start">
+      <PopoverContent className="z-[200] w-[280px] p-0" align="start">
         <Command shouldFilter={false}>
           <CommandInput
             value={input}
@@ -122,7 +122,7 @@ export function TagDropdown(props: TagDropdownProps) {
                     onSelect={handleCreateTag}
                     className="cursor-pointer"
                   >
-                    <PlusCircleIcon className="mr-2 h-4 w-4 text-blue-500" />
+                    <PlusCircleIcon className="mr-1 h-4 w-4 text-muted-foreground" strokeWidth={1.8} />
                     <span>
                       Create "<span className="font-medium">{input.trim()}</span>"
                     </span>
@@ -140,11 +140,11 @@ export function TagDropdown(props: TagDropdownProps) {
                     key={tag.id}
                     value={tag.id.toString()}
                     onSelect={() => handleSelectTag(tag)}
-                    className="group cursor-pointer flex items-center"
+                    className="group flex cursor-pointer items-center"
                   >
                     <CheckIcon
                       className={cn(
-                        "mr-2 h-4 w-4 shrink-0",
+                        "mr-1 h-4 w-4 shrink-0 text-primary transition-opacity",
                         props.selected.includes(tag.id)
                           ? "opacity-100"
                           : "opacity-0"
@@ -156,7 +156,7 @@ export function TagDropdown(props: TagDropdownProps) {
                         type="button"
                         title={`Delete tag "${tag.name}" from catalog`}
                         aria-label={`Delete tag ${tag.name}`}
-                        className="ml-2 shrink-0 rounded p-1 opacity-0 group-hover:opacity-60 hover:opacity-100 hover:bg-destructive/10 hover:text-destructive transition"
+                        className="ml-2 grid size-7 shrink-0 place-items-center rounded-lg text-muted-foreground opacity-0 transition-[opacity,color,background-color] group-hover:opacity-65 hover:bg-destructive/10 hover:text-destructive hover:opacity-100"
                         onClick={(e) => {
                           // stopPropagation so the row's onSelect (toggle)
                           // doesn't fire when the user clicks the trash icon
@@ -170,7 +170,7 @@ export function TagDropdown(props: TagDropdownProps) {
                           }
                         }}
                       >
-                        <Trash2Icon className="h-3.5 w-3.5" />
+                        <Trash2Icon className="h-3.5 w-3.5" strokeWidth={1.8} />
                       </button>
                     )}
                   </CommandItem>

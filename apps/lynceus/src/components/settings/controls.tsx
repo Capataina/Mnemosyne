@@ -16,8 +16,8 @@ export function Section({
   children: React.ReactNode;
 }) {
   return (
-    <section className="space-y-3">
-      <h3 className="text-[10px] uppercase tracking-wider font-semibold text-muted-foreground">
+    <section className="space-y-4 border-b border-border pb-7 last:border-b-0 last:pb-1">
+      <h3 className="text-[13px] font-[620] tracking-[-0.015em] text-foreground">
         {title}
       </h3>
       {children}
@@ -35,10 +35,14 @@ export function Field({
   children: React.ReactNode;
 }) {
   return (
-    <div className="space-y-1.5">
-      <div className="flex items-center justify-between text-xs">
-        <span className="font-medium">{label}</span>
-        {hint && <span className="text-muted-foreground tabular-nums">{hint}</span>}
+    <div className="space-y-2">
+      <div className="flex items-start justify-between gap-4 text-[12px]">
+        <span className="font-[540] leading-snug text-foreground">{label}</span>
+        {hint && (
+          <span className="shrink-0 text-right text-[11px] leading-snug tabular-nums text-muted-foreground">
+            {hint}
+          </span>
+        )}
       </div>
       {children}
     </div>
@@ -66,7 +70,7 @@ export function Slider({
       step={step}
       value={value}
       onChange={(e) => onChange(parseFloat(e.target.value))}
-      className="w-full h-1.5 rounded-full appearance-none bg-secondary [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:h-3.5 [&::-webkit-slider-thumb]:w-3.5 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-primary [&::-webkit-slider-thumb]:cursor-pointer [&::-webkit-slider-thumb]:shadow-sm"
+      className="gallery-range w-full focus-visible:outline-none"
     />
   );
 }
@@ -81,16 +85,17 @@ export function SegmentedButtons<T extends string>({
   options: Array<{ value: T; label: string; icon?: React.ReactNode }>;
 }) {
   return (
-    <div className="flex rounded-lg bg-secondary/60 p-1 border border-border">
+    <div className="flex rounded-[11px] border border-border bg-surface-sunken/55 p-1">
       {options.map((opt) => (
         <button
           key={opt.value}
           onClick={() => onChange(opt.value)}
+          aria-pressed={value === opt.value}
           className={[
-            "flex-1 flex items-center justify-center gap-1.5 rounded-md px-2 py-1.5 text-xs font-medium transition",
+            "flex min-h-8 flex-1 items-center justify-center gap-1.5 rounded-lg border px-2 py-1.5 text-[11px] font-[560] transition-[color,background-color,border-color,box-shadow,transform] duration-200 active:scale-[0.98]",
             value === opt.value
-              ? "bg-card text-foreground shadow-sm"
-              : "text-muted-foreground hover:text-foreground",
+              ? "border-primary/25 bg-primary/10 text-foreground shadow-[inset_0_1px_0_oklch(0.98_0.005_245/0.05)]"
+              : "border-transparent text-muted-foreground hover:bg-accent/55 hover:text-foreground",
           ].join(" ")}
         >
           {opt.icon}
@@ -122,16 +127,18 @@ export function Toggle({
       aria-checked={checked}
       onClick={() => onChange(!checked)}
       className={[
-        "relative inline-flex h-5 w-9 shrink-0 cursor-pointer items-center rounded-full p-0.5 transition-colors focus:outline-none focus:ring-2 focus:ring-primary/50",
-        checked ? "bg-primary" : "bg-input",
+        "relative inline-flex h-[22px] w-10 shrink-0 cursor-pointer items-center rounded-full border p-0.5 transition-[background-color,border-color,box-shadow] duration-200 focus:outline-none focus:ring-2 focus:ring-primary/30",
+        checked
+          ? "border-primary/55 bg-primary"
+          : "border-border-strong bg-input",
       ].join(" ")}
     >
       <span
         className={[
-          "inline-block h-4 w-4 transform rounded-full shadow-sm transition-transform",
+          "inline-block h-4 w-4 transform rounded-full shadow-[0_1px_4px_var(--shadow-color)] transition-[transform,background-color] duration-200",
           checked
-            ? "translate-x-4 bg-primary-foreground"
-            : "translate-x-0 bg-foreground",
+            ? "translate-x-[18px] bg-primary-foreground"
+            : "translate-x-0 bg-muted-foreground",
         ].join(" ")}
       />
     </button>

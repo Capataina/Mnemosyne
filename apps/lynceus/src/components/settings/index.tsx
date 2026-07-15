@@ -54,7 +54,7 @@ export function SettingsDrawer({ open, onClose }: SettingsDrawerProps) {
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
             transition={{ duration: 0.15 }}
-            className="fixed inset-0 z-[90] bg-black/40 backdrop-blur-[2px]"
+            className="fixed inset-0 z-[90] bg-background/70 backdrop-blur-md"
             onClick={onClose}
           />
 
@@ -64,21 +64,26 @@ export function SettingsDrawer({ open, onClose }: SettingsDrawerProps) {
             animate={{ x: 0 }}
             exit={{ x: "100%" }}
             transition={{ type: "spring", stiffness: 360, damping: 36 }}
-            className="fixed top-0 right-0 z-[91] h-screen w-[400px] max-w-[100vw] flex flex-col bg-card border-l border-border shadow-2xl shadow-black/50 overflow-y-auto"
+            className="fixed top-0 right-0 z-[91] flex h-[100dvh] w-[420px] max-w-full flex-col border-l border-border bg-card shadow-[var(--shadow-float)]"
           >
             {/* Header */}
-            <div className="flex items-center justify-between p-5 border-b border-border sticky top-0 bg-card/95 backdrop-blur-md">
-              <h2 className="text-base font-semibold">Settings</h2>
+            <div className="chrome-surface sticky top-0 z-10 flex items-center justify-between border-b px-6 py-5">
+              <div>
+                <h2 className="text-[17px] font-[620] tracking-[-0.025em]">Settings</h2>
+                <p className="mt-0.5 text-[11px] text-muted-foreground">
+                  Library and viewing preferences
+                </p>
+              </div>
               <button
                 onClick={onClose}
                 aria-label="Close settings"
-                className="rounded-full p-1.5 hover:bg-accent transition"
+                className="grid size-9 place-items-center rounded-[10px] text-muted-foreground transition-[color,background-color,transform] hover:bg-accent hover:text-foreground active:scale-95"
               >
-                <X className="h-4 w-4" />
+                <X className="h-4 w-4" strokeWidth={1.8} />
               </button>
             </div>
 
-            <div className="flex-1 overflow-y-auto px-5 py-4 space-y-7 text-sm">
+            <div className="flex-1 space-y-7 overflow-y-auto px-6 py-6 text-sm">
               <ThemeSection />
               <DisplaySection />
               <SearchSection />

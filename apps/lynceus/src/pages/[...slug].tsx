@@ -325,7 +325,7 @@ export default function Home() {
   };
 
   return (
-    <main className="w-screen h-screen overflow-hidden bg-background text-foreground">
+    <main className="app-canvas relative h-[100dvh] w-screen overflow-hidden bg-background text-foreground">
       {/* Live indexing-progress pill (top-right corner) */}
       <IndexingStatusPill />
 
@@ -372,11 +372,17 @@ export default function Home() {
         )}
       </AnimatePresence>
 
-      <div className="px-4 md:px-8 lg:px-16 py-6 w-full h-full overflow-y-auto box-border">
+      <div className="h-full w-full overflow-y-auto overscroll-contain">
         {/* Search Bar + folder-picker control */}
-        <div className="flex justify-center mb-8">
-          <div className="flex w-full max-w-2xl items-center gap-3">
-            <div className="flex-1">
+        <header className="chrome-surface sticky top-0 z-40 border-b">
+          <div className="mx-auto flex h-[72px] w-full items-center gap-3 px-5 md:px-8 lg:gap-4 lg:px-10">
+            <div className="hidden w-32 shrink-0 items-center xl:flex">
+              <span className="text-[15px] font-[650] tracking-[-0.035em] text-foreground">
+                Lynceus
+              </span>
+            </div>
+
+            <div className="mx-auto min-w-0 max-w-3xl flex-1">
               <SearchBar
                 tags={tags.data}
                 onSearchChange={(selectedTags, text) => {
@@ -397,11 +403,13 @@ export default function Home() {
                 }}
               />
             </div>
+
+            <div className="flex shrink-0 items-center gap-2">
             <button
               type="button"
               title="Add image folder"
               aria-label="Add image folder"
-              className="flex shrink-0 items-center gap-2 rounded-full bg-secondary text-secondary-foreground px-4 py-3 text-sm font-medium transition-colors hover:bg-accent"
+              className="flex h-10 shrink-0 items-center gap-2 rounded-[10px] border border-border-strong bg-surface-raised/65 px-3.5 text-[12px] font-[560] text-secondary-foreground transition-[background-color,border-color,transform] hover:border-border-strong hover:bg-accent active:scale-[0.98]"
               onClick={async () => {
                 try {
                   const folder = await pickScanFolder();
@@ -423,7 +431,7 @@ export default function Home() {
                 }
               }}
             >
-              <FolderPlus className="h-4 w-4" />
+              <FolderPlus className="h-4 w-4" strokeWidth={1.8} />
               <span className="hidden md:inline">Add folder</span>
             </button>
 
@@ -431,16 +439,19 @@ export default function Home() {
               type="button"
               title="Settings (⌘,)"
               aria-label="Settings"
-              className="flex shrink-0 items-center justify-center rounded-full bg-secondary text-secondary-foreground p-3 transition-colors hover:bg-accent"
+              className="grid size-10 shrink-0 place-items-center rounded-[10px] border border-border bg-surface/60 text-muted-foreground transition-[color,background-color,border-color,transform] hover:border-border-strong hover:bg-accent hover:text-foreground active:scale-[0.98]"
               onClick={() => {
                 recordAction("settings_open", { via: "button" });
                 setSettingsOpen(true);
               }}
             >
-              <SettingsIcon className="h-4 w-4" />
+              <SettingsIcon className="h-4 w-4" strokeWidth={1.8} />
             </button>
+            </div>
           </div>
-        </div>
+        </header>
+
+        <div className="box-border w-full px-5 pb-16 pt-7 md:px-8 lg:px-10 lg:pt-9">
 
         {/* First-launch / empty-state hint. The feed is thumbnail-gated,
             so during early indexing it can be empty while images already
@@ -451,27 +462,35 @@ export default function Home() {
           !shouldUseSemanticSearch &&
           feed.length === 0 &&
           (isIndexing || (images.data && images.data.length > 0) ? (
-            <div className="mb-8 rounded-xl bg-card p-6 text-center shadow-md border border-border">
-              <h2 className="mb-2 text-lg font-semibold text-foreground">
+            <section className="mx-auto mb-12 flex min-h-[340px] max-w-2xl flex-col items-center justify-center text-center">
+              <div className="mb-7 flex h-24 items-end gap-2.5" aria-hidden="true">
+                <div className="skeleton-tile h-16 w-16 rounded-[10px]" />
+                <div className="skeleton-tile h-24 w-20 rounded-[10px]" />
+                <div className="skeleton-tile h-20 w-14 rounded-[10px]" />
+              </div>
+              <h2 className="mb-2 text-[22px] font-[620] tracking-[-0.035em] text-foreground">
                 Indexing your library…
               </h2>
-              <p className="mb-4 text-sm text-muted-foreground">
+              <p className="max-w-md text-[13px] leading-relaxed text-muted-foreground">
                 Tiles appear here as each image's thumbnail is generated.
                 You can keep using the app while indexing runs in the
                 background.
               </p>
-            </div>
+            </section>
           ) : images.data && images.data.length === 0 ? (
-            <div className="mb-8 rounded-xl bg-card p-6 text-center shadow-md border border-border">
-              <h2 className="mb-2 text-lg font-semibold text-foreground">
+            <section className="mx-auto mb-12 flex min-h-[340px] max-w-2xl flex-col items-center justify-center text-center">
+              <div className="mb-6 grid size-14 place-items-center rounded-[14px] border border-border bg-surface text-muted-foreground shadow-[var(--shadow-soft)]">
+                <FolderPlus className="h-5 w-5" strokeWidth={1.6} />
+              </div>
+              <h2 className="mb-2 text-[22px] font-[620] tracking-[-0.035em] text-foreground">
                 No images yet
               </h2>
-              <p className="mb-4 text-sm text-muted-foreground">
+              <p className="max-w-lg text-[13px] leading-relaxed text-muted-foreground">
                 Pick a folder above to start indexing your library. The app
                 searches recursively, so you can point it at a parent folder
                 and let it sweep through every subfolder.
               </p>
-            </div>
+            </section>
           ) : null)}
 
         {/* Section header when viewing similar images */}
@@ -481,13 +500,13 @@ export default function Home() {
               initial={{ opacity: 0, y: -10 }}
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: -10 }}
-              className="mb-6 flex items-center justify-between"
+              className="mb-7 flex items-end justify-between gap-5 border-b border-border pb-5"
             >
               <div>
-                <h2 className="text-xl font-semibold text-foreground">
+                <h2 className="text-[24px] font-[620] tracking-[-0.04em] text-foreground">
                   More like this
                 </h2>
-                <p className="text-sm text-muted-foreground">
+                <p className="mt-1 text-[12px] tabular-nums text-muted-foreground">
                   {tieredSimilarImages.isFetching
                     ? "Finding similar images..."
                     : `${tieredSimilarImages.data?.length || 0} similar images`}
@@ -495,7 +514,7 @@ export default function Home() {
               </div>
               <button
                 onClick={handleClose}
-                className="rounded-full bg-secondary text-secondary-foreground px-4 py-2 text-sm font-medium transition-colors hover:bg-accent"
+                className="h-9 shrink-0 rounded-[10px] border border-border bg-surface/65 px-3.5 text-[12px] font-[560] text-secondary-foreground transition-[background-color,border-color,transform] hover:border-border-strong hover:bg-accent active:scale-[0.98]"
               >
                 ← Back to all
               </button>
@@ -510,13 +529,13 @@ export default function Home() {
               initial={{ opacity: 0, y: -10 }}
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: -10 }}
-              className="mb-6"
+              className="mb-7 border-b border-border pb-5"
             >
               <div className="flex items-center gap-2">
-                <h2 className="text-xl font-semibold text-foreground">
+                <h2 className="text-[24px] font-[620] tracking-[-0.04em] text-foreground">
                   {isSearchLoading ? (
-                    <span className="flex items-center gap-2">
-                      <span className="inline-block h-4 w-4 animate-spin rounded-full border-2 border-muted border-t-primary" />
+                    <span className="flex items-center gap-2.5">
+                      <span className="inline-block h-4 w-4 animate-spin rounded-full border-[1.5px] border-input border-t-primary" />
                       Searching for "{semanticQuery}"...
                     </span>
                   ) : (
@@ -525,13 +544,13 @@ export default function Home() {
                 </h2>
               </div>
               {!isSearchLoading && semanticSearchResults.data && (
-                <p className="text-sm text-muted-foreground mt-1">
+                <p className="mt-1 text-[12px] tabular-nums text-muted-foreground">
                   Found {semanticSearchResults.data.length} matching images
                 </p>
               )}
               {semanticSearchResults.isError && (
                 <p
-                  className="text-sm text-destructive mt-1"
+                  className="mt-2 rounded-[10px] border border-destructive/25 bg-destructive/8 px-3 py-2 text-[12px] text-destructive"
                   title={String(semanticSearchResults.error)}
                 >
                   Search failed:{" "}
@@ -567,6 +586,7 @@ export default function Home() {
             onResizeCommit={handleResizeCommit}
           />
         </Profiler>
+      </div>
       </div>
     </main>
   );

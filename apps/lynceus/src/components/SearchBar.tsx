@@ -1,7 +1,6 @@
 import { useState, useRef, useEffect, useMemo } from "react";
 import { SearchIcon, XCircleIcon, PlusCircleIcon } from "lucide-react";
 import { Badge } from "./ui/badge";
-import { RxCrossCircled } from "react-icons/rx";
 import {
   Command,
   CommandEmpty,
@@ -141,21 +140,26 @@ export function SearchBar(props: SearchBarProps) {
     <div className="relative w-full">
       <div
         ref={containerRef}
-        className="flex items-center gap-3 rounded-full border border-transparent bg-secondary px-5 py-3 text-base transition-all duration-200 focus-within:border-border focus-within:shadow-lg focus-within:ring-1 focus-within:ring-primary/30"
+        className="chrome-surface flex min-h-12 items-center gap-3 rounded-[14px] border px-3.5 py-2.5 text-[13px] transition-[border-color,box-shadow,background-color] duration-200 focus-within:border-primary/55 focus-within:bg-surface-raised/90 focus-within:ring-3 focus-within:ring-primary/10"
       >
-        <SearchIcon className="size-5 shrink-0 text-muted-foreground" />
+        <SearchIcon
+          className="size-[18px] shrink-0 text-muted-foreground transition-colors group-focus-within:text-foreground"
+          strokeWidth={1.7}
+        />
 
-        <div className="flex flex-1 flex-wrap items-center gap-1.5">
+        <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1.5">
           {/* Tags on the left */}
           {selectedTags.map((tag) => (
-            <Badge key={tag.id} className="px-2 py-0.5">
-              <span className="text-xs">{tag.name}</span>
-              <div
-                className="ml-0.5 hover:cursor-pointer"
+            <Badge key={tag.id} variant="secondary" className="h-6 pl-2.5 pr-1.5">
+              <span>{tag.name}</span>
+              <button
+                type="button"
+                aria-label={`Remove ${tag.name} filter`}
+                className="grid size-4 place-items-center rounded-full text-muted-foreground transition-colors hover:bg-foreground/8 hover:text-foreground"
                 onClick={() => removeTag(tag.id)}
               >
-                <RxCrossCircled className="size-3" />
-              </div>
+                <XCircleIcon className="size-3" strokeWidth={1.8} />
+              </button>
             </Badge>
           ))}
 
@@ -167,7 +171,7 @@ export function SearchBar(props: SearchBarProps) {
             onChange={handleInputChange}
             onKeyDown={handleKeyDown}
             placeholder={props.placeholder || "Search..."}
-            className="flex-1 min-w-[120px] bg-transparent outline-none text-foreground placeholder:text-muted-foreground"
+            className="min-w-[120px] flex-1 bg-transparent text-[13px] text-foreground outline-none placeholder:text-muted-foreground"
           />
         </div>
 
@@ -175,9 +179,10 @@ export function SearchBar(props: SearchBarProps) {
           <button
             type="button"
             onClick={handleClear}
-            className="shrink-0 opacity-50 hover:opacity-100 transition-opacity"
+            aria-label="Clear search"
+            className="grid size-7 shrink-0 place-items-center rounded-lg text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
           >
-            <XCircleIcon className="size-4" />
+            <XCircleIcon className="size-4" strokeWidth={1.7} />
           </button>
         )}
       </div>
@@ -187,7 +192,7 @@ export function SearchBar(props: SearchBarProps) {
           <div className="absolute top-0 left-0 w-full h-full pointer-events-none" />
         </PopoverAnchor>
         <PopoverContent
-          className="w-[300px] p-0"
+          className="w-[320px] p-0"
           align="start"
           onOpenAutoFocus={(e) => e.preventDefault()}
         >
@@ -202,7 +207,7 @@ export function SearchBar(props: SearchBarProps) {
                       onSelect={handleCreateTag}
                       className="cursor-pointer"
                     >
-                      <PlusCircleIcon className="mr-2 h-4 w-4 text-blue-500" />
+                      <PlusCircleIcon className="mr-1 h-4 w-4 text-muted-foreground" strokeWidth={1.8} />
                       <span>
                         Create "
                         <span className="font-medium">
@@ -226,11 +231,11 @@ export function SearchBar(props: SearchBarProps) {
                       key={tag.id}
                       value={tag.id.toString()}
                       onSelect={() => handleTagSelect(tag)}
-                      className="cursor-pointer"
-                    >
-                      <Badge variant="outline" className="pointer-events-none">
-                        {tag.name}
-                      </Badge>
+                        className="cursor-pointer"
+                      >
+                        <Badge variant="outline" className="pointer-events-none">
+                          {tag.name}
+                        </Badge>
                     </CommandItem>
                   ))}
                 </CommandGroup>

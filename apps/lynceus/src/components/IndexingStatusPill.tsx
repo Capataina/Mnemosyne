@@ -67,45 +67,52 @@ export function IndexingStatusPill() {
         exit={{ opacity: 0, y: -8, scale: 0.95 }}
         transition={{ type: "spring", stiffness: 400, damping: 30 }}
         className={[
-          "fixed top-4 right-4 z-50 flex items-center gap-3",
-          "rounded-full border bg-card/95 backdrop-blur-md",
-          "px-4 py-2 shadow-lg shadow-black/30",
-          "min-w-[240px] max-w-[380px]",
-          isError ? "border-destructive/40" : "border-border",
+          "floating-surface fixed top-20 right-6 z-[80] flex min-w-[260px] max-w-[380px] items-center gap-3.5",
+          "overflow-hidden rounded-[14px] border px-3.5 py-3",
+          isError ? "border-destructive/45" : "border-border-strong",
         ].join(" ")}
         title={message ?? undefined}
       >
-        <div className="shrink-0">
+        <div
+          className={[
+            "grid size-8 shrink-0 place-items-center rounded-[9px] border",
+            isError
+              ? "border-destructive/25 bg-destructive/10"
+              : isReady
+                ? "border-success/25 bg-success/10"
+                : "border-primary/25 bg-primary/10",
+          ].join(" ")}
+        >
           {isError ? (
-            <AlertCircle className="h-4 w-4 text-destructive" />
+            <AlertCircle className="h-4 w-4 text-destructive" strokeWidth={1.8} />
           ) : isReady ? (
-            <CheckCircle2 className="h-4 w-4 text-primary" />
+            <CheckCircle2 className="h-4 w-4 text-success" strokeWidth={1.8} />
           ) : (
-            <Loader2 className="h-4 w-4 animate-spin text-primary" />
+            <Loader2 className="h-4 w-4 animate-spin text-primary" strokeWidth={1.8} />
           )}
         </div>
 
-        <div className="flex flex-1 flex-col gap-1.5 overflow-hidden">
+        <div className="flex min-w-0 flex-1 flex-col gap-1.5 overflow-hidden">
           <div className="flex items-center justify-between gap-2">
             <span
               className={[
-                "text-xs font-medium",
+                "truncate text-[12px] font-[620] tracking-[-0.01em]",
                 isError ? "text-destructive" : "text-foreground",
               ].join(" ")}
             >
               {label}
             </span>
             {showBar && (
-              <span className="text-[10px] tabular-nums text-muted-foreground">
+              <span className="shrink-0 text-[11px] font-[560] tabular-nums text-primary">
                 {pct}%
               </span>
             )}
           </div>
 
           {showBar && (
-            <div className="h-1 w-full overflow-hidden rounded-full bg-muted">
+            <div className="h-[3px] w-full overflow-hidden rounded-full bg-input">
               <motion.div
-                className="h-full bg-primary"
+                className="h-full rounded-full bg-primary"
                 initial={false}
                 animate={{ width: `${pct}%` }}
                 transition={{ type: "spring", stiffness: 200, damping: 30 }}
@@ -114,7 +121,9 @@ export function IndexingStatusPill() {
           )}
 
           {isReady && message && (
-            <span className="text-[10px] text-muted-foreground">{message}</span>
+            <span className="truncate text-[10px] leading-tight text-muted-foreground">
+              {message}
+            </span>
           )}
         </div>
 
@@ -123,7 +132,7 @@ export function IndexingStatusPill() {
             type="button"
             onClick={() => setDismissed(true)}
             aria-label="Dismiss"
-            className="shrink-0 rounded p-1 text-muted-foreground hover:bg-accent hover:text-foreground transition"
+            className="grid size-7 shrink-0 place-items-center rounded-lg text-lg font-light leading-none text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
           >
             ×
           </button>

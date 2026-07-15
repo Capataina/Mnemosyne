@@ -65,14 +65,19 @@ export function EncoderSection() {
   if (error) {
     return (
       <Section title="Encoders">
-        <p className="text-xs text-destructive">{error}</p>
+        <p className="rounded-[10px] border border-destructive/25 bg-destructive/8 px-3 py-2.5 text-[11px] leading-relaxed text-destructive">
+          {error}
+        </p>
       </Section>
     );
   }
   if (!encoders || !enabled) {
     return (
       <Section title="Encoders">
-        <p className="text-xs text-muted-foreground">Loading…</p>
+        <div className="space-y-2.5" aria-label="Loading encoders">
+          <div className="skeleton-tile h-16 rounded-[11px]" />
+          <div className="skeleton-tile h-16 rounded-[11px]" />
+        </div>
       </Section>
     );
   }
@@ -119,15 +124,15 @@ export function EncoderSection() {
 
   return (
     <Section title="Encoders">
-      <p className="text-xs text-muted-foreground -mt-1">
+      <p className="-mt-1 text-[11px] leading-relaxed text-muted-foreground">
         Enabled encoders run during indexing and contribute to{" "}
-        <strong>multi-encoder fusion</strong> for image-image and
-        text-image search. Disabling an encoder skips it on the next
-        indexing pass and excludes it from fusion. Existing embeddings
-        stay on disk — re-enabling is instant.
+        <strong className="font-[620] text-foreground/85">multi-encoder fusion</strong> for image-image and
+        text-image search. Disabled encoders are skipped on the next
+        indexing pass and excluded from fusion. Existing embeddings stay
+        on disk, so re-enabling is instant.
       </p>
 
-      <div className="space-y-2">
+      <div className="space-y-2.5">
         {encoders.map((enc) => (
           <EncoderToggle
             key={enc.id}
@@ -154,14 +159,14 @@ function EncoderToggle({
   onChange: (want: boolean) => void;
 }) {
   return (
-    <div className="rounded-md border border-border bg-secondary/40 p-3">
+    <div className="rounded-[11px] border border-border bg-surface/55 p-3.5 transition-colors hover:border-border-strong">
       <div className="flex items-start justify-between gap-3">
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2">
-            <span className="text-xs font-medium text-foreground">
+            <span className="text-[12px] font-[620] text-foreground">
               {info.display_name}
             </span>
-            <span className="text-[10px] text-muted-foreground">
+            <span className="text-[10px] tabular-nums text-muted-foreground">
               {info.dim}-dim
               {info.supports_image && info.supports_text
                 ? " · image + text"
@@ -170,11 +175,13 @@ function EncoderToggle({
                   : " · text-only"}
             </span>
           </div>
-          <details className="mt-1 text-[11px] text-muted-foreground">
-            <summary className="cursor-pointer hover:text-foreground transition">
+          <details className="mt-1.5 text-[10.5px] leading-relaxed text-muted-foreground">
+            <summary className="cursor-pointer transition-colors hover:text-foreground">
               What does this encoder bring?
             </summary>
-            <p className="mt-1 pl-3 leading-relaxed">{info.description}</p>
+            <p className="mt-1.5 border-l border-border pl-3 leading-relaxed">
+              {info.description}
+            </p>
           </details>
         </div>
         <button
@@ -184,13 +191,17 @@ function EncoderToggle({
           aria-label={`Toggle ${info.display_name}`}
           disabled={disabled}
           onClick={() => onChange(!enabled)}
-          className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer items-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-primary/50 disabled:opacity-50 disabled:cursor-not-allowed ${
-            enabled ? "bg-primary" : "bg-input"
+          className={`relative inline-flex h-[22px] w-10 shrink-0 cursor-pointer items-center rounded-full border p-0.5 transition-[background-color,border-color,box-shadow] duration-200 focus:outline-none focus:ring-2 focus:ring-primary/30 disabled:cursor-not-allowed disabled:opacity-45 ${
+            enabled
+              ? "border-primary/55 bg-primary"
+              : "border-border-strong bg-input"
           }`}
         >
           <span
-            className={`inline-block h-4 w-4 transform rounded-full bg-background shadow-sm transition-transform ${
-              enabled ? "translate-x-4" : "translate-x-0.5"
+            className={`inline-block h-4 w-4 transform rounded-full shadow-[0_1px_4px_var(--shadow-color)] transition-[transform,background-color] duration-200 ${
+              enabled
+                ? "translate-x-[18px] bg-primary-foreground"
+                : "translate-x-0 bg-muted-foreground"
             }`}
           />
         </button>

@@ -4,7 +4,6 @@ import { motion, AnimatePresence } from "framer-motion";
 import { X } from "lucide-react";
 import { TagDropdown } from "./TagDropdown";
 import { Badge } from "./ui/badge";
-import { RxCrossCircled } from "react-icons/rx";
 
 interface PinterestModalProps {
   item: ImageItem | null;
@@ -82,11 +81,11 @@ export function PinterestModal(props: PinterestModalProps) {
         animate={{ opacity: 1 }}
         exit={{ opacity: 0 }}
         transition={{ duration: 0.15 }}
-        className="fixed inset-0 z-[100] flex items-center justify-center"
+        className="fixed inset-0 z-[100] flex items-center justify-center p-5"
         onClick={props.onClose}
       >
         {/* Backdrop */}
-        <div className="absolute inset-0 bg-black/80 backdrop-blur-md" />
+        <div className="absolute inset-0 bg-background/88 backdrop-blur-xl" />
 
         {/* Modal — spring scale-in for a more physical feel */}
         <motion.div
@@ -94,33 +93,47 @@ export function PinterestModal(props: PinterestModalProps) {
           animate={{ scale: 1, opacity: 1 }}
           exit={{ scale: 0.96, opacity: 0 }}
           transition={{ type: "spring", stiffness: 400, damping: 32 }}
-          className="relative z-10 flex max-h-[90vh] max-w-[95vw] overflow-hidden rounded-2xl bg-card shadow-2xl shadow-black/50 border border-border"
+          className="floating-surface relative z-10 grid h-full max-h-[calc(100dvh-40px)] w-full max-w-[calc(100vw-40px)] grid-cols-[minmax(0,1fr)_360px] overflow-hidden rounded-[16px] border max-[760px]:grid-cols-1 max-[760px]:grid-rows-[minmax(0,1fr)_auto]"
           onClick={(e) => e.stopPropagation()}
         >
           {/* Close button */}
           <button
             onClick={props.onClose}
-            className="absolute top-4 left-4 z-20 flex h-9 w-9 items-center justify-center rounded-full bg-background/80 backdrop-blur-sm transition hover:bg-background"
+            className="chrome-surface absolute top-4 left-4 z-20 grid size-9 place-items-center rounded-[10px] border text-muted-foreground transition-[color,background-color,transform] hover:bg-surface-raised hover:text-foreground active:scale-95"
             aria-label="Close"
           >
-            <X className="h-4 w-4" />
+            <X className="h-4 w-4" strokeWidth={1.8} />
           </button>
 
-          {/* Image — fills left side, capped at 60vw */}
-          <div className="flex max-w-[60vw] items-center justify-center bg-background/50">
+          {/* Image stage */}
+          <div className="relative flex min-h-0 min-w-0 items-center justify-center overflow-hidden bg-surface-sunken p-5 max-[760px]:p-3">
+            <div className="pointer-events-none absolute inset-0 bg-gradient-to-b from-foreground/[0.025] to-transparent" />
             <img
               src={props.item.url}
               alt={props.item.name}
-              className="max-h-[90vh] w-auto object-contain"
+              className="relative max-h-full max-w-full rounded-[14px] object-contain shadow-[0_24px_70px_-36px_var(--shadow-color)]"
               loading="eager"
               decoding="async"
             />
           </div>
 
           {/* Details panel */}
-          <div className="flex w-80 flex-col bg-card p-6 overflow-y-auto">
+          <aside className="flex min-h-0 flex-col overflow-y-auto border-l border-border bg-card/92 max-[760px]:max-h-[42dvh] max-[760px]:border-l-0 max-[760px]:border-t">
+            <div className="border-b border-border px-6 py-5">
+              <p className="mb-1 text-[11px] font-[560] text-muted-foreground">
+                Image details
+              </p>
+              <h2 className="line-clamp-2 text-[17px] font-[620] leading-snug tracking-[-0.025em] text-foreground">
+                {props.item.name}
+              </h2>
+            </div>
+
+            <div className="flex flex-1 flex-col gap-6 px-6 py-5">
             {/* Tag dropdown */}
-            <div className="mb-5">
+            <div className="space-y-2">
+              <label className="block text-[11px] font-[560] text-muted-foreground">
+                Tags
+              </label>
               <TagDropdown
                 tags={props.tags}
                 open={comboboxOpen}
@@ -137,12 +150,8 @@ export function PinterestModal(props: PinterestModalProps) {
               />
             </div>
 
-            <h2 className="mb-3 text-base font-semibold text-foreground line-clamp-2">
-              {props.item.name}
-            </h2>
-
             {/* Active tags */}
-            <div className="flex flex-wrap gap-2 mb-5">
+            <div className="flex min-h-6 flex-wrap gap-1.5">
               <AnimatePresence mode="popLayout">
                 {props.item.tags.map((tag) => (
                   <motion.div
@@ -154,7 +163,7 @@ export function PinterestModal(props: PinterestModalProps) {
                     transition={{ type: "spring", stiffness: 500, damping: 30 }}
                   >
                     <Badge
-                      className="px-2.5 py-1 text-xs"
+                      className="border-transparent px-2.5 py-1"
                       style={{
                         backgroundColor: tag.color,
                         color: pickContrastingText(tag.color),
@@ -162,13 +171,13 @@ export function PinterestModal(props: PinterestModalProps) {
                     >
                       {tag.name}
                       <button
-                        className="ml-1.5 hover:opacity-70 transition"
+                        className="ml-1 grid size-4 place-items-center rounded-full transition-colors hover:bg-background/15"
                         onClick={() =>
                           props.onRemoveTag(props.item!.id, tag.id)
                         }
                         aria-label={`Remove ${tag.name}`}
                       >
-                        <RxCrossCircled className="h-3 w-3" />
+                        <X className="h-3 w-3" strokeWidth={2} />
                       </button>
                     </Badge>
                   </motion.div>
@@ -178,8 +187,8 @@ export function PinterestModal(props: PinterestModalProps) {
 
             {/* Notes textarea (Phase 11) */}
             {props.onSaveNotes && (
-              <div className="mb-5">
-                <label className="text-xs font-medium text-muted-foreground mb-1.5 block">
+              <div className="space-y-2">
+                <label className="block text-[11px] font-[560] text-muted-foreground">
                   Notes
                 </label>
                 <textarea
@@ -187,18 +196,19 @@ export function PinterestModal(props: PinterestModalProps) {
                   onChange={(e) => setNotesValue(e.target.value)}
                   onBlur={persistNotesSoon}
                   placeholder="Add a note about this image..."
-                  className="w-full min-h-[80px] rounded-lg border border-border bg-background px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-primary resize-none"
+                  className="min-h-[112px] w-full resize-none rounded-[10px] border border-border bg-surface-sunken/65 px-3.5 py-3 text-[13px] leading-relaxed text-foreground outline-none transition-[border-color,box-shadow,background-color] placeholder:text-muted-foreground focus:border-primary/55 focus:bg-surface-sunken focus:ring-3 focus:ring-primary/10"
                 />
               </div>
             )}
 
             <div className="flex-1" />
+            </div>
 
             {/* Image dimensions */}
-            <div className="border-t border-border pt-4 text-xs text-muted-foreground">
-              {props.item.width} × {props.item.height}px
+            <div className="border-t border-border px-6 py-4 text-[11px] font-[520] tabular-nums text-muted-foreground">
+              {props.item.width.toLocaleString()} × {props.item.height.toLocaleString()} px
             </div>
-          </div>
+          </aside>
         </motion.div>
       </motion.div>
     </AnimatePresence>
@@ -213,10 +223,10 @@ export function PinterestModal(props: PinterestModalProps) {
 function pickContrastingText(hex: string): string {
   // Naive luma — sum of RGB channels normalised to 0-1, scaled by
   // perceptual weights. Threshold 0.5 picks black on light bgs.
-  if (!/^#[0-9a-fA-F]{6}$/.test(hex)) return "#000";
+  if (!/^#[0-9a-fA-F]{6}$/.test(hex)) return "#111827";
   const r = parseInt(hex.slice(1, 3), 16) / 255;
   const g = parseInt(hex.slice(3, 5), 16) / 255;
   const b = parseInt(hex.slice(5, 7), 16) / 255;
   const luma = 0.299 * r + 0.587 * g + 0.114 * b;
-  return luma > 0.6 ? "#000" : "#fff";
+  return luma > 0.6 ? "#111827" : "#f8fafc";
 }

@@ -17,9 +17,9 @@ export function ResetSection() {
             resetAll();
           }
         }}
-        className="flex items-center gap-2 rounded-lg border border-border bg-transparent px-3 py-2 text-xs font-medium hover:bg-accent transition"
+        className="flex h-9 items-center gap-2 rounded-[10px] border border-border bg-transparent px-3 text-[11px] font-[560] text-muted-foreground transition-[color,background-color,border-color,transform] hover:border-border-strong hover:bg-accent hover:text-foreground active:scale-[0.98]"
       >
-        <RotateCcw className="h-3.5 w-3.5" />
+        <RotateCcw className="h-3.5 w-3.5" strokeWidth={1.8} />
         Reset all preferences
       </button>
     </Section>

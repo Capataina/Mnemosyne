@@ -30,6 +30,14 @@ images.db
 # so user state never lands in commits.
 Library/
 
+# Bundled encoder weights. Populated by scripts/download_models.py into
+# models/<modality>/ (image, audio, 3d) so the weights sit inside the repo
+# tree — visible, and the source the Tauri bundler packages into each app.
+# Never committed: ~2.5 GB of ONNX weights per modality. The *.onnx rule
+# below already covers the .onnx files; this also excludes the tokenizer
+# .json files that live alongside them.
+/models/
+
 # Local Claude Code personality — not shared
 CLAUDE.md
 

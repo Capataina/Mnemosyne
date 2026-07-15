@@ -7,19 +7,30 @@
 //! event channel so the frontend pill can render a smooth bar across all
 //! files.
 //!
-//! ## Sources (verified 2026-04-26 by parallel research agents)
+//! ## Sources
 //!
-//! All URLs HEAD-checked 200 OK on Hugging Face main; all FP32 (no
-//! quantization). Per-encoder details below.
+//! All FP32 (no quantization). Per-encoder details below. The image-family
+//! weights all carry commercial-friendly licences (MIT / Apache-2.0) so the
+//! shipped app can be sold — see the CLIP note.
 //!
-//! ### CLIP ViT-B/32 (Xenova/clip-vit-base-patch32)
+//! ### CLIP ViT-B/32 — OpenCLIP LAION-2B (immich-app/ViT-B-32__laion2b-s34b-b79k)
 //!
-//! - **vision_model.onnx** (~352 MB) — input `pixel_values`
+//! Swapped from OpenAI's `Xenova/clip-vit-base-patch32` weights, which are
+//! released under a NON-COMMERCIAL research licence and cannot ship in a paid
+//! app. The LAION-2B-trained OpenCLIP weights are **MIT-licensed** and a
+//! byte-for-byte drop-in: identical CLIP BPE tokenizer, identical image
+//! preprocessing, identical 512-d output space — so only these two URLs
+//! changed, no encoder code.
+//!
+//! - **visual/model.onnx** (~352 MB) — input `pixel_values`
 //!   [1,3,224,224]; output `image_embeds` [1,512]
-//! - **text_model.onnx** (~254 MB) — inputs `input_ids` +
+//! - **textual/model.onnx** (~254 MB) — inputs `input_ids` +
 //!   `attention_mask` [1,77]; output `text_embeds` [1,512]
-//! - **tokenizer.json** (~2 MB) — BPE byte-level, max 77 tokens, pad
-//!   with id 49407, NFC + lowercase + whitespace normalization
+//! - **tokenizer.json** (~2 MB) — CLIP BPE byte-level, max 77 tokens, pad
+//!   with id 49407. Still mirrored from Xenova's OpenAI export; it is the
+//!   open_clip MIT vocab/merges in practice (not trained weights), but its
+//!   provenance should be re-sourced from an explicitly-MIT repo before a
+//!   paid release. Pre-sale checklist item, not a code blocker.
 //! - Image preprocessing: resize shortest-edge 224 (bicubic) +
 //!   center-crop 224×224, mean=[0.48145466, 0.4578275, 0.40821073],
 //!   std=[0.26862954, 0.26130258, 0.27577711]
@@ -62,18 +73,21 @@ use crate::similarity_and_semantic_search::{encoder_dinov2, encoder_siglip2};
 // CLIP ViT-B/32 (Xenova) — separate vision + text + tokenizer
 // =====================================================================
 
-/// CLIP image encoder ONNX. Separate vision model (no joint graph,
-/// no dummy text inputs) — input `pixel_values`, output `image_embeds`.
+/// CLIP image encoder ONNX. OpenCLIP LAION-2B ViT-B/32 vision tower
+/// (MIT-licensed) — input `pixel_values`, output `image_embeds` [1,512].
+/// Replaces OpenAI's non-commercial weights for the commercial pivot.
 const CLIP_VISION_URL: &str =
-    "https://huggingface.co/Xenova/clip-vit-base-patch32/resolve/main/onnx/vision_model.onnx";
+    "https://huggingface.co/immich-app/ViT-B-32__laion2b-s34b-b79k/resolve/main/visual/model.onnx";
 
-/// CLIP text encoder ONNX. OpenAI English-only weights (NOT the
-/// multilingual distillation, which lives in a different embedding
-/// space and broke text-to-image search).
+/// CLIP text encoder ONNX. OpenCLIP LAION-2B ViT-B/32 text tower
+/// (MIT-licensed). Same CLIP BPE tokenizer and 512-d output space as the
+/// OpenAI weights it replaces, so text-to-image search is unaffected.
 const CLIP_TEXT_URL: &str =
-    "https://huggingface.co/Xenova/clip-vit-base-patch32/resolve/main/onnx/text_model.onnx";
+    "https://huggingface.co/immich-app/ViT-B-32__laion2b-s34b-b79k/resolve/main/textual/model.onnx";
 
-/// CLIP tokenizer (byte-level BPE).
+/// CLIP tokenizer (byte-level BPE). Still mirrored from Xenova's OpenAI
+/// export — functionally the open_clip MIT vocab/merges. Re-source from an
+/// explicitly-MIT repo before a paid release (pre-sale checklist item).
 const CLIP_TOKENIZER_URL: &str =
     "https://huggingface.co/Xenova/clip-vit-base-patch32/resolve/main/tokenizer.json";
 

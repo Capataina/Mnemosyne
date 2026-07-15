@@ -189,6 +189,37 @@ impl ImageDatabase {
         Ok(())
     }
 
+    /// Adds `images.manual_order` and `images.manual_col_span`
+    /// (INTEGER, both nullable) for existing DBs created before
+    /// drag-to-reorder / drag-to-resize existed. Both NULL means "use
+    /// the default masonry packing for this image" — the frontend's
+    /// "custom" sort mode falls back to insertion order for any image
+    /// that has never been manually placed, so a fresh migration
+    /// (every row NULL) behaves identically to the pre-migration grid
+    /// until the user actually drags something.
+    pub(super) fn migrate_add_manual_order_columns(&self) -> rusqlite::Result<()> {
+        let conn = self.connection.lock().unwrap();
+        let mut stmt = conn.prepare("PRAGMA table_info(images)")?;
+        let columns: Vec<String> = stmt
+            .query_map([], |row| row.get::<_, String>(1))?
+            .filter_map(|r| r.ok())
+            .collect();
+
+        if !columns.contains(&"manual_order".to_string()) {
+            info!("Migrating database: Adding manual_order column...");
+            conn.execute("ALTER TABLE images ADD COLUMN manual_order INTEGER", [])?;
+        }
+        if !columns.contains(&"manual_col_span".to_string()) {
+            info!("Migrating database: Adding manual_col_span column...");
+            conn.execute(
+                "ALTER TABLE images ADD COLUMN manual_col_span INTEGER",
+                [],
+            )?;
+        }
+
+        Ok(())
+    }
+
     /// Adds `roots.bookmark` (BLOB, nullable) for existing DBs created
     /// before macOS security-scoped bookmark support. NULL for every
     /// pre-existing root — a root added before this migration has no

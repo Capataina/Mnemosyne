@@ -203,17 +203,21 @@ impl ImageDatabase {
                 height INTEGER,
                 root_id INTEGER REFERENCES roots(id) ON DELETE CASCADE,
                 notes TEXT,
-                orphaned INTEGER NOT NULL DEFAULT 0
+                orphaned INTEGER NOT NULL DEFAULT 0,
+                manual_order INTEGER,
+                manual_col_span INTEGER
             );",
             [],
         )?;
 
         // Migrations for existing DBs: add thumbnail columns, then
-        // multi-folder columns, then notes/orphaned. Each is gated by
-        // a PRAGMA table_info check so they're idempotent.
+        // multi-folder columns, then notes/orphaned, then the manual
+        // drag-reorder + resize columns. Each is gated by a PRAGMA
+        // table_info check so they're idempotent.
         self.migrate_add_thumbnail_columns()?;
         self.migrate_add_multifolder_columns()?;
         self.migrate_add_notes_and_orphaned_columns()?;
+        self.migrate_add_manual_order_columns()?;
 
         self.connection.lock().unwrap().execute(
             "CREATE TABLE IF NOT EXISTS tags (

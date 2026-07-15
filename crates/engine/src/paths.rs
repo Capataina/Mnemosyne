@@ -166,6 +166,43 @@ pub fn models_dir() -> PathBuf {
     p
 }
 
+/// Resolve the on-disk path for an encoder model at a given precision,
+/// falling back to the FP32 original when the requested precision
+/// isn't on disk.
+///
+/// `base_filename` is the FP32 name (e.g. `"clip_vision.onnx"`).
+/// `precision` is `"fp16"`, `"int8"`, or anything else (including
+/// `"fp32"` and empty string), which all mean "use the FP32 file
+/// unchanged" — this makes an unrecognised or missing setting value
+/// behave identically to `None`, rather than erroring.
+///
+/// `scripts/quantize_models.py` writes `<stem>_fp16.onnx` /
+/// `<stem>_int8.onnx` next to the original and never touches the
+/// original file, so the fallback here is never a lossy operation —
+/// worst case the user picked a precision that hasn't been generated
+/// yet (they never ran the quantize script, or ran it for a different
+/// precision) and gets the original weights instead of a load error.
+/// A future pass could surface "quantized variant missing, using
+/// fp32" as a one-time settings-drawer notice rather than silently
+/// falling back; not done here since there's no UI surface for it yet.
+pub fn model_path_for(base_filename: &str, precision: &str) -> PathBuf {
+    let dir = models_dir();
+    let suffix = match precision {
+        "fp16" => "_fp16",
+        "int8" => "_int8",
+        _ => "",
+    };
+    if !suffix.is_empty() {
+        if let Some(stem) = base_filename.strip_suffix(".onnx") {
+            let quantized = dir.join(format!("{stem}{suffix}.onnx"));
+            if quantized.exists() {
+                return quantized;
+            }
+        }
+    }
+    dir.join(base_filename)
+}
+
 /// Path to the user-facing settings JSON file. The file may not exist
 /// yet on first launch; callers should treat absence as "use defaults."
 pub fn settings_path() -> PathBuf {
@@ -228,6 +265,39 @@ mod tests {
     // PathBuf construct; manual smoke-test from a shell:
     //   LYNCEUS_DATA_DIR=/tmp/foo cargo run --bin lynceus
     // and verify the binary writes images.db under /tmp/foo/.
+
+    #[test]
+    fn model_path_for_falls_back_to_fp32_when_quantized_variant_missing() {
+        // No quantized file exists on disk for a made-up base name, so
+        // every precision should resolve to the same FP32 path.
+        let base = "does_not_exist_anywhere.onnx";
+        let fp32_path = model_path_for(base, "fp32");
+        assert_eq!(model_path_for(base, "fp16"), fp32_path);
+        assert_eq!(model_path_for(base, "int8"), fp32_path);
+        assert_eq!(model_path_for(base, ""), fp32_path);
+        assert_eq!(model_path_for(base, "garbage"), fp32_path);
+        assert!(fp32_path.ends_with(base));
+    }
+
+    #[test]
+    fn model_path_for_prefers_quantized_variant_when_present() {
+        // Use the real models_dir() (respects LYNCEUS_MODELS_DIR in
+        // dev) and create a throwaway _int8 sibling to prove the
+        // preference actually reads the filesystem rather than just
+        // string-formatting a name that happens to look right.
+        let dir = models_dir();
+        let base = "paths_test_temp_model.onnx";
+        let int8_path = dir.join("paths_test_temp_model_int8.onnx");
+        std::fs::write(&int8_path, b"fake").expect("write temp quantized file");
+
+        let resolved = model_path_for(base, "int8");
+        assert_eq!(resolved, int8_path);
+
+        // fp16 wasn't created, so it must still fall back to fp32.
+        assert_eq!(model_path_for(base, "fp16"), dir.join(base));
+
+        let _ = std::fs::remove_file(&int8_path);
+    }
 
     #[test]
     fn test_paths_are_under_app_data_dir() {

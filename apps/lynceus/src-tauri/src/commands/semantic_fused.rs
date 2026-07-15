@@ -262,7 +262,13 @@ fn encode_query(
                 .map_err(|e| format!("CLIP text encoder mutex poisoned: {e}"))?;
             if lock.is_none() {
                 let models_dir = paths::models_dir();
-                let model_path = models_dir.join(crate::model_download::CLIP_TEXT_FILENAME);
+                let model_precision = crate::settings::Settings::load()
+                    .model_precision
+                    .unwrap_or_default();
+                let model_path = paths::model_path_for(
+                    crate::model_download::CLIP_TEXT_FILENAME,
+                    &model_precision,
+                );
                 let tokenizer_path =
                     models_dir.join(crate::model_download::CLIP_TOKENIZER_FILENAME);
                 *lock = Some(ClipTextEncoder::new(&model_path, &tokenizer_path)?);
@@ -277,7 +283,11 @@ fn encode_query(
                 .map_err(|e| format!("SigLIP-2 text encoder mutex poisoned: {e}"))?;
             if lock.is_none() {
                 let models_dir = paths::models_dir();
-                let model_path = models_dir.join(SIGLIP2_TEXT_MODEL_FILENAME);
+                let model_precision = crate::settings::Settings::load()
+                    .model_precision
+                    .unwrap_or_default();
+                let model_path =
+                    paths::model_path_for(SIGLIP2_TEXT_MODEL_FILENAME, &model_precision);
                 let tokenizer_path = models_dir.join(SIGLIP2_TOKENIZER_FILENAME);
                 *lock = Some(Siglip2TextEncoder::new(&model_path, &tokenizer_path)?);
             }

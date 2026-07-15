@@ -224,7 +224,13 @@ fn encode_with_clip(
     if encoder_lock.is_none() {
         info!("Initializing CLIP text encoder...");
         let models_dir = paths::models_dir();
-        let model_path = models_dir.join(crate::model_download::CLIP_TEXT_FILENAME);
+        let model_precision = crate::settings::Settings::load()
+            .model_precision
+            .unwrap_or_default();
+        let model_path = paths::model_path_for(
+            crate::model_download::CLIP_TEXT_FILENAME,
+            &model_precision,
+        );
         let tokenizer_path = models_dir.join(crate::model_download::CLIP_TOKENIZER_FILENAME);
         if !model_path.exists() {
             return Err(ApiError::TextModelMissing(
@@ -262,7 +268,10 @@ fn encode_with_siglip2(
     if encoder_lock.is_none() {
         info!("Initializing SigLIP-2 text encoder...");
         let models_dir = paths::models_dir();
-        let model_path = models_dir.join(SIGLIP2_TEXT_MODEL_FILENAME);
+        let model_precision = crate::settings::Settings::load()
+            .model_precision
+            .unwrap_or_default();
+        let model_path = paths::model_path_for(SIGLIP2_TEXT_MODEL_FILENAME, &model_precision);
         let tokenizer_path = models_dir.join(SIGLIP2_TOKENIZER_FILENAME);
         if !model_path.exists() {
             return Err(ApiError::TextModelMissing(

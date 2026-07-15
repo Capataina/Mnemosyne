@@ -244,6 +244,9 @@ fn run_pipeline_inner(
     //     a spinner.
     {
         let models_dir = paths::models_dir();
+        let model_precision = crate::settings::Settings::load()
+            .model_precision
+            .unwrap_or_default();
         // Bind the State separately so its lifetime extends across
         // the full block. Inlining `app.state::<TextEncoderState>()
         // .encoder.lock()` produces a temporary that the borrow
@@ -252,7 +255,12 @@ fn run_pipeline_inner(
             app.state::<TextEncoderState>();
 
         // CLIP text encoder pre-warm (was here before — unchanged).
-        let clip_model_path = models_dir.join(crate::model_download::CLIP_TEXT_FILENAME);
+        // Tokenizer path stays unquantized — it's vocab/merges data,
+        // not model weights, so precision doesn't apply to it.
+        let clip_model_path = paths::model_path_for(
+            crate::model_download::CLIP_TEXT_FILENAME,
+            &model_precision,
+        );
         let clip_tokenizer_path =
             models_dir.join(crate::model_download::CLIP_TOKENIZER_FILENAME);
         if clip_model_path.exists() && clip_tokenizer_path.exists() {
@@ -276,8 +284,9 @@ fn run_pipeline_inner(
         // inside its own `new`; SigLIP-2 inherits the same on its own
         // construction path, so loading the encoder here is enough to
         // collapse the user-visible cold-start.
-        let siglip2_model_path = models_dir.join(
+        let siglip2_model_path = paths::model_path_for(
             crate::similarity_and_semantic_search::encoder_siglip2::SIGLIP2_TEXT_MODEL_FILENAME,
+            &model_precision,
         );
         let siglip2_tokenizer_path = models_dir.join(
             crate::similarity_and_semantic_search::encoder_siglip2::SIGLIP2_TOKENIZER_FILENAME,
@@ -409,7 +418,11 @@ fn run_pipeline_inner(
     // earlier" for "everything finishes faster overall" — and the user
     // already sees thumbnails as they generate via the foreground
     // get_images polling, so the latency cost is small.
-    let image_model_path = paths::models_dir().join(crate::model_download::CLIP_VISION_FILENAME);
+    let model_precision = crate::settings::Settings::load()
+        .model_precision
+        .unwrap_or_default();
+    let image_model_path =
+        paths::model_path_for(crate::model_download::CLIP_VISION_FILENAME, &model_precision);
 
     let _thumb_phase = tracing::info_span!("pipeline.thumbnail_phase").entered();
     //
@@ -619,14 +632,18 @@ fn run_encoder_phase(
 
     // Enabled-encoder list from settings. Default = every supported
     // encoder if the user hasn't picked anything yet.
-    let enabled = crate::settings::Settings::load().resolved_enabled_encoders();
+    let settings = crate::settings::Settings::load();
+    let enabled = settings.resolved_enabled_encoders();
     info!("encoder phase: enabled = {enabled:?}");
+    let model_precision = settings.model_precision.unwrap_or_default();
 
-    let siglip2_path = paths::models_dir().join(
+    let siglip2_path = paths::model_path_for(
         crate::similarity_and_semantic_search::encoder_siglip2::SIGLIP2_IMAGE_MODEL_FILENAME,
+        &model_precision,
     );
-    let dinov2_path = paths::models_dir().join(
+    let dinov2_path = paths::model_path_for(
         crate::similarity_and_semantic_search::encoder_dinov2::DINOV2_IMAGE_MODEL_FILENAME,
+        &model_precision,
     );
 
     // Phase 12c — dynamic intra_threads. Total ORT thread budget across

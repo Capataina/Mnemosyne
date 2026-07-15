@@ -4,12 +4,12 @@
 
 ## Scope / Purpose
 
-The frontend's "what should the grid show right now?" decision layer. Lives in `src/pages/[...slug].tsx` (the single catch-all route) and resolves a priority chain — similar > semantic > tag > all — into the `displayImages` set that drives Masonry. Owns the URL ↔ selectedItem reconciliation, the debounced semantic-search trigger, the global keyboard shortcuts, the lazy notes-load on selection, and the typed-error catch-and-format chain.
+The frontend's "what should the grid show right now?" decision layer. Lives in `apps/lynceus/src/pages/[...slug].tsx` (the single catch-all route) and resolves a priority chain — similar > semantic > tag > all — into the `displayImages` set that drives Masonry. Owns the URL ↔ selectedItem reconciliation, the debounced semantic-search trigger, the global keyboard shortcuts, the lazy notes-load on selection, and the typed-error catch-and-format chain.
 
 ## Boundaries / Ownership
 
 - **Owns:** the four-tier priority resolution (similar / semantic / tag / all), the URL-slug → selectedItem reconciliation (now using `displayImages` not `images.data` — audit fix), the 300 ms debounce for semantic search, the cmd+, settings shortcut, the cmd+shift+P perf-overlay shortcut (profiling-only), the lazy notes loader, the per-action `recordAction` calls.
-- **Does not own:** any IPC (delegates to `src/services/*`), the cache policy (delegates to `src/queries/queryClient`), the actual search SQL (delegates to backend `commands::*`), the Masonry layout (delegates to `Masonry.tsx`), per-tile rendering (delegates to `MasonryItem.tsx`).
+- **Does not own:** any IPC (delegates to `apps/lynceus/src/services/*`), the cache policy (delegates to `apps/lynceus/src/queries/queryClient`), the actual search SQL (delegates to backend `commands::*`), the Masonry layout (delegates to `Masonry.tsx`), per-tile rendering (delegates to `MasonryItem.tsx`).
 - **Public API:** the page component default export `Home`. No exported helpers — the file is a self-contained route.
 
 ## Current Implemented Reality

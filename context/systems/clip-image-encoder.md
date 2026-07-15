@@ -4,7 +4,7 @@
 
 ## Scope / Purpose
 
-Loads OpenAI CLIP ViT-B/32's separate `vision_model.onnx` and produces 512-dimensional L2-normalised `f32` embeddings for image files. Runs CPU-only on macOS (CoreML's runtime inference fails on this graph) and tries CUDA on non-macOS, both with CPU fallback. Driven by the indexing pipeline's encode phase to populate `images.embedding` BLOB + the per-encoder `embeddings(image_id, encoder_id="clip_vit_b_32", embedding)` row for every image lacking one.
+Loads OpenCLIP LAION-2B ViT-B/32's separate `vision_model.onnx` (MIT-licensed; swapped from OpenAI's non-commercial CLIP export 2026-07 — weights-only, see Durable Notes) and produces 512-dimensional L2-normalised `f32` embeddings for image files. Runs CPU-only on macOS (CoreML's runtime inference fails on this graph) and tries CUDA on non-macOS, both with CPU fallback. Driven by the indexing pipeline's encode phase to populate `images.embedding` BLOB + the per-encoder `embeddings(image_id, encoder_id="clip_vit_b_32", embedding)` row for every image lacking one.
 
 ## Boundaries / Ownership
 
@@ -14,7 +14,7 @@ Loads OpenAI CLIP ViT-B/32's separate `vision_model.onnx` and produces 512-dimen
 
 ## Current Implemented Reality
 
-### Pipeline per image — canonical OpenAI CLIP preprocessing
+### Pipeline per image — canonical CLIP preprocessing (unchanged by the OpenCLIP weights swap)
 
 ```text
 ImageReader::open → with_guessed_format → decode → to_rgb8
@@ -59,7 +59,7 @@ L2-normalize via super::encoder_text::pooling::normalize
 
 Pre-2026-04-26 the encoder used Xenova's combined-graph CLIP export, which bundled image and text encoders in a single ONNX graph. Calling it for image-only inference required supplying dummy `input_ids: [[0]]` and `attention_mask: [[1]]` to satisfy the graph signature.
 
-The current build uses the **separate** `vision_model.onnx` from the same Xenova repo. Inputs are reduced to just `pixel_values`, simplifying the call shape and removing the unused text branch from session memory. This was part of the same change that switched the text encoder from the multilingual distillation to OpenAI English (see `clip-text-encoder.md`) — both halves were swapped together to keep the embedding space consistent.
+The current build uses the **separate** `vision_model.onnx`. Inputs are reduced to just `pixel_values`, simplifying the call shape and removing the unused text branch from session memory. This was part of the same change that switched the text encoder from the multilingual distillation to OpenAI English (see `clip-text-encoder.md`) — both halves were swapped together to keep the embedding space consistent. (At the time, the export still came from Xenova's OpenAI-CLIP repo; the vision/text weights were later re-sourced from `immich-app/ViT-B-32__laion2b-s34b-b79k` — see Durable Notes below. The tokenizer export is the only piece still mirrored from Xenova.)
 
 ### Execution provider — CoreML disabled, CPU-only on macOS
 
@@ -152,7 +152,9 @@ None.
 - **CoreML stays disabled even though "GetCapability" reports it can handle the graph.** The runtime inference failure pattern was reproducible across multiple ort releases. Re-enabling without verifying every op runs under inference is silent corruption waiting to happen.
 - **Per-channel slice layout `[R..., G..., B...]` is intentional, not interleaved `[RGB, RGB, ...]`.** ONNX tensor convention is NCHW (channels first); interleaved would require a transpose at every encode call.
 - **CatmullRom over Lanczos3 is the canonical bicubic match.** PIL's `BICUBIC` (resample=3) maps to a cubic family closer to CatmullRom than Lanczos3. Not bit-exact, but standard for ONNX deployments outside Python.
-- **L2-normalize at output is required** — the Xenova vision_model.onnx outputs un-normalised projected embeddings. Cosine similarity still works without normalising (the math divides by norms) but pre-normalisation makes the resulting vectors interchangeable and the cache cosines well-conditioned.
+- **L2-normalize at output is required** — the vision_model.onnx export outputs un-normalised projected embeddings (true of both the original Xenova/OpenAI weights and the current OpenCLIP LAION-2B weights — same architecture, same un-normalised head). Cosine similarity still works without normalising (the math divides by norms) but pre-normalisation makes the resulting vectors interchangeable and the cache cosines well-conditioned.
+- **2026-07 commercial-licensing swap: OpenAI CLIP (Xenova export, non-commercial research licence) → OpenCLIP LAION-2B ViT-B/32 (`immich-app/ViT-B-32__laion2b-s34b-b79k`, MIT).** Weights-only: same CLIP BPE tokenizer (49408 vocab, 77-token context), same preprocessing pipeline described above, same 512-d L2-normalised output space, same on-disk filenames (`clip_vision.onnx` / `clip_text.onnx`). No encoder code changed, no consumer code changed, no `CURRENT_PIPELINE_VERSION` bump (see `systems/model-download.md` and `notes/clip-preprocessing-decisions.md`). CLIP is still English-only ViT-B/32 — this is a provenance and licence change, not a quality or behaviour change. All three encoders are now commercially licensed: OpenCLIP MIT, DINOv2 Apache-2.0 (Meta), SigLIP-2 Apache-2.0 (Google).
+- **Resize is now implemented via the shared `similarity_and_semantic_search/preprocess.rs` helper** (introduced Phase 12e, pre-dating the commercialisation refactor), used identically by all three image encoders rather than each encoder inlining its own resize call.
 
 ## Obsolete / No Longer Relevant
 

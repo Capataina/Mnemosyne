@@ -114,7 +114,7 @@ User-facing toggle: Settings → Search → Tag filter (Any / All).
 ### Dependencies
 
 - TanStack Query for cache + mutation lifecycle (`systems/frontend-state.md`)
-- shadcn `cmdk` primitive (`src/components/ui/command.tsx`) for the combobox
+- shadcn `cmdk` primitive (`apps/lynceus/src/components/ui/command.tsx`) for the combobox
 - `framer-motion` for pill animations
 
 ## Implemented Outputs / Artifacts

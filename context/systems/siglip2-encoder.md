@@ -4,7 +4,7 @@
 
 ## Scope / Purpose
 
-Google's sigmoid-loss CLIP-family model (ICCV 2025). Image and text branches in a shared 768-dim embedding space. Better English text-to-image alignment than OpenAI CLIP at every scale; uses a 256k-vocab Gemma SentencePiece tokenizer with much better cross-lingual coverage than CLIP's 49k BPE.
+Google's sigmoid-loss CLIP-family model (ICCV 2025), Apache-2.0 licensed — clear for commercial/paid distribution alongside the other two encoders (OpenCLIP MIT, DINOv2 Apache-2.0; see `clip-image-encoder.md` Durable Notes for the full three-encoder licensing picture). Image and text branches in a shared 768-dim embedding space. Better English text-to-image alignment than CLIP at every scale; uses a 256k-vocab Gemma SentencePiece tokenizer with much better cross-lingual coverage than CLIP's 49k BPE.
 
 Both halves ship in one Rust file because they're trained together and only meaningful when used as a pair (mixing SigLIP image + CLIP text would put the queries in different embedding spaces). The encoder picker treats SigLIP-2 as a single user-selectable choice that activates both branches.
 
@@ -183,7 +183,8 @@ The SigLIP-2 text encoder is also pre-warmed during indexing (Phase 12d) — `in
 
 - **Both branches use `pooler_output`, not `last_hidden_state[:, 0, :]`.** SigLIP uses MAP (Multi-head Attention Pooling) heads that produce projected outputs directly via `pooler_output`. CLS-token slicing would produce wrong-space embeddings. Verified by inspecting the ONNX graph and HF's `SiglipModel` source in the prior verification pass.
 - **Text encoder takes ONLY `input_ids`, NO `attention_mask`.** The ONNX export inlined the position lookup as a fixed-length Slice; passing attention_mask makes session.run error. The position embedding table is fixed at 64 entries — sequences longer than 64 must be truncated before reaching the session.
-- **Pad token is id 0 (`<pad>`), not the EOS that CLIP uses.** Gemma's SentencePiece has distinct pad/eos/bos/unk tokens, unlike OpenAI CLIP's "EOS doubles as pad" quirk.
+- **Pad token is id 0 (`<pad>`), not the EOS that CLIP uses.** Gemma's SentencePiece has distinct pad/eos/bos/unk tokens, unlike CLIP's "EOS doubles as pad" quirk.
+- **Resize is implemented via the shared `similarity_and_semantic_search/preprocess.rs` helper** (introduced Phase 12e), used identically by all three image encoders rather than each encoder inlining its own resize call.
 - **No prompt prefix needed.** Some SigLIP variants benefit from "This is a photo of {X}." framing, but SigLIP-2's released processor does no templating, the tokenizer config has no prompt template, and HF's `AutoProcessor` example calls `processor(text=labels, …)` with raw labels. Confirmed by the verification pass.
 - **The 256×256 input size is a SigLIP-2 specific** — SigLIP v1 used 224. The `-256-ONNX` suffix in the HF repo name is significant; the non-suffixed variant returned 401 in the prior verification pass.
 - **Image preprocessing is exact-square stretch** because SigLIP-2 was trained that way. Aspect-preserving + crop (CLIP/DINOv2 style) would deviate from training-time geometry. The user-visible upside: every pixel of the original image contributes to the embedding (see `notes/preprocessing-spatial-coverage.md`).

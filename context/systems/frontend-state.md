@@ -10,7 +10,7 @@ No global state store exists. `zustand` is declared in `package.json` from earli
 
 ## Boundaries / Ownership
 
-- **Owns:** `queryClient.ts` (cache policy), routing config (`App.tsx` + `vite.config.ts`), the per-resource query hooks (`src/queries/*`), the `useUserPreferences` hook + localStorage layout, the `useIndexingProgress` event hook, the settings drawer split (`src/components/settings/`).
+- **Owns:** `queryClient.ts` (cache policy), routing config (`App.tsx` + `vite.config.ts`), the per-resource query hooks (`apps/lynceus/src/queries/*`), the `useUserPreferences` hook + localStorage layout, the `useIndexingProgress` event hook, the settings drawer split (`apps/lynceus/src/components/settings/`).
 - **Does not own:** any per-feature query (those live in `queries/use*.ts`), per-page UI state (lives in components via `useState`), the IPC wire format (delegates to `services/*` + `services/apiError.ts`).
 - **Public API:** the exported `queryClient`, the `<App />` component composition, `useUserPreferences()`, `useIndexingProgress()`, `useRoots()` + add/remove/setEnabled mutations, the implicit contract that all mutations follow `cancelQueries → snapshot → optimistic → onError rollback → onSuccess invalidate`.
 
@@ -33,7 +33,7 @@ new QueryClient({
 })
 ```
 
-`src/queries/queryClient.ts`. Aggressive cache policy because:
+`apps/lynceus/src/queries/queryClient.ts`. Aggressive cache policy because:
 
 - This is a desktop app; there's no "user navigates away and comes back" concept
 - IPC calls are local — no network costs to retry
@@ -42,7 +42,7 @@ new QueryClient({
 ### Per-resource hook layout
 
 ```
-src/queries/
+apps/lynceus/src/queries/
 ├── queryClient.ts        — staleTime: Infinity, no auto-refetch
 ├── useImages.ts          — useImages + useAssignTagToImage + useRemoveTagFromImage (optimistic)
 ├── useTags.ts            — useTags + useCreateTag + useDeleteTag (optimistic)
@@ -86,7 +86,7 @@ export interface UserPreferences {
 }
 ```
 
-`src/hooks/useUserPreferences.ts:19-41`. Defaults:
+`apps/lynceus/src/hooks/useUserPreferences.ts:19-41`. Defaults:
 
 ```ts
 const DEFAULTS: UserPreferences = {
@@ -129,10 +129,10 @@ The `["images"]` invalidation is necessary because root mutations change which i
 
 ### Settings drawer split (Phase 9 + audit Modularisation finding)
 
-`src/components/settings/` is the split-out drawer. `index.tsx` is the slide-in shell (animation, esc/backdrop dismiss); each section lives in its own file:
+`apps/lynceus/src/components/settings/` is the split-out drawer. `index.tsx` is the slide-in shell (animation, esc/backdrop dismiss); each section lives in its own file:
 
 ```
-src/components/settings/
+apps/lynceus/src/components/settings/
 ├── index.tsx              — Drawer shell (AnimatePresence + slide animation + esc handler)
 ├── controls.tsx           — Shared section header + slider/toggle primitives
 ├── ThemeSection.tsx       — system / dark / light segmented buttons
@@ -201,10 +201,10 @@ Hooks call services; components do not call `invoke` directly. Every catch site 
 
 ## Implemented Outputs / Artifacts
 
-- 6 query/mutation hook files in `src/queries/`
-- 3 utility hooks in `src/hooks/` (debounce, prefs, indexing-progress)
-- 6 services in `src/services/` (incl. perf + apiError)
-- 7 settings section components + 1 controls primitive + 1 shell (`src/components/settings/`)
+- 6 query/mutation hook files in `apps/lynceus/src/queries/`
+- 3 utility hooks in `apps/lynceus/src/hooks/` (debounce, prefs, indexing-progress)
+- 6 services in `apps/lynceus/src/services/` (incl. perf + apiError)
+- 7 settings section components + 1 controls primitive + 1 shell (`apps/lynceus/src/components/settings/`)
 - The implicit "every mutation follows the canonical pattern" contract
 - Tests: `useUserPreferences.test.ts` (132 lines), `services.test.ts` (248 lines)
 

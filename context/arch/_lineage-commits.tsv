@@ -1,0 +1,143 @@
+# window	hash	date	THEME	subject
+# Replace each 'TODO' in the THEME column with a theme key from lineage.themes[].key (in data.js). The script tallies lineage.buckets[].counts from this column on the next orchestrate run; do not hand-edit the counts.
+0	9b416de	2025-11-19	TODO	init
+0	3684b2b	2025-11-19	TODO	Revise README for Local Image Browser project
+0	f09600c	2025-11-19	TODO	Refactor README for clarity and formatting
+0	4ce9d9b	2025-11-19	foundation	added recursive image finder
+0	1a4569a	2025-11-19	TODO	Merge branch 'master' of https://github.com/Capataina/PinterestStyleImageBrowser
+0	11222e6	2025-11-19	TODO	Update README to reflect completed backend tasks
+0	651aa4c	2025-11-20	foundation	added simple sqlite db
+0	2cfadd2	2025-11-21	foundation	added image struct
+0	8defc9a	2025-11-21	foundation	made simple db creation possible
+0	c831a98	2025-11-21	foundation	Merge pull request #1 from Capataina/sqlite
+0	2b68626	2025-11-22	foundation	masonry
+0	b9df150	2025-11-22	foundation	mason
+0	5c652df	2025-11-22	foundation	better animations
+0	875f770	2025-11-24	foundation	combo box
+0	27e5b07	2025-11-24	foundation	animations
+0	d76c04e	2025-11-24	foundation	better selection animation
+0	3b7e554	2025-11-24	TODO	small fix
+0	01a4247	2025-11-24	foundation	focus
+0	2c8798c	2025-11-24	TODO	adding next image
+0	bae85e4	2025-11-24	TODO	idk
+0	5a43a27	2025-11-24	foundation	Merge pull request #2 from Capataina/feature/tags-and-frontend
+0	121b8c1	2025-11-24	retrieval	Add ONNX model and semantic search encoder
+0	14d0cb5	2025-11-24	foundation	Track empty models directory with .gitkeep
+0	41715af	2025-11-24	retrieval	Update encoder.rs
+0	491dbb3	2025-11-24	TODO	Update README.md
+0	08298df	2025-11-25	retrieval	Merge pull request #3 from Capataina/similarity-search
+0	16cf7d3	2025-11-25	retrieval	Add cosine similarity index and batch encoder
+0	90ff324	2025-11-25	retrieval	Add CUDA support and runtime checks to Encoder
+0	cbb294f	2025-11-26	retrieval	Add batch image preprocessing to Encoder
+0	b0c7a93	2025-11-27	foundation	building tag system
+0	9e4e6d8	2025-11-27	foundation	Merge branch 'master' into feature/tags-and-frontend
+0	d5a57e8	2025-11-28	retrieval	Merge pull request #4 from Capataina/cosine-similarity
+0	c64763b	2025-11-28	retrieval	Add benchmark test for image preprocessing speed
+0	8ea8e46	2025-11-28	retrieval	Add image embedding support to database and encoder
+0	c0d1198	2025-11-28	retrieval	Fix embedding retrieval from database
+0	aa6e766	2025-11-28	retrieval	Update cosine_similarity.rs
+0	559014e	2025-11-29	foundation	navigating back
+0	84d6fd1	2025-11-29	foundation	tag dropdown
+0	fbbdd08	2025-11-29	foundation	tag adding
+0	0356323	2025-11-29	foundation	tag remoal
+0	b175f0c	2025-11-29	foundation	tag removal
+0	cbdb07b	2025-11-29	foundation	proper tag fetching/deleting/updating
+0	d1bdcff	2025-11-29	foundation	Searchbar
+0	27e88ed	2025-11-29	foundation	querying
+0	0b51763	2025-11-29	foundation	Merge branch 'feature/tags-and-frontend'
+0	4cb04a7	2025-12-08	perf	Merge pull request #6 from Capataina/db-integration-and-performance-tweaks
+0	40e740f	2025-12-08	foundation	Add images.db to .gitignore
+0	1cabd82	2025-12-08	retrieval	Refactor encode_batch to use batch_preprocess_image function
+0	068a64b	2025-12-08	TODO	Merge pull request #7 from Capataina/claude/fix-todo-mixffzzxailpuvkt-01GKUAfAGd17JnhtCeh8XFyB
+1	9bcefae	2025-12-09	retrieval	Add similar images API and batch encoding fix
+1	0b22e3d	2025-12-11	retrieval	Add robust embedding handling and debug logging
+1	759c7d4	2025-12-12	retrieval	Improve image path matching in get_similar_images
+1	20c4386	2025-12-12	retrieval	Merge pull request #8 from Capataina/show-similar-images-on-frontend
+1	0e33b1e	2025-12-13	retrieval	Add Pinterest-style tiered similar images and modal
+1	0650fd6	2025-12-13	TODO	Merge pull request #9 from Capataina/pinterest-layout
+1	be7c6da	2025-12-13	pipeline	Add thumbnail support and migration to image DB
+1	d1f71b3	2025-12-13	TODO	Merge pull request #10 from Capataina/optimisations
+1	ff3ae34	2025-12-15	TODO	Mark completed milestones and tasks in README
+1	9286365	2025-12-17	pipeline	Randomize image order and update model path references
+1	444fdc7	2025-12-17	foundation	Add tag creation to SearchBar and TagDropdown, enhance MasonryItem
+1	1c54073	2025-12-17	retrieval	Add semantic search hook and update image handling
+1	ae000a9	2025-12-17	retrieval	Improve semantic search and tokenizer case handling
+5	50a7a6b	2026-03-04	retrieval	Merge pull request #11 from Capataina/semantic-text-search
+5	1b5ac35	2026-03-04	TODO	Revise README for clarity and update milestones
+7	063a39b	2026-04-25	TODO	Establish context/ memory layer; remove stale memory-bank
+7	12d9b07	2026-04-25	TODO	Remove paid test_images dataset and broken hardcoded-path tests
+7	86df34e	2026-04-25	modular	Pass 2: scaffold and dead-code sweep + tag deletion + small fixes
+7	3b9ccd5	2026-04-25	pipeline	Pass 3: relocate user state to platform-correct app_data_dir
+7	47435f9	2026-04-25	retrieval	Pass 4a: native folder picker + scan root persistence
+7	f85c600	2026-04-25	retrieval	Pass 4b: first-launch CLIP model download from Hugging Face
+7	48a202c	2026-04-25	pipeline	Pass 5: async indexing pipeline + live progress UI
+7	7918e39	2026-04-25	retrieval	Pass 6: CLIP quality fixes + tracing migration + real error surfacing
+7	5b23bcf	2026-04-25	TODO	Add scripts/download_lol_splashes.py — recommended test corpus
+7	9181dca	2026-04-25	TODO	scripts: treat 403 the same as 404 in splash downloader
+7	5fdecf2	2026-04-25	perf	Perf pass: CoreML EP, parallel thumbnails, model download UX, persistent cosine cache
+7	e3c96e6	2026-04-25	foundation	Dark theme + animation polish + redundant-feature sweep
+7	0908550	2026-04-25	pipeline	Multi-folder support + filesystem watcher + orphan detection
+7	a66d1f7	2026-04-25	pipeline	Settings drawer, QoL preferences, per-root thumbnail organisation
+7	56990b7	2026-04-25	retrieval	Image annotations + AND/OR tag filter semantics
+7	3c2900f	2026-04-25	pipeline	Move user-state into <repo>/Library/ for project-local visibility
+7	2775c9f	2026-04-25	perf	Skip CoreML on the text encoder (transformer ops poorly supported)
+7	90a3842	2026-04-26	perf	Disable CoreML for the image encoder too — runtime inference errors
+7	2333fbc	2026-04-26	TODO	Comprehensive test suite: 96 new tests across backend + frontend
+7	5910966	2026-04-26	perf	Stable grid order + perf-diagnostics master plan
+7	2f32f74	2026-04-26	perf	Performance diagnostics overlay + export to Library/exports/
+7	7e49b75	2026-04-26	perf	Profiling mode: --profile flag gates overlay + future telemetry
+7	26c16e8	2026-04-26	perf	Profiling timeline: raw event log + jsonl flush + action breadcrumbs
+7	765ce33	2026-04-26	perf	Profiling: on-exit markdown report renderer
+7	c6551e2	2026-04-26	perf	Cosine: partial-sort + scratch buffer (audit findings 1, 2)
+7	9d04f69	2026-04-26	retrieval	Fix semantic-search routing bugs (audit finding 3 + companion)
+7	0bdb5f4	2026-04-26	perf	DB hardening: WAL + bytemuck + single-SELECT path_to_root
+7	02b12b9	2026-04-26	modular	Lib: extract normalize_path + resolve_image_id helper, hoist get_all_images
+7	a30c153	2026-04-26	modular	DB: extract aggregate_image_rows helper from 4 callers
+7	fb23bdb	2026-04-26	modular	Unified ImageSearchResult: dimensions to backend, drop DOM image-loads
+7	f041fc9	2026-04-26	modular	Modularise SettingsDrawer into 6 sections (audit finding)
+7	ee8c5d6	2026-04-26	perf	Frontend: perfInvoke wrapper + React.Profiler around Masonry
+7	5c2b0f6	2026-04-26	modular	DB: split db.rs (1597 lines) into db/ submodules
+7	ae0006d	2026-04-26	modular	Cosine: split cosine_similarity.rs (860 lines) into cosine/ submodule
+7	09d0632	2026-04-26	modular	Encoder_text: split encoder_text.rs (647 lines) into encoder_text/
+7	b809363	2026-04-26	modular	Lib: split lib.rs (918 lines) into commands/ subdirectory
+7	6e27245	2026-04-26	perf	Instrument: model_download, watcher event handler, indexing sub-phases
+7	cda7caa	2026-04-26	modular	Typed errors: Result<T, ApiError> across every command (audit final finding)
+7	661532e	2026-04-26	pipeline	Pipeline stats UI: indexing progress in SettingsDrawer
+7	ab69e37	2026-04-26	perf	Pipeline: thumbnails + encoder run in parallel
+7	0c45ab7	2026-04-26	perf	Profiling: rename --profile to --profiling, also accept PROFILING=1
+7	b9b1ddb	2026-04-26	pipeline	paths: IMAGE_BROWSER_DATA_DIR env var override
+7	9a323ad	2026-04-26	pipeline	paths: always use platform-default app data dir
+7	c0b2b2d	2026-04-26	retrieval	Phase 1: ImageEncoder + TextEncoder trait abstractions
+7	6d2710a	2026-04-26	retrieval	DB schema: per-encoder embeddings table
+7	82aba7c	2026-04-26	retrieval	Phase 2 part: SigLIP-2 + DINOv2 encoder modules + multi-model download
+7	2e51723	2026-04-26	retrieval	Phase 2: multi-encoder indexing + per-encoder cosine populate
+7	2e00c71	2026-04-26	retrieval	Phase 3: encoder picker UI + image-image dispatch
+7	e7a5a76	2026-04-26	retrieval	Fix SigLIP-2 model URL + per-file fail-soft download
+7	8c55aa4	2026-04-26	retrieval	Per-encoder progress in PipelineStats + StatsSection UI
+7	7fdfd47	2026-04-26	perf	Diagnostic framework: structured snapshots in the on-exit perf report
+7	2d70acf	2026-04-26	retrieval	Fix dim-mismatch crash + drop SigLIP-2 from picker (URLs 401)
+7	63d8a00	2026-04-26	perf	Session bug-fix bundle + accumulated encoder-overhaul + diagnostics + docs
+7	56dc273	2026-04-26	pipeline	Fix disabled-folder images leaking into search results
+7	f5706ed	2026-04-26	perf	Batch 1 — IPC dedup of set_priority_image_encoder
+7	4bcb4d2	2026-04-26	perf	Batch 2 — frontend invalidation policy + Masonry viewport culling
+7	728b6fb	2026-04-26	perf	Batch 3 — get_images_with_thumbnails subspans for stall attribution
+7	211aa6b	2026-04-26	perf	docs: capture perf-optimisation-plan + performance-analysis + diagnostics-expansion
+7	153dcc4	2026-04-26	perf	Tier 1 perf bundle — R1+R2+R3+R4 from perf-optimisation-plan.md
+7	a41608c	2026-04-26	perf	Tier 2 perf bundle — R6+R7+R8+R9 from perf-optimisation-plan.md
+7	0f45344	2026-04-26	retrieval	Phase 4 — wire SigLIP-2 text encoder through semantic_search dispatch
+7	334a45c	2026-04-26	retrieval	Phase 5 — multi-encoder rank fusion (RRF) replacing tiered top-k sampling
+7	882b46e	2026-04-26	modular	Phase 6 — code health bundle (clippy gate restored, dead deps removed)
+7	1761e4e	2026-04-26	perf	Phase 7 — diagnostics expansion: 1Hz system sampler + stall analysis report
+7	6e711d5	2026-04-26	TODO	docs: 2026-04-26 autonomous-session report + plan status update
+7	ee95ef8	2026-04-26	perf	docs(context): upkeep pass after Tier 1+2 + Phase 4-7 perf bundle
+7	44ff366	2026-04-26	perf	Phase 11 — per-encoder toggles, parallel encoding, text-image fusion
+7	1ca42d2	2026-04-26	perf	Phase 12 — perf bundle from perf-1777226449 + empty-state regression fix
+7	ff7447b	2026-04-26	perf	docs(context): full upkeep pass — fix Library/ + --profile drift, refresh paths-and-state, mark plans, integrate audit output
+7	ecb4386	2026-04-26	TODO	docs(context): prune obsolete plan files; consolidate future-work into notes.md
+8	7e5cf85	2026-04-29	modular	docs(readme): rewrite to reflect current feature surface; drop milestone scaffolding
+9	49efc38	2026-05-25	foundation	Remove iCloud sync-conflict duplicates and gitignore them
+11	00ee2fa	2026-07-15	commercial	Models move into the repo tree, and CLIP is swapped to a commercially-licensed OpenCLIP
+11	cf963ac	2026-07-15	commercial	Extract the Mnemosyne engine: the media-agnostic core becomes its own workspace crate
+11	f7d1422	2026-07-15	commercial	Reshape into an apps/ monorepo and rebrand the product to Lynceus, the engine to Mnemosyne
+11	f1c23fa	2026-07-15	commercial	Remove AGENTS.md — intentionally dropped from this repo
+11	a547c8e	2026-07-15	commercial	docs(readme): rebrand to Lynceus/Mnemosyne and document the monorepo, OpenCLIP, and repo-local weights

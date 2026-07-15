@@ -123,15 +123,15 @@ Use this exact pattern for any new mutation. The reasoning is in `systems/fronte
 
 ## `paths::*_dir()` helpers as the single disk-path source
 
-Every file the backend reads or writes goes through a helper in `src-tauri/src/paths.rs`:
+Every file the backend reads or writes goes through a helper in `crates/engine/src/paths.rs` (the Mnemosyne engine crate; re-exported into the product as `crate::paths::*` — see § Engine/product re-export facade below):
 
 | Helper | Returns |
 |--------|---------|
-| `paths::app_data_dir()` | Root of all app-managed state. Always the platform default (`dirs::data_dir()/com.ataca.image-browser/` — on macOS that's `~/Library/Application Support/com.ataca.image-browser/`). Override via `IMAGE_BROWSER_DATA_DIR` env var. **No dev/release split** as of 2026-04-26. |
+| `paths::app_data_dir()` | Root of all app-managed state. Always the platform default (`dirs::data_dir()/com.ataca.lynceus/` — on macOS that's `~/Library/Application Support/com.ataca.lynceus/`). Override via `LYNCEUS_DATA_DIR` env var. **No dev/release split** as of 2026-04-26. |
 | `paths::database_path()` | `app_data_dir / "images.db"` |
 | `paths::thumbnails_dir()` | `app_data_dir / "thumbnails"` |
 | `paths::thumbnails_dir_for_root(id)` | `thumbnails / "root_<id>"` (Phase 9 reorg) |
-| `paths::models_dir()` | `app_data_dir / "models"` |
+| `paths::models_dir()` | `$LYNCEUS_MODELS_DIR` if set, else `app_data_dir / "models"` — see `systems/paths-and-state.md` § `models_dir()` resolution order |
 | `paths::settings_path()` | `app_data_dir / "settings.json"` |
 | `paths::cosine_cache_path()` | `app_data_dir / "cosine_cache.bin"` |
 | `paths::exports_dir()` | `app_data_dir / "exports"` (perf snapshots, future shareable artefacts) |
@@ -144,12 +144,26 @@ The single helper for stripping `\\?\` prefixes off Windows paths. Returns `Cow:
 
 Do not write inline `if path.starts_with("\\\\?\\") { ... }` closures — that pattern was triplicated pre-audit and the audit explicitly extracted it. The previous `notes/path-and-state-coupling.md` "don't add a fourth normalisation closure" warning is now satisfied by the existence of this helper.
 
+## Engine/product re-export facade
+
+The commercialisation refactor split the backend into two crates: `mnemosyne` (the media-agnostic engine, `crates/engine/`, owning `db`, `cosine`/`cosine_similarity`, `paths`, `perf`/`perf_report`, `image_struct`/`root_struct`/`tag_struct`) and `lynceus` (the image product, `apps/lynceus/src-tauri/`, owning everything image-specific — encoders, thumbnailer, indexing pipeline, watcher, Tauri commands). Rather than rewrite every in-crate call site for the moved modules, the product crate re-exports them at the same names they used to live under:
+
+```rust
+// apps/lynceus/src-tauri/src/lib.rs
+pub use mnemosyne::{db, image_struct, paths, perf, perf_report, root_struct, tag_struct};
+
+// apps/lynceus/src-tauri/src/similarity_and_semantic_search/mod.rs
+pub use mnemosyne::{cosine, cosine_similarity};
+```
+
+Every existing `crate::db::…`, `crate::paths::…`, `crate::cosine::…`, `crate::perf::…` call site inside the product crate resolves unchanged. This facade is what made the extraction a pure move with zero behaviour change (125 backend tests before the split → 36 in `lynceus` + 89 in `mnemosyne` = 125 after). When adding a **new** module to the engine, add it to both `crates/engine/src/lib.rs`'s `pub mod` list and the matching `pub use mnemosyne::{...}` re-export on the product side — forgetting the second breaks every product-side `crate::<module>::…` reference at compile time (a missing-import error, not a silent one, so the failure mode is cheap to catch).
+
 ## Submodule layout: `mod.rs` orchestrates, files own concerns
 
-The `db/`, `commands/`, `cosine/`, `encoder_text/` directories follow the same pattern:
+The `db/`, `cosine/` (engine crate, `crates/engine/src/`) and `commands/`, `encoder_text/` (product crate, `apps/lynceus/src-tauri/src/`) directories all follow the same pattern:
 
 ```
-src-tauri/src/<concern>/
+<crate>/src/<concern>/
 ├── mod.rs           — pub use re-exports + the public struct/enum + shared helpers
 └── <subconcern>.rs  — impl <Type> { ... } block with the per-subconcern methods + tests
 ```
@@ -195,14 +209,18 @@ Reason: setup runs early during app launch when error handling is awkward (no IP
 | `info!` | State transitions (pre-warm started, root added, watcher started, populate complete) |
 | `debug!` | Per-result detail (top-5 semantic-search results) |
 
-The default env filter is `warn,image_browser_lib=info,image_browser=info`. Without `--profiling`, `debug!` lines don't fire.
+The default env filter is `warn,lynceus_lib=info,lynceus=info,mnemosyne=info`. Without `--profiling`, `debug!` lines don't fire.
 
 ## File-organisation conventions
 
-- `src-tauri/src/db/` — SQLite layer; one submodule per concern, all impl `ImageDatabase`
-- `src-tauri/src/commands/` — Tauri command handlers; one submodule per concern, all `#[tauri::command]`
-- `src-tauri/src/similarity_and_semantic_search/` — ML/search subsystem; cosine + encoder + encoder_text are sibling submodules under it
-- `src-tauri/src/{indexing,watcher,model_download,perf,perf_report,paths,settings}.rs` — single-file modules at the crate root
+Since the commercialisation refactor the backend spans two crates — see § Engine/product re-export facade below for how call sites stay unchanged across the split:
+
+- `crates/engine/src/db/` — SQLite layer (engine); one submodule per concern, all impl `ImageDatabase`
+- `crates/engine/src/cosine/` — cosine ranking + RRF fusion (engine); `crates/engine/src/cosine_similarity.rs` is its re-export shim
+- `crates/engine/src/{paths,perf,perf_report}.rs` — path resolution and the profiling layer (engine) — single-file modules at the engine crate root
+- `apps/lynceus/src-tauri/src/commands/` — Tauri command handlers (product); one submodule per concern, all `#[tauri::command]`
+- `apps/lynceus/src-tauri/src/similarity_and_semantic_search/` — ML/search subsystem (product); encoder + encoder_text are submodules under it, plus a `mod.rs` re-export of the engine's cosine module
+- `apps/lynceus/src-tauri/src/{indexing,watcher,model_download,settings}.rs` — single-file modules at the product crate root
 - `src/queries/` — TanStack Query hooks; one file per resource family
 - `src/services/` — `invoke()` wrappers; one file per resource. Hooks call services; components do not call `invoke` directly.
 - `src/components/ui/` — shadcn-generated. Treat as derivative; do not modify by hand.
@@ -228,8 +246,8 @@ The default env filter is `warn,image_browser_lib=info,image_browser=info`. With
 
 ## Test locations
 
-- Backend: `#[cfg(test)] mod tests` inside each submodule. The `db/test_helpers.rs::fresh_db()` helper creates an in-memory DB with `initialize` already run.
-- Backend integration: `src-tauri/tests/*.rs` for cross-module tests (currently `cosine_topk_partial_sort_diagnostic.rs`).
+- Backend: `#[cfg(test)] mod tests` inside each submodule. The `db/test_helpers.rs::fresh_db()` helper creates an in-memory DB with `initialize` already run. Split across two crates post-refactor: 89 tests in the engine (`crates/engine`), 36 in the product (`apps/lynceus/src-tauri`) — 125 total, unchanged from before the split.
+- Backend integration: `apps/lynceus/src-tauri/tests/*.rs` for cross-module tests (`cosine_topk_partial_sort_diagnostic.rs`, `indexing_pipeline.rs`, `similarity_integration_test.rs`, `cosine_cache_invalidation_diagnostic.rs`, plus 3 `audit_*_diagnostic.rs` files marked `#[ignore]`).
 - Frontend unit: alongside the source file (`useUserPreferences.test.ts`, `services.test.ts`).
 - Frontend component: alongside the source file (`IndexingStatusPill.test.tsx`).
 

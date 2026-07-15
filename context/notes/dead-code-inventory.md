@@ -8,10 +8,10 @@ The previous inventory was largely closed by the audit Pass + Phase 2 dead-code 
 
 | Item | Status | When |
 |------|--------|------|
-| `src/components/FullscreenImage.tsx` | Removed | Phase 2 (commit `86df34e`) |
-| `src/components/MasonryItemSelected.tsx` | Removed | Phase 2 |
-| `src/components/MasonrySelectedFrame.tsx` | Removed | Phase 2 |
-| `src/hooks/useMeasure.tsx` | Removed | Phase 2 |
+| `apps/lynceus/src/components/FullscreenImage.tsx` | Removed | Phase 2 (commit `86df34e`) |
+| `apps/lynceus/src/components/MasonryItemSelected.tsx` | Removed | Phase 2 |
+| `apps/lynceus/src/components/MasonrySelectedFrame.tsx` | Removed | Phase 2 |
+| `apps/lynceus/src/hooks/useMeasure.tsx` | Removed | Phase 2 |
 | `db::delete_tag` (orphaned method) | Wired through `commands::tags::delete_tag` + `useDeleteTag` mutation | Phase 6 |
 | `useSimilarImages` (frontend hook) | Removed (only `useTieredSimilarImages` is used) | Audit dead-code sweep |
 | `ImageData::with_thumbnail` (alternate constructor) | Removed | Audit Dead-Code finding |
@@ -23,7 +23,7 @@ The previous inventory was largely closed by the audit Pass + Phase 2 dead-code 
 | Duplicated `aggregate_image_rows` pattern (4 sites) | Extracted into `db/images_query.rs::aggregate_image_rows` helper | Audit `a30c153` |
 | `[Backend] ...` `println!` logging convention | Replaced wholesale by `tracing::info!` / `debug!` / `warn!` | Phase 6 |
 | `set_scan_root` Tauri command (single-folder model) | Preserved as legacy; multi-folder commands added (`add_root` / `remove_root` / `set_root_enabled`) | Phase 6 |
-| `models/` "user-supplied" assumption | Now auto-downloaded on first launch via `model_download` | Phase 4b |
+| `models/` "user-supplied" assumption | Now auto-downloaded on first launch via `model_download` (still true post-refactor: `model_download.rs`'s first-launch logic is unchanged). Additionally, the repo now ships `scripts/download_models.py` fetching every encoder weight into a gitignored `models/<modality>/` tree at the repo root for dev use, with `LYNCEUS_MODELS_DIR` env var checked first in `paths::models_dir()` ahead of the app-data fallback. | Phase 4b; models relocation (commercialisation refactor) |
 
 ## Residual (current dead-code inventory)
 
@@ -45,7 +45,7 @@ The previous inventory was largely closed by the audit Pass + Phase 2 dead-code 
 
 | Package | Status | Reason / action |
 |---------|--------|-----------------|
-| `zustand` | Declared in `package.json`, zero `import` sites in `src/` | Carry-over from earlier memory-bank planning. Safe to remove. |
+| `zustand` | Declared in `package.json`, zero `import` sites in `apps/lynceus/src/` | Carry-over from earlier memory-bank planning. Safe to remove. |
 | `atropos` | Imported as CSS in `App.tsx` (`atropos/css`); the runtime is not used | The 3D tilt is implemented with framer-motion, not atropos. The CSS adds a few KB. Safe to remove the CSS import + the dep. |
 | `@types/lodash.debounce` | Imported via `lodash/debounce` in `Masonry.tsx` | Type-only. Could swap for `@types/lodash` for consistency, or remove if `lodash`'s own types are good enough. Low priority. |
 

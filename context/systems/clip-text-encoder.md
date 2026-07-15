@@ -4,9 +4,9 @@
 
 ## Scope / Purpose
 
-Encodes a text query into the same 512-dimensional embedding space as `clip-image-encoder` so cosine similarity between a text embedding and image embeddings retrieves semantically matching images. Uses **OpenAI English-only CLIP ViT-B/32** via the separate `text_model.onnx` from `Xenova/clip-vit-base-patch32`, with byte-level BPE tokenization via the HuggingFace `tokenizers` crate.
+Encodes a text query into the same 512-dimensional embedding space as `clip-image-encoder` so cosine similarity between a text embedding and image embeddings retrieves semantically matching images. Uses **OpenCLIP LAION-2B ViT-B/32 (English-only, MIT-licensed)** via the separate `text_model.onnx` from `immich-app/ViT-B-32__laion2b-s34b-b79k`, with byte-level BPE tokenization via the HuggingFace `tokenizers` crate (vocab still mirrored from `Xenova/clip-vit-base-patch32`'s tokenizer.json — see Durable Notes).
 
-The previous text encoder used the multilingual distillation `clip-ViT-B-32-multilingual-v1`. Even though that model nominally outputs into "the same 512-d CLIP space," its embedding distribution is materially different from OpenAI CLIP's image branch — distilled cross-lingual training shifted the text-side representations. The result was effectively-random text-to-image rankings (the "blue fish → Tristana" failure mode). Switching to OpenAI English fixes that at the cost of dropping multilingual support.
+The previous text encoder used the multilingual distillation `clip-ViT-B-32-multilingual-v1`. Even though that model nominally outputs into "the same 512-d CLIP space," its embedding distribution is materially different from OpenAI CLIP's image branch — distilled cross-lingual training shifted the text-side representations. The result was effectively-random text-to-image rankings (the "blue fish → Tristana" failure mode). Switching to OpenAI English fixes that at the cost of dropping multilingual support. (That 2026-04-26 swap predates and is distinct from the 2026-07 OpenAI→OpenCLIP weights-only licensing swap described in Durable Notes — the English-only architecture and behaviour described in this document are unchanged by the licensing swap.)
 
 ## Boundaries / Ownership
 
@@ -19,7 +19,7 @@ The previous text encoder used the multilingual distillation `clip-ViT-B-32-mult
 ### Submodule layout
 
 ```
-src-tauri/src/similarity_and_semantic_search/encoder_text/
+apps/lynceus/src-tauri/src/similarity_and_semantic_search/encoder_text/
 ├── mod.rs        — pub mod encoder + pooling; pub use encoder::ClipTextEncoder
 ├── encoder.rs    — ClipTextEncoder struct, new(), encode(), encode_batch(), tokenize_and_pad,
 │                    all encoder tests; CoreML-disabled rationale comments
@@ -159,7 +159,7 @@ commands::semantic::semantic_search:
 | English-only — multilingual queries fall back to BPE chunking and produce poor embeddings | User typing in non-English | Embeddings are still produced but quality is poor for the chosen language. Documented trade-off vs the prior multilingual model's misalignment problem. SigLIP-2 (which has a 256k Gemma vocab) is the better pick for non-English; tracked in `notes/preprocessing-spatial-coverage.md`. |
 | CoreML EP cannot be used | macOS attempt to enable it for performance | Silent inference errors. CPU-only is documented in source comments and not to be reverted. |
 | Model load is 1–2 s | First semantic search on a launch where pre-warm failed | Lazy fallback covers it; user sees a brief loading state on first query of the session. |
-| `max_seq_length = 77` truncation | Long queries (>~12 words) lose meaning past 77 tokens including BOS/EOS | This is OpenAI CLIP's training-time cap; raising it would require re-training the projection. Acceptable for typical "find sunset photos" queries. |
+| `max_seq_length = 77` truncation | Long queries (>~12 words) lose meaning past 77 tokens including BOS/EOS | This is CLIP's training-time cap, unchanged by the OpenCLIP LAION-2B weights swap (same 77-token context); raising it would require re-training the projection. Acceptable for typical "find sunset photos" queries. |
 | Mutex around `Option<ClipTextEncoder>` serialises every semantic search | Concurrent UI semantic queries | Today's UI doesn't generate parallel semantic searches. |
 | Unknown model output names produce a hard error | Swapping in a model variant with a non-standard output name | Encoder errors on first encode with `ApiError::Encoder("CLIP text: no recognised output name")`. |
 | Mutex poison (panic during encode) | Any panic in the encode path | `ApiError::Cosine("mutex poisoned: ...")` returned via `From<PoisonError>`. The naming is misleading but the recovery path is the same: restart. |
@@ -180,7 +180,8 @@ None.
 - **HF `tokenizers` crate over custom Rust WordPiece.** The custom WordPiece tokenizer worked for the multilingual vocab but couldn't handle BPE's merge tables. Pulling the `tokenizers` crate as a dependency (already present for SigLIP-2's SentencePiece) eliminates ~150 lines of custom code and handles all three tokenizer families uniformly.
 - **CoreML is disabled because transformer ops produce wrong outputs, not crashes.** Re-enabling without verifying every op is silent corruption waiting to happen.
 - **L2-normalize at output is required** — Xenova's text_model.onnx outputs the post-projection embedding without normalization. Cosine works without it but pre-normalising makes the embeddings interchangeable.
-- **Pad token 49407 = `<|endoftext|>` = EOS.** OpenAI CLIP reuses the EOS token id for padding. This is a deliberate quirk of the trained model — using a separate pad token would produce embeddings the model was never trained on.
+- **Pad token 49407 = `<|endoftext|>` = EOS.** CLIP reuses the EOS token id for padding — a convention preserved by the current OpenCLIP LAION-2B weights. This is a deliberate quirk of the trained model — using a separate pad token would produce embeddings the model was never trained on.
+- **2026-07 commercial-licensing swap: OpenAI CLIP (Xenova export, non-commercial research licence) → OpenCLIP LAION-2B ViT-B/32 (`immich-app/ViT-B-32__laion2b-s34b-b79k`, MIT).** Weights-only: identical tokenizer (49408-vocab BPE, 77-token context, pad id 49407), identical `tokenize_and_pad` logic, identical 512-d L2-normalised output space, identical filenames (`clip_text.onnx`). No encoder code changed, no `CURRENT_PIPELINE_VERSION` bump. Everything in this document describing tokenizer behaviour and output shape holds unchanged for the new weights; only the model's training corpus and licence changed. See `systems/model-download.md` and `notes/clip-preprocessing-decisions.md` for the full swap rationale.
 - **Lazy + pre-warm coexistence** is intentional — pre-warm covers the common case, lazy covers the edge cases (pre-warm failed because the model was still downloading). The double-init protection costs nothing because the lock check `is_none()` short-circuits when pre-warm succeeded.
 
 ## Obsolete / No Longer Relevant

@@ -6,7 +6,7 @@
 
 Owns SQLite persistence for the entire backend: the multi-folder root catalogue, the images table with embedded `f32` vectors stored as raw BLOBs, free-text per-image notes, the orphan-detection flag, the tag catalogue, and the `images_tags` join table. Wraps a single `rusqlite::Connection` per `ImageDatabase` instance in a `Mutex` and exposes idempotent insert / query / update methods. **WAL journal mode** + `synchronous = NORMAL` + `foreign_keys = ON` are set at `initialize` time. Single source of truth for what files are indexed, what their thumbnails look like, what their CLIP embeddings are, what folders they came from, what notes the user wrote on them, and how they are tagged.
 
-The module was previously a 1.6k-line `db.rs`; it is now split into focused submodules under `src-tauri/src/db/` with a `pub struct ImageDatabase` defined in `mod.rs` and `impl ImageDatabase { ... }` blocks distributed across the submodules. Public API surface is unchanged across the split — `db::ImageDatabase::add_image(...)`, `db.get_tags()`, etc., all continue to work because Rust merges inherent-impl blocks across files in the same crate.
+The module was previously a 1.6k-line `db.rs`; it is now split into focused submodules under `crates/engine/src/db/` (the Mnemosyne engine crate — see `notes/conventions.md` § Engine/product re-export facade) with a `pub struct ImageDatabase` defined in `mod.rs` and `impl ImageDatabase { ... }` blocks distributed across the submodules. Public API surface is unchanged across the split — `db::ImageDatabase::add_image(...)`, `db.get_tags()`, etc., all continue to work because Rust merges inherent-impl blocks across files in the same crate.
 
 ## Boundaries / Ownership
 
@@ -19,7 +19,7 @@ The module was previously a 1.6k-line `db.rs`; it is now split into focused subm
 ### Submodule layout
 
 ```
-src-tauri/src/db/
+crates/engine/src/db/
 ├── mod.rs                — ImageDatabase struct, type ID, new(), initialize() (WAL/NORMAL/FK + CREATE TABLE
 │                            + 3 idempotent migrations), default_database_path; tests::initialize_is_idempotent
 ├── schema_migrations.rs  — migrate_add_thumbnail_columns, migrate_add_multifolder_columns,
@@ -172,7 +172,7 @@ Each schema delta probes `PRAGMA table_info(images)` and runs `ALTER TABLE image
 
 The **embedding-pipeline version migration** is a different beast — it uses a separate `meta(key, value)` key-value table to record `embedding_pipeline_version`. When the stored version is less than `CURRENT_PIPELINE_VERSION` (currently `3` as of 2026-04-26), it deletes embeddings that were produced by the previous pipeline so the next indexing pass re-encodes everything cleanly. The version 3 bump wipes:
 
-- `images.embedding` (legacy CLIP column — invalidated by the move from combined-graph multilingual to separate vision_model + OpenAI English text; R8 stops writing it on first encode under v3)
+- `images.embedding` (legacy CLIP column — invalidated by the move from combined-graph multilingual to separate vision_model + OpenCLIP English text; R8 stops writing it on first encode under v3)
 - `embeddings WHERE encoder_id = 'clip_vit_b_32'` (R6 + R7 changed the preprocessed RGB buffer fed into the encoder — fast_image_resize Lanczos3 + JPEG scaled IDCT produce subtly different bytes than the old image-rs CatmullRom + full IDCT path)
 - `embeddings WHERE encoder_id = 'dinov2_small'` (legacy id from before the upgrade to dinov2_base; orphaned)
 - `embeddings WHERE encoder_id = 'siglip2_base'` (same R6 + R7 reason — preprocessing buffer change invalidates SigLIP-2 embeddings too)
@@ -369,7 +369,7 @@ pub fn set_image_notes(&self, image_id: ID, notes: &str) -> rusqlite::Result<()>
 ## Implemented Outputs / Artifacts
 
 - The on-disk `<app_data_dir>/images.db` (+ `images.db-wal` + `images.db-shm` files when WAL is active). All gitignored.
-- The `default_database_path()` helper returns the platform-correct path via `paths::database_path()` — on macOS `~/Library/Application Support/com.ataca.image-browser/images.db`. Same path in dev and release as of 2026-04-26; override via `IMAGE_BROWSER_DATA_DIR` env var.
+- The `default_database_path()` helper returns the platform-correct path via `paths::database_path()` — on macOS `~/Library/Application Support/com.ataca.lynceus/images.db`. Same path in dev and release as of 2026-04-26; override via `LYNCEUS_DATA_DIR` env var.
 - 50+ unit tests across the submodule `tests` blocks: schema idempotency, AND/OR tag semantics, multi-folder filter, NULL-root_id legacy rows, orphan detection (incl. 1200-id chunking stress test), notes round-trip, embedding BLOB round-trip (incl. large + empty), pipeline stats correctness across each stage.
 
 ## Known Issues / Active Risks

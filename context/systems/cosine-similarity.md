@@ -6,7 +6,7 @@
 
 In-memory similarity index over the database's CLIP embeddings. Provides three retrieval modes: random-sampled top-N (diversity), strictly-sorted top-N (semantic search), and Pinterest-style tiered sampling (visual similarity). Constructed empty at app startup and populated either from the persistent on-disk cache (`<app_data_dir>/cosine_cache.bin`) at indexing-pipeline start or via a single-SELECT `populate_from_db(&ImageDatabase)` after every encode pass.
 
-The module was previously a single `cosine_similarity.rs` of 860 lines. After the audit Modularisation finding it lives in `src-tauri/src/similarity_and_semantic_search/cosine/` with the original file kept as a 9-line `pub use cosine::*;` shim so every existing import path continues to resolve unchanged.
+The module was previously a single `cosine_similarity.rs` of 860 lines. After the audit Modularisation finding it lives in `crates/engine/src/cosine/` — moved into the Mnemosyne engine crate by the commercialisation refactor — with the original file kept as a 9-line `pub use cosine::*;` shim so every existing import path continues to resolve unchanged (see `notes/conventions.md` § Engine/product re-export facade for how the product crate re-exports it).
 
 ## Boundaries / Ownership
 
@@ -19,7 +19,7 @@ The module was previously a single `cosine_similarity.rs` of 860 lines. After th
 ### Submodule layout
 
 ```
-src-tauri/src/similarity_and_semantic_search/cosine/
+crates/engine/src/cosine/
 ├── mod.rs           — pub use index::CosineIndex; module declarations
 ├── math.rs          — cosine_similarity helper + score_cmp_desc (NaN-aware desc comparator) + 8 math tests
 ├── index.rs         — CosineIndex struct + new() + add_image + populate_from_db
@@ -39,13 +39,17 @@ src-tauri/src/similarity_and_semantic_search/cosine/
 └── cache.rs         — save_to_disk / save_to_path / load_from_disk_if_fresh / load_from_path_if_fresh
                        + 5 cache disk-persistence tests; in a separate impl CosineIndex block
 
-src-tauri/src/similarity_and_semantic_search/
-├── ort_session.rs        — Phase 2d/R4: shared M2-tuned ort Session builder (Level3 + intra=4 +
-│                            inter=1). Every encoder constructor goes through this.
-└── cosine_similarity.rs  — 9-line shim: `pub use crate::similarity_and_semantic_search::cosine::*;`
+crates/engine/src/cosine_similarity.rs  — 9-line shim: `pub use crate::cosine::*;`
+
+apps/lynceus/src-tauri/src/similarity_and_semantic_search/
+├── mod.rs            — re-exports `mnemosyne::{cosine, cosine_similarity}` (the engine's cosine
+│                        module and its shim) so `crate::similarity_and_semantic_search::cosine[_similarity]::…`
+│                        call sites across the product crate keep resolving unchanged
+└── ort_session.rs     — Phase 2d/R4: shared M2-tuned ort Session builder (Level3 + intra=4 +
+                         inter=1). Every encoder constructor goes through this.
 ```
 
-The shim keeps every existing import path (e.g., `crate::similarity_and_semantic_search::cosine_similarity::CosineIndex`) working unchanged in `lib.rs`, `indexing.rs`, `watcher.rs`, and the integration test crate.
+Two shims stack to keep the old import path alive across the crate split: the engine's own `cosine_similarity.rs` re-export shim, plus the product's `similarity_and_semantic_search/mod.rs` re-export of `mnemosyne::{cosine, cosine_similarity}`. Together they keep every existing import path (e.g., `crate::similarity_and_semantic_search::cosine_similarity::CosineIndex`) working unchanged in `lib.rs`, `indexing.rs`, `watcher.rs`, and the integration test crate.
 
 ### Per-encoder population — `populate_from_db_for_encoder(&db, encoder_id)`
 
@@ -116,7 +120,7 @@ let mut top: Vec<(usize, f32)> = self.scratch.iter().take(k).copied().collect();
 top.sort_by(score_cmp_desc);   // re-sort the trimmed top-K only
 ```
 
-Replaces the previous full sort + take(top_n) pattern (audit `c6551e2`). At n=10000, top_n=50 the diagnostic test (`src-tauri/tests/cosine_topk_partial_sort_diagnostic.rs`) measures **2.53× speedup** in debug. Set equivalence + order equivalence after re-sorting are pinned by the test so any future regression is caught.
+Replaces the previous full sort + take(top_n) pattern (audit `c6551e2`). At n=10000, top_n=50 the diagnostic test (`apps/lynceus/src-tauri/tests/cosine_topk_partial_sort_diagnostic.rs`) measures **2.53× speedup** in debug. Set equivalence + order equivalence after re-sorting are pinned by the test so any future regression is caught.
 
 ### Reusable scratch buffer
 

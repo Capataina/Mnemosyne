@@ -4,17 +4,19 @@
 
 ## Scope / Purpose
 
-Image-image similarity ("View Similar") now combines rankings from every available image encoder via Reciprocal Rank Fusion (RRF) instead of returning top-K from a single encoder. This system covers the fusion algorithm, the per-encoder cache state that supports it, the IPC entry point, and how the previous tiered random-sampling diversity strategy was retired.
+Image-image similarity ("View Similar") and text-image search (typed queries) both combine rankings from every enabled, applicable encoder via Reciprocal Rank Fusion (RRF) instead of returning top-K from a single encoder. This system covers the fusion algorithm, the per-encoder cache state shared by both paths, the two IPC entry points, and how the previous tiered random-sampling diversity strategy was retired.
 
 ## Boundaries / Ownership
 
 | Component | Path | Role |
 |-----------|------|------|
-| RRF algorithm | `src-tauri/src/similarity_and_semantic_search/cosine/rrf.rs` | Pure: takes N ranked lists, returns one fused list. 6 unit tests pin the contract. |
-| Per-encoder cache state | `src-tauri/src/lib.rs::FusionIndexState` | `Arc<Mutex<HashMap<String, CosineIndex>>>` lazy-populated per encoder on first fusion call. |
-| IPC entry point | `src-tauri/src/commands/similarity.rs::get_fused_similar_images` | One Tauri command. Calls `ranked_for_encoder` × 3, fuses, resolves paths, returns `ImageSearchResult[]`. |
-| Frontend dispatch | `src/queries/useSimilarImages.ts::useTieredSimilarImages` | Hook keeps its previous name (caller stability) but routes through `fetchFusedSimilarImages` under the hood. |
-| Frontend service | `src/services/images.ts::fetchFusedSimilarImages` | IPC wrapper. |
+| RRF algorithm | `crates/engine/src/cosine/rrf.rs` | Pure: takes N ranked lists, returns one fused list. 6 unit tests pin the contract. Moved into the Mnemosyne engine crate by the 2026-07 monorepo extraction; re-exported unchanged at `similarity_and_semantic_search::cosine::rrf` so every call site in the product crate keeps resolving. |
+| Per-encoder cache state | `apps/lynceus/src-tauri/src/lib.rs::FusionIndexState` | `Arc<Mutex<HashMap<String, CosineIndex>>>` lazy-populated per encoder on first fusion call. |
+| Image-image IPC entry point | `apps/lynceus/src-tauri/src/commands/similarity.rs::get_fused_similar_images` | One Tauri command. Calls `ranked_for_encoder` × 3, fuses, resolves paths, returns `ImageSearchResult[]`. |
+| Text-image IPC entry point | `apps/lynceus/src-tauri/src/commands/semantic_fused.rs::get_fused_semantic_search` | Mirrors `get_fused_similar_images` for text queries — encodes the query through every enabled text-capable encoder (CLIP, SigLIP-2; DINOv2 has no text branch), fuses via the same RRF. See the dedicated subsection below. |
+| Frontend dispatch (image-image) | `apps/lynceus/src/queries/useSimilarImages.ts::useTieredSimilarImages` | Hook keeps its previous name (caller stability) but routes through `fetchFusedSimilarImages` under the hood. |
+| Frontend service (image-image) | `apps/lynceus/src/services/images.ts::fetchFusedSimilarImages` | IPC wrapper. |
+| Frontend service (text-image) | `apps/lynceus/src/services/images.ts::fetchFusedSemanticSearch` | IPC wrapper for `get_fused_semantic_search`. |
 
 ## Current Implemented Reality
 
@@ -49,6 +51,17 @@ Every fused result carries a `per_encoder: Vec<(encoder_id, 1-based-rank, encode
 - **Invalidation.** `FusionIndexState::invalidate_all()` clears every slot. Wired into the same root-mutation IPCs that already invalidate `CosineIndexState`: `set_scan_root`, `remove_root`, `set_root_enabled`. Without this, fusion would happily return images from a now-disabled root.
 - **Memory cost.** ~6 MiB per encoder for 2000 images × 768 floats × 4 bytes. ~18 MiB total across CLIP+SigLIP-2+DINOv2.
 
+### Text-image fusion (`get_fused_semantic_search`) — Phase 11d, implemented
+
+Mirrors the image-image path above for text queries. `commands/semantic_fused.rs::get_fused_semantic_search`:
+
+1. Resolves `enabled_encoders` from settings, intersects with the fixed `TEXT_CAPABLE_ENCODERS = [CLIP_TEXT_ENCODER_ID, SIGLIP2_TEXT_ENCODER_ID]` (`"clip_vit_b_32"`, `"siglip2_base"`) — DINOv2 is image-only and is implicitly excluded, so at most 2 ranked lists are fused (never 3).
+2. For each surviving text-capable encoder, encodes the query (`ClipTextEncoder` or `Siglip2TextEncoder`), then scores it against that encoder's `FusionIndexState` cache via the same `ranked_for_encoder` used by image-image fusion — the image-side cache is shared between both fusion paths.
+3. Fuses the (up to 2) ranked lists with the same `reciprocal_rank_fusion` (`k = DEFAULT_K_RRF = 60`).
+4. Returns `Vec<ImageSearchResult>`, same shape as `get_fused_similar_images`.
+
+If the user has disabled every text-capable encoder, the command returns an empty `Vec` with a `warn!` log rather than erroring. `per_encoder_top_k` defaults the same way as image-image fusion (`5 × top_n`, minimum 50). Frontend: `useSemanticSearch` → `fetchFusedSemanticSearch` (`services/images.ts`) → `invoke("get_fused_semantic_search", ...)`. This closes the "Planned" item from the previous version of this document — text-image RRF fusion is implemented, not speculative.
+
 ## Key Interfaces / Data Flow
 
 ```text
@@ -72,11 +85,13 @@ PinterestModal click
 
 ## Implemented Outputs / Artifacts
 
-- `commands/similarity.rs::get_fused_similar_images` — Tauri command, registered in `lib.rs::run`'s `invoke_handler!`.
-- `cosine/rrf.rs::reciprocal_rank_fusion` — pure RRF.
+- `commands/similarity.rs::get_fused_similar_images` — Tauri command (image-image), registered in `lib.rs::run`'s `invoke_handler!`.
+- `commands/semantic_fused.rs::get_fused_semantic_search` — Tauri command (text-image), registered alongside it.
+- `cosine/rrf.rs::reciprocal_rank_fusion` — pure RRF, now in the Mnemosyne engine crate.
 - `cosine/rrf.rs::RankedList` + `FusedItem` — input + output types with per-encoder evidence.
-- `lib.rs::FusionIndexState` — state managed by Tauri.
-- `services/images.ts::fetchFusedSimilarImages` — frontend wrapper.
+- `lib.rs::FusionIndexState` — state managed by Tauri, shared by both fusion commands.
+- `services/images.ts::fetchFusedSimilarImages` — frontend wrapper (image-image).
+- `services/images.ts::fetchFusedSemanticSearch` — frontend wrapper (text-image).
 - Diagnostic: `search_query` events with `type: "fused"` carry per-encoder timing, encoder evidence per result, and full top-10 with rank breakdown.
 
 ## Known Issues / Active Risks
@@ -87,11 +102,10 @@ PinterestModal click
 
 ## Partial / In Progress
 
-- None. The fusion path is feature-complete for image-image. Text-image fusion (encoding the same query through CLIP + SigLIP-2 text encoders and fusing) is not implemented but is a natural extension if desired.
+- None. The fusion path is feature-complete for both image-image (`get_fused_similar_images`) and text-image (`get_fused_semantic_search`, Phase 11d) — see the dedicated subsection above.
 
 ## Planned / Missing / Likely Changes
 
-- **Text-image RRF.** Encoding the user's query through both CLIP and SigLIP-2 text encoders, getting two ranked lists from the matching image-side caches, fusing. Would require a new `get_fused_semantic_search` command and either FusionIndexState extension or a separate cache.
 - **User-tunable `k_rrf`.** Currently fixed at the canonical 60. Could be exposed as a Settings slider for power users. Low priority unless retrieval-quality issues motivate it.
 - **Per-encoder weighting.** RRF treats every encoder equally. A future variant could weight encoders (e.g. DINOv2 × 1.5 for image-image). Adds complexity without clear evidence that uniform weighting underperforms.
 

@@ -168,17 +168,17 @@ The `interpretation` field convention (a human-readable verdict like "OK", "WARN
 
 The system relies on every relevant code path being instrumented. Current coverage (commit `6e27245`):
 
-| Module | Spans |
-|--------|-------|
-| `commands/*` | One `ipc.{command_name}` span per command via `#[tracing::instrument]` |
-| `indexing.rs` | `pipeline.run` + `pipeline.scan_phase` + `pipeline.thumbnail_phase` + `pipeline.encode_phase` + `pipeline.cosine_repopulate` |
-| `model_download.rs` | `model_download.all` + `model_download.head` + `model_download.file` |
-| `watcher.rs` | `watcher.start` + `watcher.event` (manual span via `info_span!().entered()` because closures can't carry `#[instrument]`) |
-| `cosine/index.rs` | `cosine.populate_from_db` + `cosine.get_similar_images` + `cosine.get_similar_images_sorted` + `cosine.get_tiered_similar_images` |
-| `db/*` | TODO: not yet instrumented per-method (DB calls are typically fast enough that aggregate IPC spans suffice; per-method spans would be a follow-up) |
-| Frontend | `<Profiler id="masonry">` around the Masonry tree via `onRenderProfiler` callback |
+| Module | Crate | Spans |
+|--------|-------|-------|
+| `commands/*` | product (`lynceus_lib`) | One `ipc.{command_name}` span per command via `#[tracing::instrument]` |
+| `indexing.rs` | product (`lynceus_lib`) | `pipeline.run` + `pipeline.scan_phase` + `pipeline.thumbnail_phase` + `pipeline.encode_phase` + `pipeline.cosine_repopulate` |
+| `model_download.rs` | product (`lynceus_lib`) | `model_download.all` + `model_download.head` + `model_download.file` |
+| `watcher.rs` | product (`lynceus_lib`) | `watcher.start` + `watcher.event` (manual span via `info_span!().entered()` because closures can't carry `#[instrument]`) |
+| `cosine/index.rs` | engine (`mnemosyne`) | `cosine.populate_from_db` + `cosine.get_similar_images` + `cosine.get_similar_images_sorted` + `cosine.get_tiered_similar_images` |
+| `db/*` | engine (`mnemosyne`) | TODO: not yet instrumented per-method (DB calls are typically fast enough that aggregate IPC spans suffice; per-method spans would be a follow-up) |
+| Frontend | — | `<Profiler id="masonry">` around the Masonry tree via `onRenderProfiler` callback |
 
-All instruments are info-level so they only fire under `--profiling` (the env filter is `warn,image_browser_lib=info,image_browser=info`).
+All instruments are info-level so they only fire under `--profiling` (the env filter is `warn,lynceus_lib=info,lynceus=info,mnemosyne=info` — the commercialisation refactor added the `mnemosyne=info` target so spans in the engine crate, e.g. `cosine/index.rs` and `db/*`, fire too).
 
 ## Key Interfaces / Data Flow
 

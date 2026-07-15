@@ -2,20 +2,30 @@
 
 Research date: 2026-04-26. Stack baseline: Tauri 2 + Rust + `ort = 2.0.0-rc.10` + image-rs, three FP32 ONNX encoders (CLIP ViT-B/32 ~352 MB, DINOv2-base ~347 MB, SigLIP-2 base-256 ~372 MB), thumbnails via image-rs CatmullRom resize. Measured per-image cost on M2: CLIP 62 ms, SigLIP-2 189 ms, thumbnail 256 ms. CoreML EP confirmed broken for these graphs.
 
+## Current Relevance (post-refactor check, 2026-07-15)
+
+Verified against the working tree after the commercialisation monorepo refactor (paths now under `apps/lynceus/src-tauri/` and `crates/engine/`; behaviour unchanged by that move). Three of the ten options below have since shipped:
+
+- **Option 2 — `fast_image_resize` (NEON) for the resize step: SHIPPED.** `apps/lynceus/src-tauri/Cargo.toml` depends on `fast_image_resize = { version = "6", features = ["image"] }`; used in `apps/lynceus/src-tauri/src/thumbnail/generator.rs` (documented as R6 in `systems/thumbnail-pipeline.md`).
+- **Option 3 — native JPEG scaled decode before resize: SHIPPED.** `apps/lynceus/src-tauri/Cargo.toml` depends on `jpeg-decoder = "0.3"` (comment: "R7 perf: explicit jpeg-decoder dependency"); `decode_jpeg_scaled` in `thumbnail/generator.rs` calls `jpeg_decoder::Decoder::scale()` (documented as R7 in `systems/thumbnail-pipeline.md`).
+- **Option 8 — tune `ort` intra/inter-op threads explicitly to M2 hybrid: SHIPPED.** `apps/lynceus/src-tauri/src/similarity_and_semantic_search/ort_session.rs::build_tuned_session[_with_intra]` sets `with_intra_threads(4)` (capped, shared across concurrent encoders since Phase 12c) + `with_inter_threads(1)` + `GraphOptimizationLevel::Level3` for every encoder session, and its doc comment explicitly cites this file (§ A7).
+
+The remaining options (1, 4, 5, 6, 7, 9, 10) are still open — verified absent from the tree: no `fp16`/`float16`/`half::f16` symbols, no `int8` model files (`models/image/` holds FP32 `.onnx` weights only), no `mozjpeg`/`turbojpeg`/`zune` dependency, no `candle`/`mlx-rs` dependency. The decode-once fan-out (option 7) is tracked separately as "R11 decode-once fan-out" in `context/notes.md`'s future-work list.
+
 ## TL;DR ranked recommendation list
 
 | Option | Effort | Expected speedup | Quality cost | Confidence |
 |---|---|---|---|---|
-| 1. Drop-in FP16 ONNX vision encoders (Xenova / onnx-community) | XS — change download URL + dim assertion | ~1.5–2x CPU; halves disk + RAM | None measurable on cosine retrieval | High |
-| 2. `fast_image_resize` (NEON) for the resize step | S — wrap in adapter from `image::DynamicImage` | 5–12x on the resize alone (433ms → 62ms RGB Lanczos3 published) | None (same filters) | High |
-| 3. Native JPEG scaled decode (1/8, 1/4, 1/2) before resize | S — enable on `jpeg-decoder` or move to `zune-jpeg` | 4–8x on decode for large source JPEGs | None for thumbnails (downscale-then-resize) | High |
-| 4. `mozjpeg-sys` / `turbojpeg` for JPEG decode (libjpeg-turbo SIMD) | M — C dep, build complexity | 2–3x on decode vs current pure-Rust path | None | High |
-| 5. Replace SigLIP-2 vision encoder with INT8 ONNX | XS — file swap + recalibrate threshold | ~2–3x on the slowest encoder | ~1–4% recall drop typical for ViT INT8 PTQ | Medium |
-| 6. Switch to MobileCLIP-S2 / MobileCLIP2-S2 instead of CLIP ViT-B/32 | M — re-export to ONNX, replumb embedding dim (probably 512) | 4–10x at the model level (Apple’s published latency) | **+3.4 IN-1k zero-shot acc** vs ViT-B/16 — quality goes up | Medium |
-| 7. Decode-once buffer share between thumbnail and encoder steps | M — pipeline restructure | 1.3–1.5x on the JPEG-decode wall-clock (which is ~half of thumbnail step today) | None | High |
-| 8. Tune `ort` intra/inter-op threads explicitly to M2 hybrid (4P+4E) | XS | 5–20% on encoder, possibly negative on power | None | Medium |
-| 9. Migrate to `candle` with Metal backend | L — re-implement model wiring | Unknown — see Thread A §4; mixed signals | None if numerics match; quirks documented | Low |
-| 10. MLX via `mlx-rs` (ANE-capable) | XL — experimental bindings, no CLIP/SigLIP loaders | Potentially large (ANE) | Unknown | Very low |
+| 1. Drop-in FP16 ONNX vision encoders (Xenova / onnx-community) | XS — change download URL + dim assertion | ~1.5–2x CPU; halves disk + RAM | None measurable on cosine retrieval | High — **open** |
+| 2. `fast_image_resize` (NEON) for the resize step | S — wrap in adapter from `image::DynamicImage` | 5–12x on the resize alone (433ms → 62ms RGB Lanczos3 published) | None (same filters) | High — **✅ shipped (R6)** |
+| 3. Native JPEG scaled decode (1/8, 1/4, 1/2) before resize | S — enable on `jpeg-decoder` or move to `zune-jpeg` | 4–8x on decode for large source JPEGs | None for thumbnails (downscale-then-resize) | High — **✅ shipped (R7, via `jpeg-decoder`)** |
+| 4. `mozjpeg-sys` / `turbojpeg` for JPEG decode (libjpeg-turbo SIMD) | M — C dep, build complexity | 2–3x on decode vs current pure-Rust path | None | High — **open** |
+| 5. Replace SigLIP-2 vision encoder with INT8 ONNX | XS — file swap + recalibrate threshold | ~2–3x on the slowest encoder | ~1–4% recall drop typical for ViT INT8 PTQ | Medium — **open** |
+| 6. Switch to MobileCLIP-S2 / MobileCLIP2-S2 instead of CLIP ViT-B/32 | M — re-export to ONNX, replumb embedding dim (probably 512) | 4–10x at the model level (Apple’s published latency) | **+3.4 IN-1k zero-shot acc** vs ViT-B/16 — quality goes up | Medium — **open** |
+| 7. Decode-once buffer share between thumbnail and encoder steps | M — pipeline restructure | 1.3–1.5x on the JPEG-decode wall-clock (which is ~half of thumbnail step today) | None | High — **open (tracked as R11 in `context/notes.md`)** |
+| 8. Tune `ort` intra/inter-op threads explicitly to M2 hybrid (4P+4E) | XS | 5–20% on encoder, possibly negative on power | None | Medium — **✅ shipped (`ort_session.rs::build_tuned_session`)** |
+| 9. Migrate to `candle` with Metal backend | L — re-implement model wiring | Unknown — see Thread A §4; mixed signals | None if numerics match; quirks documented | Low — **open** |
+| 10. MLX via `mlx-rs` (ANE-capable) | XL — experimental bindings, no CLIP/SigLIP loaders | Potentially large (ANE) | Unknown | Very low — **open** |
 
 The first four items together plausibly take total session wall-clock from ~10 min down to ~3–4 min, with no model quality regression and only Rust-native dependencies. Items 5–7 are the next tier. Items 8–10 are research bets, not engineering wins.
 

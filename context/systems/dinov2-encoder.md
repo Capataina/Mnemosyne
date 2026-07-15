@@ -4,7 +4,7 @@
 
 ## Scope / Purpose
 
-Image-only encoder using Meta's self-supervised DINOv2-Base (CVPR 2023). Produces 768-dimensional L2-normalised `f32` embeddings optimised for image→image retrieval — particularly fine-grained "same character", "same pose", "same art style" queries where DINOv2 dominates CLIP-style models (the research agent's investigation cited a ~5× advantage on fine-grained 10k-class species benchmarks).
+Image-only encoder using Meta's self-supervised DINOv2-Base (CVPR 2023), Apache-2.0 licensed — clear for commercial/paid distribution alongside the other two encoders (OpenCLIP MIT, SigLIP-2 Apache-2.0; see `clip-image-encoder.md` Durable Notes for the full three-encoder licensing picture). Produces 768-dimensional L2-normalised `f32` embeddings optimised for image→image retrieval — particularly fine-grained "same character", "same pose", "same art style" queries where DINOv2 dominates CLIP-style models (the research agent's investigation cited a ~5× advantage on fine-grained 10k-class species benchmarks).
 
 Has no text branch by design — DINOv2 was trained without text alignment. Used in the project as the recommended "View Similar" (image-clicked) encoder; text→image queries continue to use CLIP or SigLIP-2.
 
@@ -134,6 +134,7 @@ None.
 - **The previous `resize_exact(224, 224)` + Lanczos3 + ImageNet-stats path was wrong on the geometry.** DINOv2 was trained with shortest-edge-256 + center-crop-224; using `resize_exact` squashed non-square images. The current pipeline matches the canonical `BitImageProcessor` settings from `facebook/dinov2-base/preprocessor_config.json` (verified 2026-04-26 by parallel research agent).
 - **No `pooler_output` is exported.** Confirmed by reading the ONNX graph header in the verification pass — `last_hidden_state` is the only output. The CLS-token slice is the canonical way to extract the image representation per the official DINOv2 README.
 - **No CoreML / CUDA attempt.** The encoder takes the straightforward CPU path. CoreML rejection is documented for CLIP; DINOv2 hasn't been validated. Adding EPs is straightforward future work but requires testing.
+- **Resize is implemented via the shared `similarity_and_semantic_search/preprocess.rs` helper** (introduced Phase 12e), used identically by all three image encoders rather than each encoder inlining its own resize call.
 - **Encoder ID change `dinov2_small` → `dinov2_base` was deliberate** so the dim mismatch (384 → 768) is automatically handled by the per-encoder embeddings table (no rows for `dinov2_base` exist on the first run after the swap, so the indexing pipeline encodes everything fresh). The old `dinov2_small` rows are wiped by `migrate_embedding_pipeline_version` (DB version 2).
 
 ## Obsolete / No Longer Relevant

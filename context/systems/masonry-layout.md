@@ -40,7 +40,7 @@ for item in items:
     columnHeights[shortest_col] += item_height
 ```
 
-Each item's rendered height is computed from its aspect ratio (backend-supplied `width / height`) and the column width. Implementation in `src/components/masonryPacking.ts` with unit tests in `masonryPacking.test.ts`.
+Each item's rendered height is computed from its aspect ratio (backend-supplied `width / height`) and the column width. Implementation in `apps/lynceus/src/components/masonryPacking.ts` with unit tests in `masonryPacking.test.ts`.
 
 ### Hero promotion
 

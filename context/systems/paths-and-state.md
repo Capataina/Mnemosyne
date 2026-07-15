@@ -47,18 +47,27 @@ Every state file lives under one root, the platform's standard app-data director
 ```
 
 Where `<app_data_dir>` resolves to (in order):
-1. `$IMAGE_BROWSER_DATA_DIR` if set and non-empty (env-var override for testing / multi-instance / CI fixtures)
-2. `dirs::data_dir()/com.ataca.image-browser/` — the platform default:
-   - **macOS:** `~/Library/Application Support/com.ataca.image-browser/`
-   - **Linux:** `$XDG_DATA_HOME/com.ataca.image-browser/` (typically `~/.local/share/...`)
-   - **Windows:** `%APPDATA%/com.ataca.image-browser/`
-3. `./app-data/com.ataca.image-browser/` if `dirs::data_dir()` returns `None` (rare — only on stripped-down environments where the standard data dir can't be resolved). Logged at warn level.
+1. `$LYNCEUS_DATA_DIR` if set and non-empty (env-var override for testing / multi-instance / CI fixtures)
+2. `dirs::data_dir()/com.ataca.lynceus/` — the platform default:
+   - **macOS:** `~/Library/Application Support/com.ataca.lynceus/`
+   - **Linux:** `$XDG_DATA_HOME/com.ataca.lynceus/` (typically `~/.local/share/...`)
+   - **Windows:** `%APPDATA%/com.ataca.lynceus/`
+3. `./app-data/com.ataca.lynceus/` if `dirs::data_dir()` returns `None` (rare — only on stripped-down environments where the standard data dir can't be resolved). Logged at warn level.
 
 ### Why the dev-vs-release split was removed
 
 An earlier version of this module branched on `cfg(debug_assertions)`: dev builds wrote to `<repo>/Library/`, release used the platform default. The split was removed because dev and release builds diverged on every code change, forcing the user to re-download all 2.5 GB of models whenever they switched build modes. Now both share state — the comment in `paths.rs::app_data_dir` explicitly cites this as the trigger for reverting.
 
-The user can still sandbox a session via `IMAGE_BROWSER_DATA_DIR=/some/tmp/path` if they want isolation (the env-var override is the supported alternative to the old dev-path branching).
+The user can still sandbox a session via `LYNCEUS_DATA_DIR=/some/tmp/path` if they want isolation (the env-var override is the supported alternative to the old dev-path branching).
+
+### `models_dir()` resolution order
+
+Unlike the other `*_dir()` helpers, which nest unconditionally under `app_data_dir()`, `models_dir()` (`crates/engine/src/paths.rs::models_dir`) has its own two-step resolution — added by the commercialisation refactor now that encoder weights are fetched into the repo tree rather than only downloaded into app-data on first launch:
+
+1. **`$LYNCEUS_MODELS_DIR`** if set and non-empty — an explicit absolute path. This is the development workflow now that weights live in the repo tree: point it at `<repo>/models/image/` (populated by `scripts/download_models.py`) so the dev app loads the same commercially-licensed weights it will eventually ship, inspectable on disk instead of buried under the platform app-data directory.
+2. **`<app_data_dir>/models`** — the historical default, kept as a fallback so an unconfigured run (and `model_download.rs`'s first-launch download path, which still exists) still works.
+
+Loading bundled weights from Tauri's resource dir in a release build is a documented productisation follow-up — the engine crate can't reach Tauri's resolver directly, so the product crate will need to pass the resolved path in.
 
 ### Per-root thumbnail subdirs
 
@@ -172,8 +181,9 @@ Frontend `useUserPreferences` (theme, columns, sortMode, animation, similar/sema
 | `ensure_dir` failure swallowed | Filesystem full or permissions error | Returns the path anyway; subsequent file open fails. Gives a confusing error message that doesn't hint at the directory creation failure. |
 | Settings.json corruption | Manual edit + invalid JSON | `Settings::load` logs error and returns `Settings::default()` — silently drops the legacy `scan_root` field. The migration path won't fire. Acceptable. |
 | Atomic save uses `rename` not `fsync` | Power loss between `write` and `rename` | The `.tmp` file may exist on disk; on next launch settings.json is unchanged. If the rename succeeded but the directory entry didn't fsync, the new file may be partial. macOS / Linux ext4 / Windows NTFS handle this well in practice but no explicit fsync. |
-| Hardcoded bundle id `com.ataca.image-browser` in release fallback | A future bundle-id rename | Two places to update: tauri.conf.json + this constant. There is no compile-time check that they match. |
+| Hardcoded bundle id `com.ataca.lynceus` in release fallback | A future bundle-id rename | Two places to update: tauri.conf.json + this constant. There is no compile-time check that they match. |
 | Per-root thumbnail dir creation is lazy | Calling `thumbnails_dir_for_root(99)` for a root that doesn't exist | Creates the subfolder anyway. Cleanup happens in `remove_root`; orphan subfolders for roots that were never used would persist. |
+| Bundle id changed `com.ataca.image-browser` → `com.ataca.lynceus` (commercialisation rename) | Any pre-rename install launching the renamed binary | A library indexed under the old bundle id is orphaned — still on disk under `com.ataca.image-browser/`, unreferenced by the app. First launch under the new id starts from an empty catalogue (no DB, no cache) rather than migrating the old one. Acceptable at this stage (portfolio project, no external users yet): models now live in the repo tree rather than app-data, and DB re-indexing is cheap. See `notes/local-first-philosophy.md`. |
 
 ## Partial / In Progress
 
@@ -185,6 +195,7 @@ None.
 - **Compile-time check that BUNDLE_ID matches tauri.conf.json**. Could be done via `build.rs` reading the conf and `concat!`-ing the const. Low priority.
 - **Configurable Library/ location**. Today's dev path is hardcoded to `<repo>/Library/`. A power user might want to point at a network share. Not on the roadmap.
 - **Cleanup on app uninstall**. If the user uninstalls a release build, the `~/Library/Application Support/...` directory persists (containing potentially many GBs of thumbnails and models). The README could document `rm -rf` instructions; the app itself doesn't surface a clean-up command.
+- **Bundled-resource-dir model loading for release builds**. `models_dir()` currently resolves to `LYNCEUS_MODELS_DIR` or `<app_data_dir>/models` — neither is where a Mac App Store `.app` bundle would ship its weights. The engine crate can't reach Tauri's resource resolver directly, so the product crate will need to resolve the bundled path and pass it in. Tracked as a productisation follow-up, not yet implemented.
 
 ## Durable Notes / Discarded Approaches
 

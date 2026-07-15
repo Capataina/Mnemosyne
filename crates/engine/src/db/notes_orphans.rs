@@ -151,7 +151,7 @@ mod tests {
         assert_eq!(n, 1, "exactly one image should have been orphaned");
 
         let imgs = db
-            .get_images_with_thumbnails(vec![], "".into(), false)
+            .get_images_with_thumbnails(vec![], "".into(), false, vec![])
             .unwrap();
         assert_eq!(imgs.len(), 1, "orphaned row should be filtered out");
         assert_eq!(imgs[0].path, "/r/keep.jpg");
@@ -167,13 +167,13 @@ mod tests {
         // Second scan: file disappeared.
         db.mark_orphaned(r.id, &[]).unwrap();
         let visible = db
-            .get_images_with_thumbnails(vec![], "".into(), false)
+            .get_images_with_thumbnails(vec![], "".into(), false, vec![])
             .unwrap();
         assert!(visible.is_empty());
         // Third scan: file returned.
         db.mark_orphaned(r.id, &["/r/file.jpg".into()]).unwrap();
         let visible = db
-            .get_images_with_thumbnails(vec![], "".into(), false)
+            .get_images_with_thumbnails(vec![], "".into(), false, vec![])
             .unwrap();
         assert_eq!(visible.len(), 1);
     }
@@ -200,7 +200,7 @@ mod tests {
         // Empty alive set for root a should orphan a's images, not b's.
         db.mark_orphaned(a.id, &[]).unwrap();
         let visible = db
-            .get_images_with_thumbnails(vec![], "".into(), false)
+            .get_images_with_thumbnails(vec![], "".into(), false, vec![])
             .unwrap();
         assert_eq!(visible.len(), 1);
         assert_eq!(visible[0].path, "/b/1.jpg");

@@ -228,7 +228,7 @@ fn orphan_detection_marks_disappeared_files() {
 
     // get_images_with_thumbnails filters out orphaned rows.
     let visible = db
-        .get_images_with_thumbnails(vec![], "".into(), false)
+        .get_images_with_thumbnails(vec![], "".into(), false, vec![])
         .unwrap();
     assert_eq!(visible.len(), 3);
     let visible_paths: Vec<&str> =
@@ -284,14 +284,14 @@ fn multi_folder_grid_query_unions_enabled_roots() {
 
     // Both enabled → union of 3 images.
     let imgs = db
-        .get_images_with_thumbnails(vec![], "".into(), false)
+        .get_images_with_thumbnails(vec![], "".into(), false, vec![])
         .unwrap();
     assert_eq!(imgs.len(), 3);
 
     // Disable root_a → only b1.jpg visible.
     db.set_root_enabled(root_a.id, false).unwrap();
     let imgs = db
-        .get_images_with_thumbnails(vec![], "".into(), false)
+        .get_images_with_thumbnails(vec![], "".into(), false, vec![])
         .unwrap();
     assert_eq!(imgs.len(), 1);
     assert!(imgs[0].path.ends_with("b1.jpg"));
@@ -300,7 +300,7 @@ fn multi_folder_grid_query_unions_enabled_roots() {
     db.set_root_enabled(root_a.id, true).unwrap();
     db.remove_root(root_b.id).unwrap();
     let imgs = db
-        .get_images_with_thumbnails(vec![], "".into(), false)
+        .get_images_with_thumbnails(vec![], "".into(), false, vec![])
         .unwrap();
     assert_eq!(imgs.len(), 2);
 }

@@ -2,12 +2,22 @@ use tauri::State;
 
 use crate::commands::ApiError;
 use crate::db::ImageDatabase;
-use crate::tag_struct::Tag;
+use crate::tag_struct::{Tag, TagCount};
 
 #[tauri::command]
 #[tracing::instrument(name = "ipc.get_tags", skip(db))]
 pub fn get_tags(db: State<'_, ImageDatabase>) -> Result<Vec<Tag>, ApiError> {
     Ok(db.get_tags()?)
+}
+
+/// Per-tag visible-image counts for the library drawer's folder list.
+/// Separate from `get_tags` so the `Tag` wire shape is unchanged; the
+/// drawer joins the two by `tag_id`. Count uses the grid's visibility
+/// predicate, so a folder's number matches what opening it shows.
+#[tauri::command]
+#[tracing::instrument(name = "ipc.get_tag_counts", skip(db))]
+pub fn get_tag_counts(db: State<'_, ImageDatabase>) -> Result<Vec<TagCount>, ApiError> {
+    Ok(db.get_tag_counts()?)
 }
 
 #[tauri::command]

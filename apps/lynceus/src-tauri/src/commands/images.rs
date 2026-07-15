@@ -27,11 +27,16 @@ pub fn get_images(
     filter_tag_ids: Vec<ID>,
     filter_string: String,
     match_all_tags: Option<bool>,
+    exclude_tag_ids: Option<Vec<ID>>,
 ) -> Result<Vec<ImageData>, ApiError> {
-    // match_all_tags is Option so older frontend builds (or tests)
-    // can call without specifying — defaults to false (OR semantic).
+    // match_all_tags and exclude_tag_ids are Option so an older frontend
+    // build (or a test) can call without them — defaulting to OR
+    // semantics and no exclude, i.e. exactly the pre-drawer behaviour.
+    // The library drawer passes `excludeTagIds` to drive the exclude
+    // filter (images carrying NONE of the given tags).
     let match_all = match_all_tags.unwrap_or(false);
-    Ok(db.get_images_with_thumbnails(filter_tag_ids, filter_string, match_all)?)
+    let exclude = exclude_tag_ids.unwrap_or_default();
+    Ok(db.get_images_with_thumbnails(filter_tag_ids, filter_string, match_all, exclude)?)
 }
 
 /// Snapshot of pipeline progress — counts of images at each stage

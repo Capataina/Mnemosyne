@@ -66,7 +66,7 @@ mod tests {
         db.set_manual_order(&[id_c, id_a, id_b]).unwrap();
 
         let with_thumbs = db
-            .get_images_with_thumbnails(vec![], "".into(), false)
+            .get_images_with_thumbnails(vec![], "".into(), false, vec![])
             .unwrap();
         let order_of = |id: i64| with_thumbs.iter().find(|i| i.id == id).unwrap().manual_order;
         assert_eq!(order_of(id_c), Some(0));
@@ -82,13 +82,13 @@ mod tests {
 
         db.set_manual_col_span(id, Some(2)).unwrap();
         let imgs = db
-            .get_images_with_thumbnails(vec![], "".into(), false)
+            .get_images_with_thumbnails(vec![], "".into(), false, vec![])
             .unwrap();
         assert_eq!(imgs.iter().find(|i| i.id == id).unwrap().manual_col_span, Some(2));
 
         db.set_manual_col_span(id, None).unwrap();
         let imgs = db
-            .get_images_with_thumbnails(vec![], "".into(), false)
+            .get_images_with_thumbnails(vec![], "".into(), false, vec![])
             .unwrap();
         assert_eq!(imgs.iter().find(|i| i.id == id).unwrap().manual_col_span, None);
     }
@@ -98,7 +98,7 @@ mod tests {
         let db = fresh_db();
         db.add_image("/a.jpg".into(), None).unwrap();
         let imgs = db
-            .get_images_with_thumbnails(vec![], "".into(), false)
+            .get_images_with_thumbnails(vec![], "".into(), false, vec![])
             .unwrap();
         assert_eq!(imgs[0].manual_order, None);
         assert_eq!(imgs[0].manual_col_span, None);

@@ -370,7 +370,8 @@ pub fn run(db: ImageDatabase, db_path: String) {
         get_fused_similar_images, get_similar_images, get_tiered_similar_images,
     };
     use commands::tags::{
-        add_tag_to_image, create_tag, delete_tag, get_tags, remove_tag_from_image,
+        add_tag_to_image, create_tag, delete_tag, get_tag_counts, get_tags,
+        remove_tag_from_image,
     };
 
     let cosine_index = Arc::new(RwLock::new(CosineIndex::new()));
@@ -657,6 +658,7 @@ pub fn run(db: ImageDatabase, db_path: String) {
             get_enabled_encoders,
             set_enabled_encoders,
             get_tags,
+            get_tag_counts,
             create_tag,
             delete_tag,
             add_tag_to_image,

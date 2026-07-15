@@ -265,15 +265,22 @@ impl ImageDatabase {
     /// Rows with NULL root_id are kept — those are legacy un-migrated
     /// rows from before multi-folder support and should still display.
     ///
-    /// `match_all_tags` controls multi-tag semantics: false (default)
-    /// matches images with ANY of the selected tags (OR), true requires
-    /// ALL of them (AND). Threaded through from the user's tagFilterMode
-    /// preference via the get_images Tauri command.
+    /// `match_all_tags` controls multi-tag semantics for the INCLUDE set:
+    /// false (default) matches images with ANY of the selected tags (OR),
+    /// true requires ALL of them (AND). Threaded through from the user's
+    /// tagFilterMode preference via the get_images Tauri command.
+    ///
+    /// `exclude_tag_ids` is the library drawer's exclude filter: an image
+    /// survives only if it carries NONE of these tags (a `NOT EXISTS`
+    /// clause), applied on top of the include filter and the visibility
+    /// predicate. An empty `exclude_tag_ids` adds no clause, so it is
+    /// exactly the pre-exclude behaviour — existing callers pass `vec![]`.
     pub fn get_images_with_thumbnails(
         &self,
         filter_tag_ids: Vec<ID>,
         _filter_string: String,
         match_all_tags: bool,
+        exclude_tag_ids: Vec<ID>,
     ) -> rusqlite::Result<Vec<ImageData>> {
         // Sub-span instrumentation for the `get_images` IPC path.
         //
@@ -322,6 +329,24 @@ impl ImageDatabase {
             )
         )";
 
+        // Exclude filter (library drawer). Empty when no exclude tags are
+        // given, so the appended-into-every-branch SQL is a no-op and the
+        // behaviour matches the pre-exclude query exactly. The `?`
+        // placeholders here bind AFTER the include placeholders, so the
+        // param iterator below is `filter_tag_ids` then `exclude_tag_ids`.
+        let exclude_clause = if exclude_tag_ids.is_empty() {
+            String::new()
+        } else {
+            let ex_placeholders = vec!["?"; exclude_tag_ids.len()].join(", ");
+            format!(
+                "AND NOT EXISTS (
+                    SELECT 1 FROM images_tags ex
+                    WHERE ex.image_id = images.id
+                    AND ex.tag_id IN ({ex_placeholders})
+                )"
+            )
+        };
+
         let sql = if !filter_tag_ids.is_empty() {
             let placeholders = vec!["?"; filter_tag_ids.len()].join(", ");
             if match_all_tags {
@@ -347,7 +372,8 @@ impl ImageDatabase {
                         WHERE it2.tag_id IN ({placeholders})
                         GROUP BY it2.image_id
                         HAVING COUNT(DISTINCT it2.tag_id) = {n}
-                    );"
+                    )
+                    {exclude_clause};"
                 )
             } else {
                 // OR semantic: image must have ANY selected tag.
@@ -365,7 +391,8 @@ impl ImageDatabase {
                         FROM images_tags it2
                         WHERE it2.image_id = images.id
                         AND it2.tag_id IN ({placeholders})
-                    );"
+                    )
+                    {exclude_clause};"
                 )
             }
         } else {
@@ -377,7 +404,8 @@ impl ImageDatabase {
                 FROM images
                 LEFT JOIN images_tags ON images.id = images_tags.image_id
                 LEFT JOIN tags ON tags.id = images_tags.tag_id
-                WHERE {root_filter};"
+                WHERE {root_filter}
+                {exclude_clause};"
             )
         };
         let mut stmt = {
@@ -394,10 +422,15 @@ impl ImageDatabase {
         // the aggregate span (it's the cost of consuming the cursor).
         // The split still tells us whether the dominant cost is in
         // SQLite kernel work (prepare + execute) or in our roll-up.
+        // Params bind in placeholder order: the include set first (the
+        // tag-filter subqueries above), then the exclude set (the NOT
+        // EXISTS clause). Either may be empty.
+        let mut bind_params: Vec<ID> = filter_tag_ids;
+        bind_params.extend(exclude_tag_ids);
         let mut rows = {
             let _row_iter_span =
                 tracing::info_span!("get_images.row_iter").entered();
-            stmt.query(params_from_iter(filter_tag_ids))?
+            stmt.query(params_from_iter(bind_params))?
         };
         let aggregated = {
             let _aggregate_span =
@@ -699,14 +732,14 @@ mod tests {
 
         // Both enabled → both in the grid.
         let imgs = db
-            .get_images_with_thumbnails(vec![], "".into(), false)
+            .get_images_with_thumbnails(vec![], "".into(), false, vec![])
             .unwrap();
         assert_eq!(imgs.len(), 2);
 
         // Disable root b.
         db.set_root_enabled(b.id, false).unwrap();
         let imgs = db
-            .get_images_with_thumbnails(vec![], "".into(), false)
+            .get_images_with_thumbnails(vec![], "".into(), false, vec![])
             .unwrap();
         assert_eq!(imgs.len(), 1);
         assert_eq!(imgs[0].path, "/a/x.jpg");
@@ -718,7 +751,7 @@ mod tests {
         // Legacy un-migrated rows (root_id = NULL) should still appear.
         db.add_image("/legacy.jpg".into(), None).unwrap();
         let imgs = db
-            .get_images_with_thumbnails(vec![], "".into(), false)
+            .get_images_with_thumbnails(vec![], "".into(), false, vec![])
             .unwrap();
         assert_eq!(imgs.len(), 1);
     }
@@ -754,7 +787,7 @@ mod tests {
 
         // Filter by t1 alone — should return A and C (both have t1).
         let imgs = db
-            .get_images_with_thumbnails(vec![t1], "".into(), false)
+            .get_images_with_thumbnails(vec![t1], "".into(), false, vec![])
             .unwrap();
         let ids: Vec<i64> = imgs.iter().map(|i| i.id).collect();
         assert!(ids.contains(&id_a));
@@ -774,15 +807,93 @@ mod tests {
 
         // OR semantic: t1 + t2 → A, B, C all match.
         let or_match = db
-            .get_images_with_thumbnails(vec![t1, t2], "".into(), false)
+            .get_images_with_thumbnails(vec![t1, t2], "".into(), false, vec![])
             .unwrap();
         assert_eq!(or_match.len(), 3);
 
         // AND semantic: only C has BOTH tags.
         let and_match = db
-            .get_images_with_thumbnails(vec![t1, t2], "".into(), true)
+            .get_images_with_thumbnails(vec![t1, t2], "".into(), true, vec![])
             .unwrap();
         assert_eq!(and_match.len(), 1);
         assert_eq!(and_match[0].id, id_c);
+    }
+
+    // ============================================================
+    //  Library drawer: exclude-tag filter + per-tag visible counts
+    // ============================================================
+
+    #[test]
+    fn exclude_tag_filter_removes_images_carrying_an_excluded_tag() {
+        let db = fresh_db();
+        let r = db.add_root("/r".into(), None).unwrap();
+        db.add_image("/r/a.jpg".into(), Some(r.id)).unwrap(); // tag red
+        db.add_image("/r/b.jpg".into(), Some(r.id)).unwrap(); // tag blue
+        db.add_image("/r/c.jpg".into(), Some(r.id)).unwrap(); // no tags
+        let id_a = db.get_image_id_by_path("/r/a.jpg").unwrap();
+        let id_b = db.get_image_id_by_path("/r/b.jpg").unwrap();
+        let red = db.create_tag("red".into(), "#f00".into()).unwrap().id;
+        let blue = db.create_tag("blue".into(), "#00f".into()).unwrap().id;
+        db.add_tag_to_image(id_a, red).unwrap();
+        db.add_tag_to_image(id_b, blue).unwrap();
+
+        // Empty exclude = pre-drawer behaviour: all three visible.
+        let all = db
+            .get_images_with_thumbnails(vec![], "".into(), false, vec![])
+            .unwrap();
+        assert_eq!(all.len(), 3, "empty exclude must be back-compatible");
+
+        // Exclude red, no include → red image dropped, the other two kept.
+        let excl = db
+            .get_images_with_thumbnails(vec![], "".into(), false, vec![red])
+            .unwrap();
+        let paths: Vec<&str> = excl.iter().map(|i| i.path.as_str()).collect();
+        assert_eq!(excl.len(), 2);
+        assert!(!paths.contains(&"/r/a.jpg"), "excluded-red image must be gone");
+        assert!(paths.contains(&"/r/b.jpg"));
+        assert!(paths.contains(&"/r/c.jpg"));
+
+        // Include blue AND exclude red → only the blue image.
+        let both = db
+            .get_images_with_thumbnails(vec![blue], "".into(), false, vec![red])
+            .unwrap();
+        assert_eq!(both.len(), 1);
+        assert_eq!(both[0].path, "/r/b.jpg");
+    }
+
+    #[test]
+    fn get_tag_counts_matches_grid_visibility_predicate() {
+        let db = fresh_db();
+        let r_on = db.add_root("/on".into(), None).unwrap();
+        let r_off = db.add_root("/off".into(), None).unwrap();
+        // Tag "t" spans three images: one plainly visible, one that will
+        // be orphaned, one under a root we'll disable.
+        db.add_image("/on/a.jpg".into(), Some(r_on.id)).unwrap();
+        db.add_image("/on/b.jpg".into(), Some(r_on.id)).unwrap();
+        db.add_image("/off/c.jpg".into(), Some(r_off.id)).unwrap();
+        let id_a = db.get_image_id_by_path("/on/a.jpg").unwrap();
+        let id_b = db.get_image_id_by_path("/on/b.jpg").unwrap();
+        let id_c = db.get_image_id_by_path("/off/c.jpg").unwrap();
+        let t = db.create_tag("t".into(), "#fff".into()).unwrap().id;
+        let empty = db.create_tag("empty".into(), "#000".into()).unwrap().id;
+        db.add_tag_to_image(id_a, t).unwrap();
+        db.add_tag_to_image(id_b, t).unwrap();
+        db.add_tag_to_image(id_c, t).unwrap();
+
+        // Orphan b (not in the alive set) and disable r_off.
+        db.mark_orphaned(r_on.id, &["/on/a.jpg".to_string()]).unwrap();
+        db.set_root_enabled(r_off.id, false).unwrap();
+
+        let counts = db.get_tag_counts().unwrap();
+        let count_of = |tag_id| counts.iter().find(|c| c.tag_id == tag_id).map(|c| c.count);
+
+        // Only /on/a.jpg is visible: b is orphaned, c is under a disabled
+        // root — exactly the two the grid also drops. So the count is 1,
+        // matching what opening that folder would show.
+        assert_eq!(count_of(t), Some(1), "count must match the grid's visible set");
+        // A tag with no images still gets a row, with count 0.
+        assert_eq!(count_of(empty), Some(0), "zero-image tag returns 0, not a missing row");
+        // Every tag is represented.
+        assert_eq!(counts.len(), 2);
     }
 }

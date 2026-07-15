@@ -21,7 +21,7 @@ tauri-build = { version = "2", features = [] }
 [dependencies]
 # Mnemosyne — the media-agnostic catalogue + retrieval engine. Path dependency
 # with no frozen API until a second product proves the seams.
-mnemosyne = { path = "../crates/engine" }
+mnemosyne = { path = "../../../crates/engine" }
 rusqlite = { version = "0.37.0", features = ["bundled"] }
 tauri = { version = "2", features = ["protocol-asset"] }
 tauri-plugin-opener = "2"

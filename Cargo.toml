@@ -1,13 +1,15 @@
 # Cargo workspace root for the Mnemosyne monorepo.
 #
 # Two members today:
-#   - crates/engine  — Mnemosyne, the media-agnostic catalogue + retrieval core
-#   - src-tauri      — Lynceus, the image-browser product (Tauri app crate)
+#   - crates/engine            — Mnemosyne, the media-agnostic catalogue + retrieval core
+#   - apps/lynceus/src-tauri   — Lynceus, the image-browser product (Tauri app crate)
 #
-# Future asset-browser products (Syrinx for audio, Daedalus for 3D) join as
-# additional member crates that also depend on the engine. The engine is a
-# path dependency with no frozen public API until a second product proves the
-# seams, so it is versioned and evolved in lock-step with its consumers.
+# Each product lives under apps/<product>/ as a self-contained unit (its React
+# frontend beside its src-tauri crate, the Tauri-monorepo convention that keeps
+# frontendDist's ../dist relative path intact). Future asset browsers (Syrinx
+# for audio, Daedalus for 3D) join as apps/<product>/src-tauri member crates
+# that also depend on the engine. The engine is a path dependency with no frozen
+# public API until a second product proves the seams.
 [workspace]
 resolver = "2"
-members = ["crates/engine", "src-tauri"]
+members = ["crates/engine", "apps/lynceus/src-tauri"]

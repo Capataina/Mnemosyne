@@ -5,7 +5,7 @@
 //! directory regardless of build mode (debug or release). Layout:
 //!
 //! ```text
-//! <platform_data_dir>/com.ataca.image-browser/
+//! <platform_data_dir>/com.ataca.lynceus/
 //!   images.db
 //!   settings.json
 //!   cosine_cache.bin
@@ -24,7 +24,7 @@
 //! `$XDG_DATA_HOME` (default `~/.local/share`); on Windows
 //! `%APPDATA%`. The bundle id segment matches `tauri.conf.json`.
 //!
-//! `IMAGE_BROWSER_DATA_DIR` env var overrides the default for ad-hoc
+//! `LYNCEUS_DATA_DIR` env var overrides the default for ad-hoc
 //! redirection (testing, side-by-side instances, CI fixtures).
 
 use std::borrow::Cow;
@@ -56,17 +56,17 @@ pub fn strip_windows_extended_prefix(path_str: &str) -> Cow<'_, str> {
 use tracing::warn;
 
 /// Tauri bundle identifier — must stay in sync with `tauri.conf.json::identifier`.
-const BUNDLE_ID: &str = "com.ataca.image-browser";
+const BUNDLE_ID: &str = "com.ataca.lynceus";
 
 /// Root of all app-managed state.
 ///
 /// Always resolves to the platform's standard app-data directory so
 /// debug and release builds share state. On macOS that's
-/// `~/Library/Application Support/com.ataca.image-browser/`; on
-/// Linux `$XDG_DATA_HOME/com.ataca.image-browser/`; on Windows
-/// `%APPDATA%/com.ataca.image-browser/`.
+/// `~/Library/Application Support/com.ataca.lynceus/`; on
+/// Linux `$XDG_DATA_HOME/com.ataca.lynceus/`; on Windows
+/// `%APPDATA%/com.ataca.lynceus/`.
 ///
-/// The `IMAGE_BROWSER_DATA_DIR` env var overrides this for ad-hoc
+/// The `LYNCEUS_DATA_DIR` env var overrides this for ad-hoc
 /// redirection (testing against a separate state, running multiple
 /// instances side by side, pointing CI at a fixture directory). Set
 /// it to an absolute path; the env var wins over the platform
@@ -82,7 +82,7 @@ pub fn app_data_dir() -> PathBuf {
     // Env-var override comes first — useful for testing against a
     // separate state, running multiple instances, or pointing at a
     // fixture directory.
-    if let Ok(override_path) = std::env::var("IMAGE_BROWSER_DATA_DIR") {
+    if let Ok(override_path) = std::env::var("LYNCEUS_DATA_DIR") {
         if !override_path.is_empty() {
             let dir = PathBuf::from(override_path);
             let _ = ensure_dir(&dir);
@@ -136,10 +136,31 @@ pub fn thumbnails_dir_for_root(root_id: i64) -> PathBuf {
     p
 }
 
-/// Directory where ONNX models and the tokenizer.json live.
-/// Created if missing. Pass 4 will download the model files into here
-/// on first launch.
+/// Directory where the ONNX encoder models and their tokenizers live.
+///
+/// Resolution order:
+///
+/// 1. **`LYNCEUS_MODELS_DIR` env var** — an explicit absolute path. This is the
+///    development workflow now that weights live inside the repo tree: point it
+///    at `<repo>/models/image` (populated by `scripts/download_models.py`) so
+///    the app loads the same commercially-licensed weights it will eventually
+///    ship, and they stay inspectable on disk instead of buried under
+///    `~/Library/Application Support/…`.
+/// 2. **`<app_data_dir>/models`** — the historical default, kept as a fallback
+///    so an unconfigured run still works.
+///
+/// For a shipped Mac App Store build the weights are bundled into the .app and
+/// loaded from Tauri's read-only resource dir; wiring that resolution through
+/// here (the engine can't reach Tauri's resolver directly, so the product
+/// crate will pass it in) is tracked as a productisation follow-up.
 pub fn models_dir() -> PathBuf {
+    if let Ok(override_path) = std::env::var("LYNCEUS_MODELS_DIR") {
+        if !override_path.is_empty() {
+            let dir = PathBuf::from(override_path);
+            let _ = ensure_dir(&dir);
+            return dir;
+        }
+    }
     let p = app_data_dir().join("models");
     let _ = ensure_dir(&p);
     p
@@ -201,11 +222,11 @@ mod tests {
         );
     }
 
-    // IMAGE_BROWSER_DATA_DIR override has no automated test because
+    // LYNCEUS_DATA_DIR override has no automated test because
     // process-wide env mutation races with the other paths tests when
     // cargo runs them in parallel. The override is a one-line read +
     // PathBuf construct; manual smoke-test from a shell:
-    //   IMAGE_BROWSER_DATA_DIR=/tmp/foo cargo run --bin image-browser
+    //   LYNCEUS_DATA_DIR=/tmp/foo cargo run --bin lynceus
     // and verify the binary writes images.db under /tmp/foo/.
 
     #[test]

@@ -235,7 +235,9 @@ pub fn run(db: ImageDatabase, db_path: String) {
     use commands::encoders::{
         get_enabled_encoders, list_available_encoders, set_enabled_encoders,
     };
-    use commands::images::{get_images, get_pipeline_stats};
+    use commands::images::{
+        get_images, get_pipeline_stats, set_manual_col_span, set_manual_order,
+    };
     use commands::notes::{get_image_notes, set_image_notes};
     use commands::profiling::{
         export_perf_snapshot, get_perf_snapshot, is_profiling_enabled, record_user_action,
@@ -517,6 +519,8 @@ pub fn run(db: ImageDatabase, db_path: String) {
         .invoke_handler(tauri::generate_handler![
             get_images,
             get_pipeline_stats,
+            set_manual_order,
+            set_manual_col_span,
             list_available_encoders,
             get_enabled_encoders,
             set_enabled_encoders,

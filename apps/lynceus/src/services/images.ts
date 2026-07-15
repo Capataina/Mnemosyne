@@ -19,10 +19,12 @@ const PLACEHOLDER_WIDTH = 400;
 const PLACEHOLDER_HEIGHT = 400;
 
 /** Frontend-side sort modes. Backend always returns stable order
- *  (by id ASC); we apply name/added/shuffle here. The shuffle uses
- *  a seed argument so refetches with the same seed yield the same
- *  order — only when the seed changes does the order change. */
-export type SortMode = "id" | "name" | "added" | "shuffle";
+ *  (by id ASC); we apply name/added/shuffle/custom here. The shuffle
+ *  uses a seed argument so refetches with the same seed yield the
+ *  same order — only when the seed changes does the order change.
+ *  "custom" sorts by the persisted `manualOrder` (drag-reorder),
+ *  falling back to id order for any image never manually placed. */
+export type SortMode = "id" | "name" | "added" | "shuffle" | "custom";
 
 export async function fetchImages(
   filterTagIds: number[] = [],
@@ -65,6 +67,8 @@ export async function fetchImages(
         width: img.width ?? PLACEHOLDER_WIDTH,
         height: img.height ?? PLACEHOLDER_HEIGHT,
         tags: img.tags,
+        manualOrder: img.manual_order ?? null,
+        manualColSpan: img.manual_col_span ?? null,
       };
     });
 
@@ -128,6 +132,13 @@ export function applySortMode(
       }
       return out;
     }
+    case "custom":
+      // Sort by the persisted manual position; anything never manually
+      // placed (manualOrder null) falls back to its id, which is the
+      // same order a fresh migration's all-NULL rows already render
+      // in — so this is a no-op grid until the user drags something.
+      out.sort((a, b) => (a.manualOrder ?? a.id) - (b.manualOrder ?? b.id));
+      return out;
   }
 }
 
@@ -206,6 +217,37 @@ export async function getScanRoot(): Promise<string | null> {
 export async function setScanRoot(path: string): Promise<void> {
   try {
     await invoke("set_scan_root", { path });
+  } catch (error) {
+    throw new Error(formatApiError(error));
+  }
+}
+
+/**
+ * Persist a drag-reorder. Pass the FULL new ordering of image ids —
+ * the backend rewrites every id's `manual_order` as a fresh 0..N-1
+ * sequence in one transaction. Only meaningful when called with the
+ * complete unfiltered catalogue (see Masonry's reorder gating): a
+ * partial/filtered list would clobber the relative order of images
+ * outside that filter.
+ */
+export async function setManualOrder(orderedIds: number[]): Promise<void> {
+  try {
+    await invoke("set_manual_order", { orderedIds });
+  } catch (error) {
+    throw new Error(formatApiError(error));
+  }
+}
+
+/**
+ * Persist a drag-resize. `colSpan` of `null` clears back to the
+ * default single-column width.
+ */
+export async function setManualColSpan(
+  imageId: number,
+  colSpan: number | null,
+): Promise<void> {
+  try {
+    await invoke("set_manual_col_span", { id: imageId, colSpan });
   } catch (error) {
     throw new Error(formatApiError(error));
   }

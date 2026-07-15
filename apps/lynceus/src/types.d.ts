@@ -11,6 +11,12 @@ export type ImageData = {
   height?: number;
   /** Free-text annotation (Phase 11) */
   notes?: string | null;
+  /** Manual drag-reorder position ("custom" sort mode). Null/undefined
+   *  means never manually placed — falls back to id order. */
+  manual_order?: number | null;
+  /** Manual drag-resize column span. Null/undefined means the default
+   *  single-column width. */
+  manual_col_span?: number | null;
 };
 
 export type ImageItem = {
@@ -25,6 +31,12 @@ export type ImageItem = {
   tags: Tag[];
   /** Free-text annotation (Phase 11) */
   notes?: string | null;
+  /** Manual drag-reorder position ("custom" sort mode). Null/undefined
+   *  means never manually placed — falls back to id order. */
+  manualOrder?: number | null;
+  /** Manual drag-resize column span. Null/undefined means the default
+   *  single-column width. */
+  manualColSpan?: number | null;
 };
 
 export type Tag = {

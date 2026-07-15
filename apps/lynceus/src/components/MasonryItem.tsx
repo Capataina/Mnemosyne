@@ -11,6 +11,18 @@ interface MasonryItemProps {
   animationDelay: number;
   /** Reduce / disable animations per user setting */
   animationLevel?: "subtle" | "standard" | "off";
+  /** True while "custom" sort mode + unfiltered catalogue make
+   *  drag-to-reorder available. Adds the grab affordance to the tile
+   *  itself. */
+  reorderEnabled?: boolean;
+  /** True while THIS tile is the one currently being dragged. */
+  isDragging?: boolean;
+  /** Pointer went down on the tile body (drag-to-reorder start). */
+  onDragHandlePointerDown?: (e: React.PointerEvent<HTMLDivElement>) => void;
+  /** Pointer went down on the corner resize grip (drag-to-resize start). */
+  onResizeHandlePointerDown?: (e: React.PointerEvent<HTMLDivElement>) => void;
+  /** True while THIS tile's resize grip is being dragged. */
+  isResizing?: boolean;
 }
 
 /**
@@ -95,14 +107,24 @@ export const MasonryItem = memo(function MasonryItem(props: MasonryItemProps) {
             }
       }
       initial={{ opacity: 0, scale: 0.97 }}
-      animate={{ opacity: 1, scale: 1 }}
+      animate={{
+        opacity: props.isDragging ? 0.6 : 1,
+        scale: props.isDragging ? 0.96 : 1,
+      }}
       exit={{ opacity: 0, scale: 0.97 }}
       onClick={() => props.onClick(props.item)}
       onContextMenu={handleContextMenu}
       onMouseMove={handleMouseMove}
       onMouseEnter={handleMouseEnter}
       onMouseLeave={handleMouseLeave}
-      className="masonry-tile cursor-pointer group"
+      onPointerDown={
+        props.reorderEnabled ? props.onDragHandlePointerDown : undefined
+      }
+      className={[
+        "masonry-tile group",
+        props.reorderEnabled ? "cursor-grab active:cursor-grabbing" : "cursor-pointer",
+        props.isDragging ? "z-50" : "",
+      ].join(" ")}
       style={{
         perspective: "1000px",
       }}
@@ -150,6 +172,34 @@ export const MasonryItem = memo(function MasonryItem(props: MasonryItemProps) {
         {/* Multi-select indicator — small filled circle in the top-left */}
         {props.isMultiSelected && (
           <div className="absolute top-2 left-2 h-5 w-5 rounded-full bg-primary border-2 border-background shadow-md" />
+        )}
+
+        {/* Resize grip — hold and drag horizontally to widen/narrow the
+            tile's column span. Preserves aspect ratio by construction:
+            masonryPacking always scales height from the placed width,
+            span-driven or not, so this handle never distorts the
+            image — it only changes how many columns it occupies.
+            Hidden on the hero card, which already spans via a
+            separate promotion mechanism. */}
+        {!props.isSelected && (
+          <div
+            role="slider"
+            aria-label={`Resize ${props.item.name}`}
+            aria-orientation="horizontal"
+            onPointerDown={(e) => {
+              e.stopPropagation();
+              props.onResizeHandlePointerDown?.(e);
+            }}
+            className={[
+              "absolute bottom-1.5 right-1.5 h-4 w-4 cursor-ew-resize rounded-sm",
+              "flex items-center justify-center transition-opacity duration-150",
+              props.isResizing
+                ? "opacity-100 bg-primary"
+                : "opacity-0 group-hover:opacity-80 bg-black/50 hover:bg-primary",
+            ].join(" ")}
+          >
+            <div className="h-2 w-0.5 rounded-full bg-white/90" />
+          </div>
         )}
       </motion.div>
     </motion.div>

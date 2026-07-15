@@ -18,6 +18,15 @@ pub struct ImageData {
     /// Original image height in pixels
     #[serde(skip_serializing_if = "Option::is_none")]
     pub height: Option<u32>,
+    /// Manual drag-reorder position (masonry "custom" sort mode).
+    /// `None` = never manually placed; the frontend falls back to id
+    /// order for those.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub manual_order: Option<i64>,
+    /// Manual drag-resize column span (masonry grid). `None` = default
+    /// single-column width.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub manual_col_span: Option<i64>,
 }
 
 impl ImageData {
@@ -43,6 +52,8 @@ impl ImageData {
             thumbnail_path: None,
             width: None,
             height: None,
+            manual_order: None,
+            manual_col_span: None,
         }
     }
 

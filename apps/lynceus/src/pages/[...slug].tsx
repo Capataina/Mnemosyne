@@ -4,6 +4,8 @@ import {
   useImages,
   useAssignTagToImage,
   useRemoveTagFromImage,
+  useSetManualOrder,
+  useSetManualColSpan,
 } from "../queries/useImages";
 import { useTieredSimilarImages } from "../queries/useSimilarImages";
 import { useSemanticSearch } from "../queries/useSemanticSearch";
@@ -139,6 +141,8 @@ export default function Home() {
   const deleteTagMutation = useDeleteTag();
   const assignTagMutation = useAssignTagToImage();
   const removeTagMutation = useRemoveTagFromImage();
+  const setManualOrderMutation = useSetManualOrder();
+  const setManualColSpanMutation = useSetManualColSpan();
   // Pass the user's chosen image-image encoder so switching it in
   // Settings auto-refetches (the encoder_id is part of the query key).
   const tieredSimilarImages = useTieredSimilarImages(
@@ -228,6 +232,29 @@ export default function Home() {
 
   // Determine if we're in a loading state
   const isSearchLoading = shouldUseSemanticSearch && semanticSearchResults.isFetching;
+
+  // Drag-to-reorder is only offered on the full, unfiltered catalogue
+  // in "custom" sort mode. `setManualOrder` persists the WHOLE visible
+  // ordering as a fresh 0..N-1 sequence (see its doc comment in
+  // services/images.ts) — reordering a tag-filtered or search-result
+  // subset would silently clobber the relative order of every image
+  // outside that subset, so the affordance is withheld until the view
+  // is the true unfiltered set.
+  const reorderEnabled =
+    prefs.sortMode === "custom" &&
+    !selectedItem &&
+    !shouldUseSemanticSearch &&
+    searchTags.length === 0;
+
+  const handleReorder = (orderedIds: number[]) => {
+    recordAction("masonry_reorder", { count: orderedIds.length });
+    setManualOrderMutation.mutate(orderedIds);
+  };
+
+  const handleResizeCommit = (itemId: number, colSpan: number | null) => {
+    recordAction("masonry_resize", { id: itemId, colSpan });
+    setManualColSpanMutation.mutate({ imageId: itemId, colSpan });
+  };
 
   const handleClose = () => {
     recordAction("image_close", { id: selectedItem?.id });
@@ -508,6 +535,9 @@ export default function Home() {
             tileScale={prefs.tileScale}
             animationLevel={prefs.animationLevel}
             onItemClick={handleImageClick}
+            reorderEnabled={reorderEnabled}
+            onReorder={handleReorder}
+            onResizeCommit={handleResizeCommit}
           />
         </Profiler>
       </div>

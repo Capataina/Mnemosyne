@@ -9,7 +9,12 @@ import type { ImageItem } from "../types";
  * and the column-count override behaviour.
  */
 
-function tile(id: number, w: number, h: number): ImageItem {
+function tile(
+  id: number,
+  w: number,
+  h: number,
+  manualColSpan?: number,
+): ImageItem {
   return {
     id,
     url: `mock://${id}`,
@@ -17,6 +22,7 @@ function tile(id: number, w: number, h: number): ImageItem {
     height: h,
     name: `tile-${id}`,
     tags: [],
+    manualColSpan,
   };
 }
 
@@ -251,5 +257,95 @@ describe("computeMasonryLayout", () => {
     // Hero spans all 3 cols → 900px wide → 1000:500 ratio → 450 tall.
     const hero = out.placements.find((p) => p.isSelected)!;
     expect(hero.height).toBeCloseTo(450, 5);
+  });
+
+  // ============================================================
+  //  Column-span support (drag-to-resize, Phase 12g)
+  // ============================================================
+
+  it("spans a resized item across the requested number of columns", () => {
+    const out = computeMasonryLayout({
+      items: [tile(1, 400, 100, 2)],
+      containerWidth: 600,
+      minItemWidth: 100,
+      columnGap: 0,
+      verticalGap: 0,
+      columnCountOverride: 3,
+    });
+    const p = out.placements[0];
+    // 2 of 3 cols, each 200px wide → 400px placed width.
+    expect(p.colSpan).toBe(2);
+    expect(p.width).toBe(400);
+    // Aspect ratio preserved at the spanned width: 400x100 source at
+    // 400px placed width → 100px tall, unchanged.
+    expect(p.height).toBeCloseTo(100, 5);
+  });
+
+  it("places a spanned item flush against the tallest column in its window", () => {
+    // Column 0 already has a tile (height 50); columns 1-2 are empty.
+    // A 2-span item should prefer the (1,2) window over (0,1), since
+    // starting at 0 would have to clear column 0's existing height.
+    const items = [tile(1, 100, 50), tile(2, 200, 100, 2)];
+    const out = computeMasonryLayout({
+      items,
+      containerWidth: 300,
+      minItemWidth: 100,
+      columnGap: 0,
+      verticalGap: 0,
+      columnCountOverride: 3,
+    });
+    const spanned = out.placements.find((p) => p.itemData.id === 2)!;
+    expect(spanned.colSpan).toBe(2);
+    expect(spanned.x).toBe(100); // starts at column 1, not column 0
+    expect(spanned.y).toBe(0); // columns 1-2 were both empty
+  });
+
+  it("clamps a requested span to the available column count", () => {
+    const out = computeMasonryLayout({
+      items: [tile(1, 100, 100, 99)],
+      containerWidth: 300,
+      minItemWidth: 100,
+      columnGap: 0,
+      verticalGap: 0,
+      columnCountOverride: 3,
+    });
+    expect(out.placements[0].colSpan).toBe(3);
+  });
+
+  it("consults spanOverrides ahead of the item's persisted manualColSpan for live drag preview", () => {
+    const out = computeMasonryLayout({
+      items: [tile(1, 200, 100, 1)],
+      containerWidth: 300,
+      minItemWidth: 100,
+      columnGap: 0,
+      verticalGap: 0,
+      columnCountOverride: 3,
+      spanOverrides: { 1: 3 },
+    });
+    expect(out.placements[0].colSpan).toBe(3);
+  });
+
+  it("defaults colSpan to 1 for items with no manualColSpan set", () => {
+    const out = computeMasonryLayout({
+      items: [tile(1, 100, 100)],
+      containerWidth: 300,
+      minItemWidth: 100,
+      columnGap: 0,
+      verticalGap: 0,
+      columnCountOverride: 3,
+    });
+    expect(out.placements[0].colSpan).toBe(1);
+  });
+
+  it("exposes columnWidth on the output for the resize handle's drag-delta math", () => {
+    const out = computeMasonryLayout({
+      items: [],
+      containerWidth: 300,
+      minItemWidth: 100,
+      columnGap: 0,
+      verticalGap: 0,
+      columnCountOverride: 3,
+    });
+    expect(out.columnWidth).toBe(100);
   });
 });

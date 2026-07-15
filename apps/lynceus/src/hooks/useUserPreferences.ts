@@ -12,7 +12,7 @@ import { useEffect, useState, useCallback } from "react";
  */
 
 export type ThemeMode = "system" | "dark" | "light";
-export type SortMode = "shuffle" | "name" | "added";
+export type SortMode = "shuffle" | "name" | "added" | "custom";
 export type AnimationLevel = "off" | "subtle" | "standard";
 export type TagFilterMode = "any" | "all";
 

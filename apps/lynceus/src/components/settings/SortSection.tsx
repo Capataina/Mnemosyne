@@ -23,11 +23,18 @@ export function SortSection() {
           { value: "shuffle", label: "Shuffle" },
           { value: "name", label: "Name" },
           { value: "added", label: "Added" },
+          { value: "custom", label: "Custom" },
         ] satisfies Array<{
           value: SortMode;
           label: string;
         }>}
       />
+      {prefs.sortMode === "custom" && (
+        <p className="mt-2 text-xs text-muted-foreground">
+          Drag any tile to reorder. Only available on the full, unfiltered
+          library — clear any search or tag filter first.
+        </p>
+      )}
     </Section>
   );
 }

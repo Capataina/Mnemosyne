@@ -27,7 +27,29 @@ interface MasonryProps {
   tileScale?: number;
   /** Forwarded to MasonryItem to control 3D tilt magnitude. */
   animationLevel?: "off" | "subtle" | "standard";
+  /**
+   * Enables drag-to-reorder. Callers gate this to "custom" sort mode
+   * on the full unfiltered catalogue — see SortSection's copy — since
+   * a partial/filtered reorder can't be persisted unambiguously (see
+   * `setManualOrder`'s doc comment in services/images.ts).
+   */
+  reorderEnabled?: boolean;
+  /** Fired once, on drop, with the complete new id ordering. */
+  onReorder?: (orderedIds: number[]) => void;
+  /**
+   * Fired once, on release, with the item's new column span.
+   * `null` means "back to the default single-column width".
+   * Resize is independent of sort mode — it's a per-image property
+   * the grid honours under any sort order.
+   */
+  onResizeCommit?: (itemId: number, colSpan: number | null) => void;
 }
+
+/** Pixels of pointer movement before a pointer-down-on-a-tile counts
+ *  as a drag rather than a click. Below this, releasing still fires
+ *  the normal onItemClick — matches how every other drag-to-reorder
+ *  UI disambiguates a click from a drag start. */
+const DRAG_THRESHOLD_PX = 6;
 
 /**
  * Pixels of overscan above and below the viewport. Items inside this
@@ -83,13 +105,52 @@ export default function Masonry(props: MasonryProps) {
   const mountStartedAt = useRef<number>(performance.now());
   const firstPaintLogged = useRef<boolean>(false);
 
+  // --- Drag-to-reorder state ---------------------------------------
+  // `workingOrder` is a locally-reordered copy of props.items, live
+  // only while a drag is in flight, so the grid re-flows in real time
+  // without waiting for the persisted order to round-trip through the
+  // backend. Null outside a drag, at which point layout falls back to
+  // props.items directly.
+  const [dragItemId, setDragItemId] = useState<number | null>(null);
+  const [workingOrder, setWorkingOrder] = useState<ImageItem[] | null>(null);
+  const dragStartPosRef = useRef<{ x: number; y: number } | null>(null);
+  const dragMovedRef = useRef(false);
+  // Consumed by the click handler right after a drag's pointerup to
+  // swallow the click event that naturally follows — otherwise every
+  // completed drag would also re-select/navigate to the dropped tile.
+  const suppressNextClickRef = useRef(false);
+
+  // --- Drag-to-resize state ------------------------------------------
+  const [resizeState, setResizeState] = useState<{
+    id: number;
+    startX: number;
+    baseSpan: number;
+    previewSpan: number;
+  } | null>(null);
+
+  // Refs mirroring the latest committed layout output, read (not
+  // subscribed to) by the pointermove handlers below so those
+  // handlers don't need to be re-created — and their listeners
+  // re-subscribed — on every single pointer-move tick.
+  const itemsRef = useRef<MasonryItemData[]>([]);
+  const workingOrderRef = useRef<ImageItem[] | null>(null);
+  const resizeStateRef = useRef(resizeState);
+  const columnWidthRef = useRef(0);
+  const columnCountRef = useRef(0);
+  workingOrderRef.current = workingOrder;
+  resizeStateRef.current = resizeState;
+
   const refreshLayout = useCallback(() => {
     if (!containerRef.current) return;
-    if (!props.items) return;
+    const effectiveItems = workingOrder ?? props.items;
+    if (!effectiveItems) return;
 
     const width = containerRef.current.clientWidth;
+    const spanOverrides = resizeState
+      ? { [resizeState.id]: resizeState.previewSpan }
+      : undefined;
     const out = computeMasonryLayout({
-      items: props.items,
+      items: effectiveItems,
       selectedItem: props.selectedItem ?? null,
       containerWidth: width,
       minItemWidth: props.minItemWidth,
@@ -97,10 +158,14 @@ export default function Masonry(props: MasonryProps) {
       verticalGap: props.verticalGap,
       columnCountOverride: props.columnCountOverride,
       tileScale: props.tileScale,
+      spanOverrides,
     });
 
     setHeight(out.height);
     setItems(out.placements);
+    itemsRef.current = out.placements;
+    columnWidthRef.current = out.columnWidth;
+    columnCountRef.current = out.columnCount;
   }, [
     props.items,
     props.selectedItem,
@@ -109,6 +174,8 @@ export default function Masonry(props: MasonryProps) {
     props.minItemWidth,
     props.columnCountOverride,
     props.tileScale,
+    workingOrder,
+    resizeState,
   ]);
 
   const refreshLayoutDebounced = useMemo(() => {
@@ -126,6 +193,153 @@ export default function Masonry(props: MasonryProps) {
   useEffect(() => {
     refreshLayout();
   }, [props.items, props.selectedItem, refreshLayout]);
+
+  // --- Drag-to-reorder pointer handling -------------------------------
+  //
+  // Custom pointer-based drag rather than native HTML5 DnD: native DnD
+  // fights the framer-motion `layout` animation already on MasonryItem
+  // (its ghost-image drag preview and dragover reflow model don't
+  // compose with layout-animated absolutely-positioned tiles). Pointer
+  // events give full control over the live re-flow preview instead.
+  const handleDragHandlePointerDown = useCallback(
+    (itemId: number, e: React.PointerEvent<HTMLDivElement>) => {
+      if (!props.reorderEnabled) return;
+      dragStartPosRef.current = { x: e.clientX, y: e.clientY };
+      dragMovedRef.current = false;
+      setDragItemId(itemId);
+    },
+    [props.reorderEnabled],
+  );
+
+  useEffect(() => {
+    if (dragItemId === null) return;
+
+    const handleMove = (e: PointerEvent) => {
+      const start = dragStartPosRef.current;
+      const container = containerRef.current;
+      if (!start || !container) return;
+
+      if (!dragMovedRef.current) {
+        const dx = e.clientX - start.x;
+        const dy = e.clientY - start.y;
+        if (Math.hypot(dx, dy) < DRAG_THRESHOLD_PX) return;
+        dragMovedRef.current = true;
+      }
+
+      const rect = container.getBoundingClientRect();
+      const localX = e.clientX - rect.left;
+      const localY = e.clientY - rect.top;
+
+      // Hit-test against the full placement list (not the
+      // viewport-culled subset) so a hover target just outside the
+      // visible band during a fast drag still registers.
+      const hovered = itemsRef.current.find(
+        (p) =>
+          p.itemData.id !== dragItemId &&
+          localX >= p.x &&
+          localX <= p.x + p.width &&
+          localY >= p.y &&
+          localY <= p.y + p.height,
+      );
+      if (!hovered) return;
+
+      const base = workingOrderRef.current ?? props.items ?? [];
+      const fromIndex = base.findIndex((i) => i.id === dragItemId);
+      const toIndex = base.findIndex((i) => i.id === hovered.itemData.id);
+      if (fromIndex === -1 || toIndex === -1 || fromIndex === toIndex) return;
+
+      const next = base.slice();
+      const [moved] = next.splice(fromIndex, 1);
+      next.splice(toIndex, 0, moved);
+      setWorkingOrder(next);
+    };
+
+    const handleUp = () => {
+      if (dragMovedRef.current) {
+        suppressNextClickRef.current = true;
+        const finalOrder = workingOrderRef.current;
+        if (finalOrder) {
+          props.onReorder?.(finalOrder.map((i) => i.id));
+        }
+      }
+      setDragItemId(null);
+      setWorkingOrder(null);
+      dragStartPosRef.current = null;
+      dragMovedRef.current = false;
+    };
+
+    window.addEventListener("pointermove", handleMove);
+    window.addEventListener("pointerup", handleUp, { once: true });
+    return () => {
+      window.removeEventListener("pointermove", handleMove);
+      window.removeEventListener("pointerup", handleUp);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dragItemId]);
+
+  const handleItemClick = useCallback(
+    (item: ImageItem) => {
+      if (suppressNextClickRef.current) {
+        suppressNextClickRef.current = false;
+        return;
+      }
+      props.onItemClick(item);
+    },
+    [props.onItemClick],
+  );
+
+  // --- Drag-to-resize pointer handling --------------------------------
+  const handleResizeHandlePointerDown = useCallback(
+    (itemId: number, e: React.PointerEvent<HTMLDivElement>) => {
+      const current = itemsRef.current.find((p) => p.itemData.id === itemId);
+      const baseSpan = current?.colSpan ?? 1;
+      setResizeState({
+        id: itemId,
+        startX: e.clientX,
+        baseSpan,
+        previewSpan: baseSpan,
+      });
+    },
+    [],
+  );
+
+  const resizingId = resizeState?.id ?? null;
+
+  useEffect(() => {
+    if (resizingId === null) return;
+
+    const handleMove = (e: PointerEvent) => {
+      const state = resizeStateRef.current;
+      if (!state) return;
+      const colWidth = columnWidthRef.current || 1;
+      const maxSpan = Math.max(1, columnCountRef.current);
+      const dx = e.clientX - state.startX;
+      const spanDelta = Math.round(dx / colWidth);
+      const nextSpan = Math.max(1, Math.min(state.baseSpan + spanDelta, maxSpan));
+      if (nextSpan !== state.previewSpan) {
+        setResizeState({ ...state, previewSpan: nextSpan });
+      }
+    };
+
+    const handleUp = () => {
+      const state = resizeStateRef.current;
+      if (state) {
+        props.onResizeCommit?.(
+          state.id,
+          state.previewSpan === 1 ? null : state.previewSpan,
+        );
+      }
+      setResizeState(null);
+    };
+
+    window.addEventListener("pointermove", handleMove);
+    window.addEventListener("pointerup", handleUp, { once: true });
+    return () => {
+      window.removeEventListener("pointermove", handleMove);
+      window.removeEventListener("pointerup", handleUp);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [resizingId]);
 
   // Scroll-driven viewport tracking. We compute the visible band in
   // container-local coordinates so the cull predicate is just a
@@ -231,13 +445,15 @@ export default function Masonry(props: MasonryProps) {
     return items.filter((p) => {
       // Selected hero card always renders so it's never culled out
       // from under the modal/promotion logic, regardless of where
-      // the user has scrolled.
-      if (p.isSelected) return true;
+      // the user has scrolled. Same for the tile currently being
+      // dragged — its position moves live during the drag and must
+      // never flicker out from under the pointer.
+      if (p.isSelected || p.itemData.id === dragItemId) return true;
       const top = p.y;
       const bottom = p.y + p.height;
       return bottom >= viewport.top && top <= viewport.bottom;
     });
-  }, [items, viewport.top, viewport.bottom]);
+  }, [items, viewport.top, viewport.bottom, dragItemId]);
 
   return (
     <div ref={containerRef} className="w-full relative" style={{ height }}>
@@ -247,12 +463,12 @@ export default function Masonry(props: MasonryProps) {
           x={item.x}
           y={item.y}
           width={item.width}
-          onTop={item.isSelected || false}
+          onTop={item.isSelected || item.itemData.id === dragItemId || false}
         >
           <MasonryItem
             item={item.itemData}
             isSelected={item.isSelected}
-            onClick={props.onItemClick}
+            onClick={handleItemClick}
             // Virtualisation note: the previous animationDelay used
             // the item's index in the full list, which produced a
             // pleasing left-to-right cascade on first mount. Under
@@ -263,6 +479,15 @@ export default function Masonry(props: MasonryProps) {
             // instead so freshly-mounted tiles fade in promptly.
             animationDelay={0}
             animationLevel={props.animationLevel}
+            reorderEnabled={props.reorderEnabled}
+            isDragging={item.itemData.id === dragItemId}
+            onDragHandlePointerDown={(e) =>
+              handleDragHandlePointerDown(item.itemData.id, e)
+            }
+            isResizing={item.itemData.id === resizingId}
+            onResizeHandlePointerDown={(e) =>
+              handleResizeHandlePointerDown(item.itemData.id, e)
+            }
           />
         </MasonryAnchor>
       ))}

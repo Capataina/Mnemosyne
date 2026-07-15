@@ -15,6 +15,7 @@ use std::sync::{Mutex, OnceLock};
 
 mod embeddings;
 pub mod images_query;
+mod manual_layout;
 mod notes_orphans;
 mod roots;
 mod schema_migrations;

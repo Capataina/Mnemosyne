@@ -30,3 +30,30 @@ pub fn get_images(
 pub fn get_pipeline_stats(db: State<'_, ImageDatabase>) -> Result<PipelineStats, ApiError> {
     Ok(db.get_pipeline_stats()?)
 }
+
+/// Persist a drag-reorder. The frontend sends the FULL new ordering of
+/// whatever it currently has in view (only offered in the "custom"
+/// sort mode on the unfiltered catalogue — see masonryPacking's
+/// consumer for why a partial/filtered reorder isn't exposed), and
+/// this rewrites every row's `manual_order` as a fresh 0..N-1
+/// sequence in one transaction.
+#[tauri::command]
+#[tracing::instrument(name = "ipc.set_manual_order", skip(db), fields(count = ordered_ids.len()))]
+pub fn set_manual_order(
+    db: State<'_, ImageDatabase>,
+    ordered_ids: Vec<ID>,
+) -> Result<(), ApiError> {
+    Ok(db.set_manual_order(&ordered_ids)?)
+}
+
+/// Persist a drag-resize. `col_span` of `None` clears back to the
+/// default single-column width.
+#[tauri::command]
+#[tracing::instrument(name = "ipc.set_manual_col_span", skip(db))]
+pub fn set_manual_col_span(
+    db: State<'_, ImageDatabase>,
+    id: ID,
+    col_span: Option<i64>,
+) -> Result<(), ApiError> {
+    Ok(db.set_manual_col_span(id, col_span)?)
+}

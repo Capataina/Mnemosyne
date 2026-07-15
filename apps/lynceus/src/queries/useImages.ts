@@ -4,6 +4,8 @@ import {
   assignTagToImage,
   fetchImages,
   removeTagFromImage,
+  setManualColSpan,
+  setManualOrder,
   type SortMode,
 } from "../services/images";
 
@@ -73,6 +75,77 @@ export function useAssignTagToImage() {
             )
         );
       }
+
+      return { prevImages };
+    },
+
+    onError: (_err, _vars, context) => {
+      if (context?.prevImages) {
+        queryClient.setQueryData(["images"], context.prevImages);
+      }
+    },
+  });
+}
+
+/**
+ * Persist a drag-reorder. Optimistically stamps `manualOrder` on the
+ * cached images so "custom" sort mode's re-sort keeps the just-dropped
+ * order immediately — without this, the grid would snap back to the
+ * pre-drag order for one frame while the mutation round-trips.
+ */
+export function useSetManualOrder() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (orderedIds: number[]) => setManualOrder(orderedIds),
+
+    onMutate: async (orderedIds) => {
+      await queryClient.cancelQueries({ queryKey: ["images"] });
+      const prevImages = queryClient.getQueryData(["images"]);
+
+      const positionById = new Map(orderedIds.map((id, i) => [id, i]));
+      queryClient.setQueriesData<ImageItem[]>(
+        { queryKey: ["images"], exact: false },
+        (old = []) =>
+          old.map((img) =>
+            positionById.has(img.id)
+              ? { ...img, manualOrder: positionById.get(img.id) }
+              : img,
+          ),
+      );
+
+      return { prevImages };
+    },
+
+    onError: (_err, _vars, context) => {
+      if (context?.prevImages) {
+        queryClient.setQueryData(["images"], context.prevImages);
+      }
+    },
+  });
+}
+
+/** Persist a drag-resize. Same optimistic-stamp reasoning as above. */
+export function useSetManualColSpan() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (params: { imageId: number; colSpan: number | null }) =>
+      setManualColSpan(params.imageId, params.colSpan),
+
+    onMutate: async (params) => {
+      await queryClient.cancelQueries({ queryKey: ["images"] });
+      const prevImages = queryClient.getQueryData(["images"]);
+
+      queryClient.setQueriesData<ImageItem[]>(
+        { queryKey: ["images"], exact: false },
+        (old = []) =>
+          old.map((img) =>
+            img.id === params.imageId
+              ? { ...img, manualColSpan: params.colSpan }
+              : img,
+          ),
+      );
 
       return { prevImages };
     },

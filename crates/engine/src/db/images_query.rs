@@ -74,8 +74,25 @@ pub struct EncoderEmbeddingCount {
 /// across the four LEFT-JOIN-aggregate callers. A type alias makes the
 /// shape grep-able and clippy-clean without forcing a struct (which
 /// would require updating every destructure site).
-type AggregatedRow = (ID, String, Vec<Tag>, Option<String>, Option<i64>, Option<i64>);
-type AggregatedValue = (String, Vec<Tag>, Option<String>, Option<i64>, Option<i64>);
+type AggregatedRow = (
+    ID,
+    String,
+    Vec<Tag>,
+    Option<String>,
+    Option<i64>,
+    Option<i64>,
+    Option<i64>,
+    Option<i64>,
+);
+type AggregatedValue = (
+    String,
+    Vec<Tag>,
+    Option<String>,
+    Option<i64>,
+    Option<i64>,
+    Option<i64>,
+    Option<i64>,
+);
 
 fn aggregate_image_rows(
     rows: &mut rusqlite::Rows<'_>,
@@ -87,6 +104,8 @@ fn aggregate_image_rows(
         let thumbnail_path: Option<String> = row.get("thumbnail_path")?;
         let width: Option<i64> = row.get("width")?;
         let height: Option<i64> = row.get("height")?;
+        let manual_order: Option<i64> = row.get("manual_order")?;
+        let manual_col_span: Option<i64> = row.get("manual_col_span")?;
         let tag_id_opt: Option<ID> = row.get("tag_id")?;
 
         let entry = map.entry(img_id).or_insert((
@@ -95,6 +114,8 @@ fn aggregate_image_rows(
             thumbnail_path,
             width,
             height,
+            manual_order,
+            manual_col_span,
         ));
         if let Some(tag_id) = tag_id_opt {
             entry.1.push(Tag {
@@ -106,7 +127,7 @@ fn aggregate_image_rows(
     }
     Ok(map
         .into_iter()
-        .map(|(id, (path, tags, tp, w, h))| (id, path, tags, tp, w, h))
+        .map(|(id, (path, tags, tp, w, h, mo, mcs))| (id, path, tags, tp, w, h, mo, mcs))
         .collect())
 }
 
@@ -129,6 +150,7 @@ impl ImageDatabase {
             format!(
                 "SELECT images.id AS img_id, images.path AS img_path,
                 NULL AS thumbnail_path, NULL AS width, NULL AS height,
+                NULL AS manual_order, NULL AS manual_col_span,
                 tags.id AS tag_id, tags.name AS tag_name, tags.color AS tag_color
                 FROM images
                 LEFT JOIN images_tags ON images.id = images_tags.image_id
@@ -144,6 +166,7 @@ impl ImageDatabase {
         } else {
             "SELECT images.id AS img_id, images.path AS img_path,
             NULL AS thumbnail_path, NULL AS width, NULL AS height,
+            NULL AS manual_order, NULL AS manual_col_span,
             tags.id AS tag_id, tags.name AS tag_name, tags.color AS tag_color
             FROM images
             LEFT JOIN images_tags ON images.id = images_tags.image_id
@@ -156,7 +179,7 @@ impl ImageDatabase {
 
         let mut images: Vec<ImageData> = aggregated
             .into_iter()
-            .map(|(id, path, tags, _tp, _w, _h)| {
+            .map(|(id, path, tags, _tp, _w, _h, _mo, _mcs)| {
                 ImageData::new(id, std::path::Path::new(&path), tags)
             })
             .collect();
@@ -175,6 +198,7 @@ impl ImageDatabase {
         let mut stmt = conn.prepare(
             "SELECT images.id AS img_id, images.path AS img_path,
             NULL AS thumbnail_path, NULL AS width, NULL AS height,
+            NULL AS manual_order, NULL AS manual_col_span,
             tags.id AS tag_id, tags.name AS tag_name, tags.color AS tag_color
             FROM images
             LEFT JOIN images_tags ON images.id = images_tags.image_id
@@ -186,7 +210,7 @@ impl ImageDatabase {
 
         let mut images: Vec<ImageData> = aggregated
             .into_iter()
-            .map(|(id, path, tags, _tp, _w, _h)| {
+            .map(|(id, path, tags, _tp, _w, _h, _mo, _mcs)| {
                 ImageData::new(id, std::path::Path::new(&path), tags)
             })
             .collect();
@@ -201,6 +225,7 @@ impl ImageDatabase {
         let mut stmt = conn.prepare(
             "SELECT images.id AS img_id, images.path AS img_path,
             images.thumbnail_path, images.width, images.height,
+            NULL AS manual_order, NULL AS manual_col_span,
             tags.id AS tag_id, tags.name AS tag_name, tags.color AS tag_color
             FROM images
             LEFT JOIN images_tags ON images.id = images_tags.image_id
@@ -216,7 +241,7 @@ impl ImageDatabase {
         // returns them anyway because its contract is uniform.
         let mut images: Vec<ImageData> = aggregated
             .into_iter()
-            .map(|(id, path, tags, _tp, _w, _h)| {
+            .map(|(id, path, tags, _tp, _w, _h, _mo, _mcs)| {
                 ImageData::new(id, std::path::Path::new(&path), tags)
             })
             .collect();
@@ -304,6 +329,7 @@ impl ImageDatabase {
                 format!(
                     "SELECT images.id AS img_id, images.path AS img_path,
                     images.thumbnail_path, images.width, images.height,
+                    images.manual_order, images.manual_col_span,
                     tags.id AS tag_id, tags.name AS tag_name, tags.color AS tag_color
                     FROM images
                     LEFT JOIN images_tags ON images.id = images_tags.image_id
@@ -322,6 +348,7 @@ impl ImageDatabase {
                 format!(
                     "SELECT images.id AS img_id, images.path AS img_path,
                     images.thumbnail_path, images.width, images.height,
+                    images.manual_order, images.manual_col_span,
                     tags.id AS tag_id, tags.name AS tag_name, tags.color AS tag_color
                     FROM images
                     LEFT JOIN images_tags ON images.id = images_tags.image_id
@@ -339,6 +366,7 @@ impl ImageDatabase {
             format!(
                 "SELECT images.id AS img_id, images.path AS img_path,
                 images.thumbnail_path, images.width, images.height,
+                images.manual_order, images.manual_col_span,
                 tags.id AS tag_id, tags.name AS tag_name, tags.color AS tag_color
                 FROM images
                 LEFT JOIN images_tags ON images.id = images_tags.image_id
@@ -379,11 +407,13 @@ impl ImageDatabase {
                 tracing::info_span!("get_images.materialise").entered();
             let mut images: Vec<ImageData> = aggregated
                 .into_iter()
-                .map(|(id, path, tags, thumbnail_path, width, height)| {
+                .map(|(id, path, tags, thumbnail_path, width, height, manual_order, manual_col_span)| {
                     let mut img = ImageData::new(id, std::path::Path::new(&path), tags);
                     img.thumbnail_path = thumbnail_path;
                     img.width = width.map(|w| w as u32);
                     img.height = height.map(|h| h as u32);
+                    img.manual_order = manual_order;
+                    img.manual_col_span = manual_col_span;
                     img
                 })
                 .collect();

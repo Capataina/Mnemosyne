@@ -236,23 +236,44 @@ impl ClipImageEncoder {
         let (data, _offset) = input_array.into_raw_vec_and_offset();
         let onnx_input: Tensor<f32> = Tensor::from_array((shape, data))?;
 
-        // Separate `vision_model.onnx` takes ONLY `pixel_values`. The
+        // OpenCLIP `visual/model.onnx` (immich-app export) takes ONLY
+        // `image` (renamed from the old Xenova export's `pixel_values`)
+        // and returns `embedding` (renamed from `image_embeds`). The
         // previous combined-graph model required dummy text inputs;
         // those are gone now that we use the split export.
         let outputs = self.session.run(ort::inputs![
-            "pixel_values" => onnx_input
+            "image" => onnx_input
         ])?;
 
-        let dyn_tensor: &Value<_> = &outputs["image_embeds"];
+        let dyn_tensor: &Value<_> = &outputs["embedding"];
         let (_out_shape, data_view) = dyn_tensor.try_extract_tensor::<f32>()?;
         let embedding = data_view.to_vec();
 
         // L2-normalize so cosine similarity is well-conditioned.
-        // Xenova's vision_model.onnx outputs the post-projection
+        // OpenCLIP's visual/model.onnx outputs the post-projection
         // embedding without normalization.
         Ok(super::encoder_text::pooling::normalize(&embedding))
     }
 
+    /// Encode multiple images. Named `encode_batch` for API parity with
+    /// the other encoders, but the OpenCLIP `visual/model.onnx` export
+    /// (immich-app) declares a **fixed** batch dimension of 1 on its
+    /// `image` input (`onnx.load(...).graph.input[0].type.tensor_type
+    /// .shape.dim[0].dim_value == 1`, not a dynamic `dim_param`) — the
+    /// old Xenova export this replaced had a dynamic batch dim, so the
+    /// true-batched `[N, 3, 224, 224]` tensor call this function used
+    /// to make worked there and fails here with ORT's "Got invalid
+    /// dimensions for input: image". That failure was silent from the
+    /// indexing pipeline's point of view: `encode_batch` returned
+    /// `Err`, the whole chunk was recorded in `failed_paths`, and
+    /// nothing surfaced past a batch-summary diagnostic that only
+    /// writes when `--profiling` is on — so CLIP silently produced
+    /// zero embeddings while DINOv2 and SigLIP-2 (dynamic-batch
+    /// exports) encoded normally. Fix: run one `[1, 3, 224, 224]`
+    /// inference per image, same shape `encode()` already uses
+    /// successfully. Preprocessing still happens in chunks of 32 to
+    /// bound peak memory on large libraries; only the ONNX call
+    /// stopped trying to batch.
     #[tracing::instrument(name = "clip.encode_image_batch", skip(self, image_paths), fields(batch = image_paths.len()))]
     pub fn encode_batch(
         &mut self,
@@ -262,8 +283,6 @@ impl ClipImageEncoder {
             return Ok(Vec::new());
         }
 
-        // Preprocessing happens in chunks of 32 to bound peak memory
-        // usage on libraries with thousands of images.
         let preprocessing_batch_size = 32;
         let batched_arrays = self.batch_preprocess_image(image_paths, preprocessing_batch_size)?;
 
@@ -272,27 +291,22 @@ impl ClipImageEncoder {
         for batch_array in batched_arrays {
             let batch_size = batch_array.shape()[0];
 
-            let shape = [batch_size, 3, 224, 224];
-            let (data, _offset) = batch_array.into_raw_vec_and_offset();
-            let onnx_input: Tensor<f32> = Tensor::from_array((shape, data))?;
-
-            // Separate vision_model.onnx — only pixel_values input.
-            let outputs = self.session.run(ort::inputs![
-                "pixel_values" => onnx_input
-            ])?;
-
-            let dyn_tensor: &Value<_> = &outputs["image_embeds"];
-            let (out_shape, data_view) = dyn_tensor.try_extract_tensor::<f32>()?;
-
-            let data_slice = data_view.to_vec();
-            let embedding_size = out_shape[1] as usize;
-
             for i in 0..batch_size {
-                let start = i * embedding_size;
-                let end = start + embedding_size;
-                let raw = data_slice[start..end].to_vec();
-                // L2-normalize so cosine is well-conditioned.
-                all_embeddings.push(super::encoder_text::pooling::normalize(&raw));
+                let single = batch_array
+                    .index_axis(ndarray::Axis(0), i)
+                    .to_owned()
+                    .insert_axis(ndarray::Axis(0));
+                let shape = [1usize, 3, 224, 224];
+                let (data, _offset) = single.into_raw_vec_and_offset();
+                let onnx_input: Tensor<f32> = Tensor::from_array((shape, data))?;
+
+                let outputs = self.session.run(ort::inputs![
+                    "image" => onnx_input
+                ])?;
+
+                let dyn_tensor: &Value<_> = &outputs["embedding"];
+                let (_out_shape, data_view) = dyn_tensor.try_extract_tensor::<f32>()?;
+                all_embeddings.push(super::encoder_text::pooling::normalize(data_view));
             }
         }
 

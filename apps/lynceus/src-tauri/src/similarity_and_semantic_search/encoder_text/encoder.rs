@@ -20,12 +20,14 @@ use crate::similarity_and_semantic_search::encoders::TextEncoder as TextEncoderT
 #[cfg(not(target_os = "macos"))]
 use ort::execution_providers::CUDAExecutionProvider;
 
-/// Text encoder for OpenAI CLIP ViT-B/32 (English-only).
+/// Text encoder for OpenCLIP ViT-B/32 (LAION-2B, English-only).
 ///
-/// Uses the SEPARATE `text_model.onnx` from
-/// `Xenova/clip-vit-base-patch32` — NOT the multilingual distillation
-/// (`sentence-transformers/clip-ViT-B-32-multilingual-v1`) we shipped
-/// previously. The multilingual model is in a different embedding
+/// Uses the SEPARATE `textual/model.onnx` from
+/// `immich-app/ViT-B-32__laion2b-s34b-b79k` (MIT) — swapped in from the
+/// non-commercial OpenAI CLIP weights for the App-Store-viable pivot.
+/// Not the multilingual distillation
+/// (`sentence-transformers/clip-ViT-B-32-multilingual-v1`) shipped even
+/// earlier. The multilingual model is in a different embedding
 /// space than the image encoder; using it for text→image search
 /// produced effectively-random rankings, which is the bug class
 /// "blue fish → Tristana" was an example of.
@@ -33,28 +35,39 @@ use ort::execution_providers::CUDAExecutionProvider;
 /// Tokenization: byte-level BPE via the HuggingFace `tokenizers`
 /// crate. The `tokenizer.json` carries the full normalization +
 /// special-tokens contract; `tokenizers` handles it all uniformly.
+/// The CLIP BPE vocab/merges are drop-in identical between the OpenAI
+/// export and this OpenCLIP one — only the weights and the ONNX I/O
+/// node names changed.
 ///
 /// Inputs:
-///   - `input_ids` [1, 77] int64 — ONLY input. The Xenova
-///     `text_model.onnx` export bakes the causal/padding mask into
-///     the graph from the input_ids themselves (it knows the pad
-///     token is 49407 = EOS, and treats positions after the first
-///     EOS as padding). Passing `attention_mask` errors with
-///     "Invalid input name: attention_mask" at session.run time.
-///     We still pad with id 49407 to fixed length 77; the model
-///     handles the mask internally.
-/// Output: `text_embeds` [1, 512] f32 (post-projection, post-LN)
+///   - `text` [1, 77] int64 — ONLY input. Named `input_ids` on the
+///     old Xenova/OpenAI export this replaced; the immich-app OpenCLIP
+///     export renamed the input node to `text`. Passing `input_ids`
+///     against this model errors with "Invalid input name: input_ids"
+///     at session.run time — the mirror image of the old export's
+///     `attention_mask` foot-gun. Like the old export, the
+///     causal/padding mask is baked into the graph from the input
+///     positions themselves (pad token 49407 = EOS; positions after
+///     the first EOS are treated as padding) — there is no separate
+///     mask input to pass.
+/// Output: `embedding` [1, 512] f32 (post-projection, post-LN).
+/// Named `text_embeds` on the old export; renamed on this one.
 /// L2-normalised before returning.
 pub struct ClipTextEncoder {
     session: Session,
     tokenizer: Tokenizer,
     max_seq_length: usize,
-    pad_token_id: i64,
+    pad_token_id: i32,
 }
 
 /// OpenAI CLIP padding token. Verified from `Xenova/clip-vit-base-patch32`
 /// `tokenizer_config.json`: `pad_token = <|endoftext|>` with id 49407.
-const CLIP_PAD_TOKEN_ID: i64 = 49407;
+/// `i32` because the OpenCLIP `textual/model.onnx` export's `text`
+/// input is `tensor(int32)` — the old Xenova export's `input_ids` was
+/// `tensor(int64)`; passing an int64 tensor to this model errors with
+/// "Unexpected input data type" at `session.run` time. Confirmed via
+/// runtime error against the real downloaded model, not assumed.
+const CLIP_PAD_TOKEN_ID: i32 = 49407;
 const CLIP_MAX_SEQ_LENGTH: usize = 77;
 
 impl ClipTextEncoder {
@@ -171,15 +184,15 @@ impl ClipTextEncoder {
     }
 
     /// Tokenize + pad/truncate to `max_seq_length`. Returns the
-    /// fixed-length `input_ids` only — the Xenova `text_model.onnx`
+    /// fixed-length token ids only — the OpenCLIP `textual/model.onnx`
     /// export does not accept an attention_mask input (the mask is
     /// derived inside the graph from the pad-token positions).
-    fn tokenize_and_pad(&self, text: &str) -> Result<Vec<i64>, Box<dyn Error>> {
+    fn tokenize_and_pad(&self, text: &str) -> Result<Vec<i32>, Box<dyn Error>> {
         let encoded = self
             .tokenizer
             .encode(text, true)
             .map_err(|e| format!("CLIP tokenize failed: {e}"))?;
-        let mut ids: Vec<i64> = encoded.get_ids().iter().map(|&i| i as i64).collect();
+        let mut ids: Vec<i32> = encoded.get_ids().iter().map(|&i| i as i32).collect();
 
         // Truncate or pad to exactly max_seq_length. Pad token = 49407
         // (= EOS = endoftext in OpenAI CLIP). The model recognises
@@ -201,20 +214,21 @@ impl ClipTextEncoder {
     pub fn encode(&mut self, text: &str) -> Result<Vec<f32>, Box<dyn Error>> {
         let input_ids = self.tokenize_and_pad(text)?;
 
-        // Create the input tensor with shape [1, max_seq_length].
-        let input_ids_tensor: Tensor<i64> =
+        // Create the input tensor with shape [1, max_seq_length]. i32,
+        // not i64 — see the CLIP_PAD_TOKEN_ID doc comment above.
+        let input_ids_tensor: Tensor<i32> =
             Tensor::from_array(([1usize, self.max_seq_length], input_ids))?;
 
-        // OpenAI CLIP text_model.onnx (Xenova export):
-        //   input:  input_ids ONLY — see the type-level comment above
-        //           for why attention_mask is not accepted here.
-        //   outputs: text_embeds [1, 512] (post-projection), last_hidden_state
+        // OpenCLIP textual/model.onnx (immich-app export):
+        //   input:  `text` ONLY — see the type-level comment above for
+        //           the rename from the old export's `input_ids`.
+        //   output: `embedding` [1, 512] (post-projection). Try a few
+        //           older/alternate names too so a future export swap
+        //           degrades to a clear error instead of a silent one.
         let outputs = self.session.run(ort::inputs![
-            "input_ids" => input_ids_tensor
+            "text" => input_ids_tensor
         ])?;
 
-        // Try `text_embeds` first (joint-space, post-projection). Fall
-        // back to other names if a future export renames the output.
         let extract = |name: &str| -> Option<Vec<f32>> {
             outputs.get(name).and_then(|t| {
                 t.try_extract_tensor::<f32>()
@@ -222,13 +236,14 @@ impl ClipTextEncoder {
                     .map(|(_, view)| view.to_vec())
             })
         };
-        let raw = extract("text_embeds")
+        let raw = extract("embedding")
+            .or_else(|| extract("text_embeds"))
             .or_else(|| extract("pooler_output"))
             .or_else(|| extract("sentence_embedding"))
-            .ok_or("CLIP text: no recognised output name (expected text_embeds)")?;
+            .ok_or("CLIP text: no recognised output name (expected embedding)")?;
 
-        // L2-normalise so cosine is well-conditioned. The Xenova
-        // text_model.onnx outputs the post-projection embedding
+        // L2-normalise so cosine is well-conditioned. The OpenCLIP
+        // textual/model.onnx outputs the post-projection embedding
         // without normalization.
         Ok(normalize(&raw))
     }
@@ -241,18 +256,18 @@ impl ClipTextEncoder {
 
         let batch_size = texts.len();
 
-        let mut all_input_ids: Vec<i64> = Vec::with_capacity(batch_size * self.max_seq_length);
+        let mut all_input_ids: Vec<i32> = Vec::with_capacity(batch_size * self.max_seq_length);
 
         for text in texts {
             let ids = self.tokenize_and_pad(text)?;
             all_input_ids.extend(ids);
         }
 
-        let input_ids_tensor: Tensor<i64> =
+        let input_ids_tensor: Tensor<i32> =
             Tensor::from_array(([batch_size, self.max_seq_length], all_input_ids))?;
 
         let outputs = self.session.run(ort::inputs![
-            "input_ids" => input_ids_tensor
+            "text" => input_ids_tensor
         ])?;
 
         let extract = |name: &str| -> Option<(Vec<usize>, Vec<f32>)> {
@@ -263,7 +278,8 @@ impl ClipTextEncoder {
                 })
             })
         };
-        let (shape, data) = extract("text_embeds")
+        let (shape, data) = extract("embedding")
+            .or_else(|| extract("text_embeds"))
             .or_else(|| extract("pooler_output"))
             .ok_or("CLIP text batch: no recognised output name")?;
 

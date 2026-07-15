@@ -428,8 +428,14 @@ fn run_pipeline_inner(
         let last_emit_bucket = AtomicUsize::new(0);
         // Coalesce progress emits to roughly every 25 thumbnails
         // (across ALL workers combined) so a 1500-image run fires
-        // ~60 events rather than ~1500.
-        const EMIT_EVERY: usize = 25;
+        // ~60 events rather than ~1500. A fixed 25 meant any library
+        // under 25 images (the common case for a first test folder)
+        // never crossed a single bucket boundary before finishing —
+        // the badge would sit at "0 / N" for the whole phase and then
+        // jump straight to "N / N", which read as broken even though
+        // the work itself was fine. Scale the interval down for small
+        // totals so at least ~10 emits happen across the phase.
+        let emit_every = (total_thumbs / 10).clamp(1, 25);
 
         // Build a map from path -> root_id so each thumbnail lands in
         // the right per-root subfolder. Single SELECT — was N+1 before
@@ -467,7 +473,7 @@ fn run_pipeline_inner(
             }
 
             let done = completed.fetch_add(1, Ordering::Relaxed) + 1;
-            let bucket = done / EMIT_EVERY;
+            let bucket = done / emit_every;
             let prev = last_emit_bucket.load(Ordering::Relaxed);
             if bucket > prev
                 && last_emit_bucket

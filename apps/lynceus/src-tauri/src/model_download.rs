@@ -22,10 +22,15 @@
 //! preprocessing, identical 512-d output space — so only these two URLs
 //! changed, no encoder code.
 //!
-//! - **visual/model.onnx** (~352 MB) — input `pixel_values`
-//!   [1,3,224,224]; output `image_embeds` [1,512]
-//! - **textual/model.onnx** (~254 MB) — inputs `input_ids` +
-//!   `attention_mask` [1,77]; output `text_embeds` [1,512]
+//! - **visual/model.onnx** (~352 MB) — input `image` [1,3,224,224];
+//!   output `embedding` [1,512]. Renamed from the OpenAI/Xenova
+//!   export's `pixel_values` / `image_embeds` — this immich-app
+//!   export uses different ONNX I/O node names, verified directly
+//!   against the downloaded model (`onnx.load(...).graph.input`).
+//! - **textual/model.onnx** (~254 MB) — input `text` [1,77] ONLY
+//!   (no separate attention_mask — mask is baked into the graph from
+//!   the pad-token positions); output `embedding` [1,512]. Renamed
+//!   from `input_ids` / `text_embeds` on the old export.
 //! - **tokenizer.json** (~2 MB) — CLIP BPE byte-level, max 77 tokens, pad
 //!   with id 49407. Still mirrored from Xenova's OpenAI export; it is the
 //!   open_clip MIT vocab/merges in practice (not trained weights), but its
@@ -74,7 +79,7 @@ use crate::similarity_and_semantic_search::{encoder_dinov2, encoder_siglip2};
 // =====================================================================
 
 /// CLIP image encoder ONNX. OpenCLIP LAION-2B ViT-B/32 vision tower
-/// (MIT-licensed) — input `pixel_values`, output `image_embeds` [1,512].
+/// (MIT-licensed) — input `image`, output `embedding` [1,512].
 /// Replaces OpenAI's non-commercial weights for the commercial pivot.
 const CLIP_VISION_URL: &str =
     "https://huggingface.co/immich-app/ViT-B-32__laion2b-s34b-b79k/resolve/main/visual/model.onnx";

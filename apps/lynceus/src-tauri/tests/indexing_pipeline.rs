@@ -137,6 +137,78 @@ fn thumbnail_generator_produces_files_under_per_root_subdir() {
 }
 
 #[test]
+fn eager_buckets_are_written_capped_at_source_width() {
+    // Mirrors the index-time two-pass thumbnail flow: base first, then
+    // the eager larger-bucket pass. Asserts the on-disk bucket files
+    // exist exactly where they should — and, crucially, that a bucket
+    // whose width meets/exceeds the source width is NOT written (the
+    // original is served there, so no file), which is the get_thumbnail
+    // sizing contract.
+    let tmp = tempfile::tempdir().unwrap();
+    let thumb_dir = tmp.path().join("thumbnails");
+    fs::create_dir(&thumb_dir).unwrap();
+
+    // Base generator at the first bucket width (480), same as indexing.
+    let generator = ThumbnailGenerator::new(&thumb_dir, 480).unwrap();
+    let eager = [960u32, 1440, 2048];
+
+    // Three sources of decreasing width to exercise the cap:
+    //   big   (3000w) → all three buckets (960/1440/2048 all < source)
+    //   mid   (1500w) → 960 + 1440 only (2048 ≥ source → skipped)
+    //   small (700w)  → none (every bucket ≥ source → original served)
+    let big = tmp.path().join("big.jpg");
+    let mid = tmp.path().join("mid.jpg");
+    let small = tmp.path().join("small.jpg");
+    write_test_jpeg(&big, 3000, 2000);
+    write_test_jpeg(&mid, 1500, 1000);
+    write_test_jpeg(&small, 700, 500);
+
+    // Root None → files land flat under thumb_dir. Base then buckets,
+    // exactly as the pipeline's two passes run.
+    for (path, id) in [(&big, 1i64), (&mid, 2), (&small, 3)] {
+        generator.generate_thumbnail(path, id, None).unwrap();
+        let written = generator.generate_buckets(path, id, None, &eager).unwrap();
+        // big writes 3, mid writes 2, small writes 0 — the return count
+        // tracks the cap too.
+        let expected = match id {
+            1 => 3,
+            2 => 2,
+            _ => 0,
+        };
+        assert_eq!(written, expected, "bucket write count for id {id}");
+    }
+
+    let has = |name: &str| thumb_dir.join(name).exists();
+
+    // Base thumbnail exists for all three (pass 1).
+    assert!(has("thumb_1.jpg") && has("thumb_2.jpg") && has("thumb_3.jpg"));
+
+    // big (3000w): all three buckets.
+    assert!(has("thumb_1_960.jpg"), "big should have 960 bucket");
+    assert!(has("thumb_1_1440.jpg"), "big should have 1440 bucket");
+    assert!(has("thumb_1_2048.jpg"), "big should have 2048 bucket");
+
+    // mid (1500w): 960 + 1440, but NOT 2048 (2048 ≥ 1500 → original served).
+    assert!(has("thumb_2_960.jpg"), "mid should have 960 bucket");
+    assert!(has("thumb_2_1440.jpg"), "mid should have 1440 bucket");
+    assert!(
+        !has("thumb_2_2048.jpg"),
+        "mid must NOT have a 2048 bucket — it exceeds the source width"
+    );
+
+    // small (700w): no buckets — every bucket ≥ source width.
+    assert!(!has("thumb_3_960.jpg"), "small must NOT have a 960 bucket");
+    assert!(!has("thumb_3_1440.jpg"));
+    assert!(!has("thumb_3_2048.jpg"));
+
+    // Idempotent: a second eager pass writes nothing (all cached).
+    for (path, id) in [(&big, 1i64), (&mid, 2), (&small, 3)] {
+        let rewritten = generator.generate_buckets(path, id, None, &eager).unwrap();
+        assert_eq!(rewritten, 0, "second pass must be a pure cache hit for id {id}");
+    }
+}
+
+#[test]
 fn orphan_detection_marks_disappeared_files() {
     let (_tmp, db, root_path, _thumb_dir) = setup_workspace();
     let scanner = ImageScanner::new();

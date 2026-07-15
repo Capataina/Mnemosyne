@@ -273,6 +273,17 @@ export default function Home() {
     setManualColSpanMutation.mutate({ imageId: itemId, colSpan });
   };
 
+  // Wordmark → back to the main library feed from anywhere: clear any
+  // search / tag filter and any selected image, then navigate home. The
+  // entry effect re-shuffles the feed on the way back.
+  const handleGoHome = () => {
+    recordAction("go_home", { via: "wordmark" });
+    setSearchTags([]);
+    setSearchText("");
+    setIsInspecting(false);
+    navigate("/");
+  };
+
   const handleClose = () => {
     recordAction("image_close", { id: selectedItem?.id });
     setIsInspecting(false);
@@ -377,9 +388,15 @@ export default function Home() {
         <header className="chrome-surface sticky top-0 z-40 border-b">
           <div className="mx-auto flex h-[72px] w-full items-center gap-3 px-5 md:px-8 lg:gap-4 lg:px-10">
             <div className="hidden w-32 shrink-0 items-center xl:flex">
-              <span className="text-[15px] font-[650] tracking-[-0.035em] text-foreground">
+              <button
+                type="button"
+                onClick={handleGoHome}
+                aria-label="Lynceus — back to library"
+                title="Back to library"
+                className="cursor-pointer rounded-[8px] px-1 py-0.5 text-[15px] font-[650] tracking-[-0.035em] text-foreground transition-opacity hover:opacity-70 active:scale-[0.98]"
+              >
                 Lynceus
-              </span>
+              </button>
             </div>
 
             <div className="mx-auto min-w-0 max-w-3xl flex-1">

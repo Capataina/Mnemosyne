@@ -84,10 +84,15 @@ export const MasonryItem = memo(function MasonryItem(props: MasonryItemProps) {
     : adaptiveUrl ?? props.item.thumbnailUrl ?? props.item.url;
 
   const animationLevel = props.animationLevel ?? "standard";
+  // While THIS tile is being resized or dragged it must track the pointer
+  // 1:1 — framer-motion's layout animation would otherwise ease its box
+  // toward each new position/size, which reads as the tile lagging behind
+  // the cursor. Every other tile keeps `layout` for smooth reflow + pop-in.
+  const gestureActive = props.isDragging || props.activeResizeCorner != null;
 
   return (
     <motion.div
-      layout
+      layout={!gestureActive}
       transition={
         animationLevel === "off"
           ? { duration: 0 }

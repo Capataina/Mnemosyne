@@ -13,8 +13,12 @@ use crate::thumbnail::ThumbnailGenerator;
 /// these, so a tile stretched across two or three columns pulls a
 /// sharper file instead of upscaling the 480px base thumbnail. The first
 /// entry (480) is the base bucket produced at index time; the rest are
-/// generated lazily on demand.
-const THUMBNAIL_BUCKETS: [u32; 4] = [480, 960, 1440, 2048];
+/// pre-generated eagerly by the index-time bucket pass (see
+/// `indexing::run_pipeline_inner`) and re-generated on demand here as a
+/// fallback. This is the single source of truth for the ladder — the
+/// indexing pass slices `[0]` for the base width and `[1..]` for the
+/// eager extras.
+pub const THUMBNAIL_BUCKETS: [u32; 4] = [480, 960, 1440, 2048];
 
 #[tauri::command]
 #[tracing::instrument(name = "ipc.get_images", skip(db), fields(tag_count = filter_tag_ids.len()))]

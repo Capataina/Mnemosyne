@@ -167,6 +167,82 @@ impl ThumbnailGenerator {
         Ok(out_path)
     }
 
+    /// Eagerly generate the larger buckets for an image from a SINGLE
+    /// decode of the source, so a tile's first stretch is instant rather
+    /// than paying an on-demand decode+resize mid-gesture.
+    ///
+    /// Decodes once at the largest requested bucket width and downscales
+    /// that one buffer to every applicable bucket — it never re-decodes
+    /// per bucket. A bucket whose width meets or exceeds the source width
+    /// is skipped entirely (the original is served there, so no file is
+    /// needed), matching the `get_thumbnail` sizing contract exactly.
+    /// Existing bucket files are left untouched, and if every requested
+    /// bucket already exists the decode is skipped altogether. Returns the
+    /// number of bucket files written this call.
+    ///
+    /// This is the eager counterpart to `ensure_variant`: identical
+    /// `thumb_<id>_<w>.jpg` filenames in the same per-root dir, so
+    /// `get_thumbnail` finds these cached and returns instantly, and still
+    /// falls back to on-demand `ensure_variant` for anything not
+    /// pre-generated (legacy rows, a re-enabled encoder, a bucket that
+    /// failed here). The base `thumb_<id>.jpg` is NOT produced here — the
+    /// index-time base pass owns it, so pop-in is never gated on this work.
+    pub fn generate_buckets(
+        &self,
+        image_path: &Path,
+        image_id: i64,
+        root_id: Option<i64>,
+        bucket_widths: &[u32],
+    ) -> Result<usize, Box<dyn Error>> {
+        let Some(&max_bucket) = bucket_widths.iter().max() else {
+            return Ok(0); // No buckets requested.
+        };
+        let dir = self.resolve_root_dir(root_id)?;
+
+        // Cheap stat pass first: only buckets whose file is missing are
+        // worth a decode. A fully-cached image (re-index, second launch)
+        // costs a few `exists()` calls and no decode at all.
+        let missing: Vec<u32> = bucket_widths
+            .iter()
+            .copied()
+            .filter(|w| !dir.join(format!("thumb_{image_id}_{w}.jpg")).exists())
+            .collect();
+        if missing.is_empty() {
+            return Ok(0);
+        }
+
+        // One decode at the largest requested resolution; every smaller
+        // bucket is a downscale of this same buffer.
+        let (rgb, original_width, original_height) =
+            self.decode_source(image_path, max_bucket)?;
+
+        let mut written = 0usize;
+        for w in missing {
+            // Skip buckets at or above the source width — the original is
+            // served there (no upscale, no file), per get_thumbnail. A
+            // sub-bucket source (e.g. 700px) therefore writes nothing and
+            // just pays one cheap decode.
+            if w >= original_width {
+                continue;
+            }
+            let out_path = dir.join(format!("thumb_{image_id}_{w}.jpg"));
+            let (thumb_width, thumb_height) = size_for_width(w, original_width, original_height);
+            let resized = self.resize_with_fir(&rgb, thumb_width, thumb_height)?;
+            image::DynamicImage::ImageRgb8(resized)
+                .save_with_format(&out_path, image::ImageFormat::Jpeg)?;
+            written += 1;
+        }
+
+        debug!(
+            "Eager buckets for {}: {} written ({}x{} source)",
+            image_path.file_name().unwrap_or_default().to_string_lossy(),
+            written,
+            original_width,
+            original_height
+        );
+        Ok(written)
+    }
+
     /// Resolve (and create) the thumbnail directory for a root. `Some`
     /// routes into the per-root subfolder (`root_<id>/`); `None` uses the
     /// flat top-level dir (legacy un-rooted rows). Shared by both the

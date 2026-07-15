@@ -114,14 +114,19 @@ export default function Masonry(props: MasonryProps) {
     <div ref={containerRef} className="w-full relative" style={{ height }}>
       {visiblePlacements.map((item) => {
         const id = item.itemData.id;
+        const isDraggingThis = id === drag.dragItemId;
+        // The dragged tile is pinned under the pointer (dragVisual);
+        // every other tile sits at its packed slot and reflows around it.
+        const ax = isDraggingThis && drag.dragVisual ? drag.dragVisual.x : item.x;
+        const ay = isDraggingThis && drag.dragVisual ? drag.dragVisual.y : item.y;
         return (
           <MasonryAnchor
             key={`${id}-${item.itemData.url}`}
-            x={item.x}
-            y={item.y}
+            x={ax}
+            y={ay}
             width={item.width}
-            onTop={item.isSelected || id === drag.dragItemId || id === resizingId}
-            snap={id === resizingId}
+            onTop={item.isSelected || isDraggingThis || id === resizingId}
+            snap={id === resizingId || isDraggingThis}
           >
             <MasonryItem
               item={item.itemData}

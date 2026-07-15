@@ -431,14 +431,37 @@ fn run_pipeline_inner(
     //    microseconds vs ~100ms decode/encode, so contention there is
     //    negligible. On an M-series chip with 8-12 cores this gives
     //    a ~6-10x speedup vs the previous serial loop.
-    // Base thumbnails are produced at max-width 480 (the first bucket in
-    // the adaptive ladder). A 1-column masonry tile is ~480 CSS px, so on
-    // a retina display the base needs 480 real px to stay crisp; wider
-    // buckets (960/1440/2048) are generated on demand by the get_thumbnail
-    // command, never eagerly here, to keep indexing fast and disk lean.
-    let thumbnail_generator = ThumbnailGenerator::new(&paths::thumbnails_dir(), 480)?;
+    // Base thumbnails are produced at the first bucket width (480). A
+    // 1-column masonry tile is ~480 CSS px, so on a retina display the
+    // base needs 480 real px to stay crisp. The wider buckets
+    // (960/1440/2048) are pre-generated in a SECOND pass below, after
+    // every base has landed — see the eager-bucket pass for why the split.
+    let thumbnail_generator = ThumbnailGenerator::new(
+        &paths::thumbnails_dir(),
+        crate::commands::images::THUMBNAIL_BUCKETS[0],
+    )?;
     let needs_thumbs = database.get_images_without_thumbnails()?;
     let total_thumbs = needs_thumbs.len();
+
+    // Build a map from path -> root_id so each thumbnail lands in the
+    // right per-root subfolder. Single SELECT — was N+1 before (audit
+    // finding): `get_root_id_by_path` per image-needing-thumbnail held
+    // the DB Mutex 1500 times in rapid succession on a typical first run.
+    // The new `get_paths_to_root_ids` returns the entire (path, root_id)
+    // map in one query, matching the pattern `populate_from_db` already
+    // uses for embeddings. Shared by BOTH thumbnail passes (base + eager
+    // buckets) so we run the query once, not per pass.
+    //
+    // unwrap_or_default preserves the previous failure semantic: if the
+    // SELECT fails, downstream `generate_thumbnail` falls back to the
+    // legacy flat thumbnail directory (root_id None). Skip the query
+    // entirely when there's nothing to thumbnail.
+    let path_to_root = if total_thumbs > 0 {
+        database.get_paths_to_root_ids().unwrap_or_default()
+    } else {
+        std::collections::HashMap::new()
+    };
+
     if total_thumbs > 0 {
         emit(app, Phase::Thumbnail, 0, total_thumbs, None);
 
@@ -454,19 +477,6 @@ fn run_pipeline_inner(
         // the work itself was fine. Scale the interval down for small
         // totals so at least ~10 emits happen across the phase.
         let emit_every = (total_thumbs / 10).clamp(1, 25);
-
-        // Build a map from path -> root_id so each thumbnail lands in
-        // the right per-root subfolder. Single SELECT — was N+1 before
-        // (audit finding): `get_root_id_by_path` per image-needing-
-        // thumbnail held the DB Mutex 1500 times in rapid succession on
-        // a typical first run. The new `get_paths_to_root_ids` returns
-        // the entire (path, root_id) map in one query, matching the
-        // pattern `populate_from_db` already uses for embeddings.
-        //
-        // unwrap_or_default preserves the previous failure semantic:
-        // if the SELECT fails, downstream `generate_thumbnail` falls
-        // back to the legacy flat thumbnail directory (root_id None).
-        let path_to_root = database.get_paths_to_root_ids().unwrap_or_default();
 
         needs_thumbs.par_iter().for_each(|image| {
             let root_id = path_to_root.get(&image.path).copied().flatten();
@@ -503,6 +513,47 @@ fn run_pipeline_inner(
         });
     }
     emit(app, Phase::Thumbnail, total_thumbs, total_thumbs, None);
+
+    // Second thumbnail pass: eagerly pre-generate the larger buckets
+    // (960/1440/2048) for every image just thumbnailed, so the masonry
+    // smooth-resize is instant from the very first stretch instead of
+    // paying an on-demand decode+resize mid-gesture (the visible
+    // delay + blur→sharp the user reported).
+    //
+    // Why a SECOND pass rather than folding the buckets into the base
+    // loop above:
+    //   - Pop-in must not regress. The base 480 has to be written and the
+    //     row marked thumbnailed FIRST (the grid pop-in keys off
+    //     `thumbnail_path` landing), and it must stay a cheap ~480 decode.
+    //     Decoding once at 2048 to serve base + buckets together would
+    //     make the base itself wait on a heavier decode — a direct per-
+    //     tile pop-in regression. Splitting keeps pass 1 untouched.
+    //   - Ordering. This pass runs only after every base has landed, so
+    //     all tiles are already in the grid before any high-res work
+    //     starts.
+    // Cost shape: one high-res decode per image (never re-decoded per
+    // bucket — `generate_buckets` downscales all applicable buckets from
+    // that single buffer), each bucket capped at the source width (a
+    // bucket ≥ source width is skipped; the original is served there).
+    // Sub-960px sources write nothing and pay only a cheap decode. Still
+    // CPU-exclusive here (before the encoder phase) so it doesn't contend
+    // with ORT threads. get_thumbnail remains the on-demand fallback for
+    // anything not pre-generated (legacy rows, re-enabled encoders).
+    if total_thumbs > 0 {
+        let _bucket_span = tracing::info_span!("pipeline.eager_bucket_pass").entered();
+        let eager_buckets = &crate::commands::images::THUMBNAIL_BUCKETS[1..];
+        needs_thumbs.par_iter().for_each(|image| {
+            let root_id = path_to_root.get(&image.path).copied().flatten();
+            if let Err(e) = thumbnail_generator.generate_buckets(
+                Path::new(&image.path),
+                image.id,
+                root_id,
+                eager_buckets,
+            ) {
+                warn!("eager bucket generation failed for {}: {e}", image.path);
+            }
+        });
+    }
     drop(_thumb_phase);
 
     // 6. Encoder phase (Phase 12b: now strictly after thumbnails). The

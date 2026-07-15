@@ -30,8 +30,21 @@ export function useTileDrag(input: UseTileDragInput) {
 
   const [dragItemId, setDragItemId] = useState<number | null>(null);
   const [workingOrder, setWorkingOrder] = useState<ImageItem[] | null>(null);
+  // Live top-left of the dragged tile, pinned to the pointer so the tile
+  // sits *under* the cursor instead of easing toward the grid slot behind it.
+  const [dragVisual, setDragVisual] = useState<{ x: number; y: number } | null>(
+    null,
+  );
 
   const dragStartPosRef = useRef<{ x: number; y: number } | null>(null);
+  // The dragged tile's slot position + pointer position captured at grab, so
+  // the pointer-to-tile offset stays fixed for the whole drag.
+  const dragBaseRef = useRef<{
+    x0: number;
+    y0: number;
+    startX: number;
+    startY: number;
+  } | null>(null);
   const dragMovedRef = useRef(false);
   const workingOrderRef = useRef<ImageItem[] | null>(null);
   workingOrderRef.current = workingOrder;
@@ -45,11 +58,18 @@ export function useTileDrag(input: UseTileDragInput) {
   const onDragHandlePointerDown = useCallback(
     (id: number, e: React.PointerEvent<HTMLDivElement>) => {
       if (!enabled) return;
+      const p = placementsRef.current?.find((pl) => pl.itemData.id === id);
       dragStartPosRef.current = { x: e.clientX, y: e.clientY };
+      dragBaseRef.current = {
+        x0: p?.x ?? 0,
+        y0: p?.y ?? 0,
+        startX: e.clientX,
+        startY: e.clientY,
+      };
       dragMovedRef.current = false;
       setDragItemId(id);
     },
-    [enabled],
+    [enabled, placementsRef],
   );
 
   useEffect(() => {
@@ -65,6 +85,16 @@ export function useTileDrag(input: UseTileDragInput) {
         const dy = e.clientY - start.y;
         if (Math.hypot(dx, dy) < DRAG_THRESHOLD_PX) return;
         dragMovedRef.current = true;
+      }
+
+      // Pin the tile under the pointer, keeping the same pointer-to-tile
+      // offset it had at grab — so it sits under the cursor, not behind it.
+      const dragBase = dragBaseRef.current;
+      if (dragBase) {
+        setDragVisual({
+          x: dragBase.x0 + (e.clientX - dragBase.startX),
+          y: dragBase.y0 + (e.clientY - dragBase.startY),
+        });
       }
 
       const rect = container.getBoundingClientRect();
@@ -102,7 +132,9 @@ export function useTileDrag(input: UseTileDragInput) {
       }
       setDragItemId(null);
       setWorkingOrder(null);
+      setDragVisual(null);
       dragStartPosRef.current = null;
+      dragBaseRef.current = null;
       dragMovedRef.current = false;
     };
 
@@ -114,5 +146,5 @@ export function useTileDrag(input: UseTileDragInput) {
     };
   }, [dragItemId, placementsRef, containerRef]);
 
-  return { dragItemId, workingOrder, onDragHandlePointerDown };
+  return { dragItemId, workingOrder, dragVisual, onDragHandlePointerDown };
 }

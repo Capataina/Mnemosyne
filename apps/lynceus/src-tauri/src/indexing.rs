@@ -466,17 +466,20 @@ fn run_pipeline_inner(
         emit(app, Phase::Thumbnail, 0, total_thumbs, None);
 
         let completed = AtomicUsize::new(0);
-        let last_emit_bucket = AtomicUsize::new(0);
-        // Coalesce progress emits to roughly every 25 thumbnails
-        // (across ALL workers combined) so a 1500-image run fires
-        // ~60 events rather than ~1500. A fixed 25 meant any library
-        // under 25 images (the common case for a first test folder)
-        // never crossed a single bucket boundary before finishing —
-        // the badge would sit at "0 / N" for the whole phase and then
-        // jump straight to "N / N", which read as broken even though
-        // the work itself was fine. Scale the interval down for small
-        // totals so at least ~10 emits happen across the phase.
-        let emit_every = (total_thumbs / 10).clamp(1, 25);
+        // High-water mark of the last value emitted. A Mutex (not an
+        // atomic) because the emit happens WHILE it is held, so concurrent
+        // rayon workers report in strictly increasing order and the bar
+        // never blips backwards — the same discipline the encode phase's
+        // EncodeProgress uses.
+        let last_emit = std::sync::Mutex::new(0usize);
+        // Emit at per-image granularity for typical libraries so the
+        // thumbnail bar climbs continuously on a fresh index rather than
+        // jumping in coarse buckets. The old `/10` (clamped to every 25)
+        // fired only ~10-60 events for a whole library, so the bar sat
+        // still between big jumps — the "feels like no progress" complaint.
+        // `/4000` stays per-image (interval 1) up to 4000 images and caps
+        // the event rate to ≈4000 emits above that so a 100k index is sane.
+        let emit_every = (total_thumbs / 4000).max(1);
 
         needs_thumbs.par_iter().for_each(|image| {
             let root_id = path_to_root.get(&image.path).copied().flatten();
@@ -501,14 +504,16 @@ fn run_pipeline_inner(
             }
 
             let done = completed.fetch_add(1, Ordering::Relaxed) + 1;
-            let bucket = done / emit_every;
-            let prev = last_emit_bucket.load(Ordering::Relaxed);
-            if bucket > prev
-                && last_emit_bucket
-                    .compare_exchange(prev, bucket, Ordering::Relaxed, Ordering::Relaxed)
-                    .is_ok()
-            {
-                emit(app, Phase::Thumbnail, done, total_thumbs, None);
+            // Emit on every `emit_every`-th image, plus always the final
+            // one so the bar lands exactly on total. The emit runs under
+            // the high-water lock so concurrent workers stay monotonic on
+            // the wire.
+            if done.is_multiple_of(emit_every) || done == total_thumbs {
+                let mut last = last_emit.lock().unwrap();
+                if done > *last {
+                    *last = done;
+                    emit(app, Phase::Thumbnail, done, total_thumbs, None);
+                }
             }
         });
     }
@@ -647,12 +652,17 @@ fn run_pipeline_inner(
 /// number of image-encode completions summed across every *running*
 /// encoder; `total` is the fixed sum of each running encoder's workload,
 /// computed up front so the counter climbs monotonically to exactly
-/// `total`. `record_with` guards wire ordering: the emit itself runs
-/// under `last_emitted`, so with three encoder threads reporting
-/// concurrently the pill only ever climbs — a thread that computed a
-/// lower cumulative value than one already emitted simply doesn't fire.
-/// (Doing the emit *outside* the lock would reopen the race: two threads
-/// could each decide to emit, then fire in the reverse order.)
+/// `total`. `advance` guards wire ordering: the emits run under
+/// `last_emitted`, so with three encoder threads reporting concurrently
+/// the pill only ever climbs — a batch whose whole range is below an
+/// already-emitted value (a slower encoder landing after a faster one)
+/// emits nothing. (Doing the emit *outside* the lock would reopen the
+/// race: two threads could each decide to emit, then fire in reverse.)
+///
+/// Emit granularity is decoupled from the batch size: `encode_batch`
+/// processes 32 images at once for throughput, but `advance` emits each
+/// crossed cadence value (per-image by default) so the aggregate bar
+/// climbs smoothly instead of jumping a whole batch of 32 at a time.
 struct EncodeProgress {
     /// Cumulative encodes completed across all running encoders. Atomic
     /// so the count itself never loses an increment even though the emit
@@ -663,30 +673,40 @@ struct EncodeProgress {
     last_emitted: std::sync::Mutex<usize>,
     /// Fixed denominator: sum of every running encoder's workload.
     total: usize,
+    /// Emit cadence: a cumulative unit is emitted when it is a multiple of
+    /// this (plus always the terminal `total`). 1 = per-image, the smooth
+    /// default for a fresh small/medium library; larger caps the Tauri
+    /// event rate at very large scales (see run_encoder_phase).
+    emit_interval: usize,
 }
 
 impl EncodeProgress {
-    fn new(total: usize) -> Self {
+    fn new(total: usize, emit_interval: usize) -> Self {
         Self {
             processed: AtomicUsize::new(0),
             last_emitted: std::sync::Mutex::new(0),
             total,
+            emit_interval: emit_interval.max(1),
         }
     }
 
-    /// Count `n` completed encodes, then — if that advances past the last
-    /// value emitted — run `emit_fn(done)` with the new cumulative total,
-    /// under the lock. `done` is captured from the atomic add itself, so
-    /// it is exact even when three encoders add concurrently; running
-    /// `emit_fn` inside the critical section is what makes the sequence of
-    /// emitted values strictly increasing on the wire rather than merely
-    /// non-decreasing in aggregate.
-    fn record_with<F: FnOnce(usize)>(&self, n: usize, emit_fn: F) {
-        let done = self.processed.fetch_add(n, Ordering::SeqCst) + n;
+    /// Count `n` completed encodes (a whole batch really did finish
+    /// together), then emit each newly-crossed cadence value — plus the
+    /// terminal `total` — so the aggregate bar climbs per-image rather
+    /// than jumping a batch of 32 at once. The values emit in increasing
+    /// order under `last_emitted`, so with three encoders reporting
+    /// concurrently the wire is strictly monotonic; the `done > *last`
+    /// guard drops any range already surpassed by a faster encoder, which
+    /// keeps the bar from blipping backwards.
+    fn advance<F: FnMut(usize)>(&self, n: usize, mut emit_fn: F) {
+        let base = self.processed.fetch_add(n, Ordering::SeqCst);
         let mut last = self.last_emitted.lock().unwrap();
-        if done > *last {
-            *last = done;
-            emit_fn(done);
+        for done in (base + 1)..=(base + n) {
+            let due = done.is_multiple_of(self.emit_interval) || done == self.total;
+            if due && done > *last {
+                *last = done;
+                emit_fn(done);
+            }
         }
     }
 }
@@ -816,7 +836,15 @@ fn run_encoder_phase(
             .sum::<usize>()
     };
 
-    let progress = Arc::new(EncodeProgress::new(aggregate_total));
+    // Emit at per-image granularity for typical libraries so the bar
+    // climbs smoothly rather than jumping a batch of 32; cap the Tauri
+    // event rate at very large scales so a 100k×3-encoder index doesn't
+    // fire ~300k events. `/ 4000` keeps it per-image (interval 1) up to
+    // 4000 encode-units — comfortably covering the fresh small/medium
+    // libraries the "feels stuck" complaint is about — and bounds the
+    // phase to ≈4000 emits above that.
+    let emit_interval = (aggregate_total / 4000).max(1);
+    let progress = Arc::new(EncodeProgress::new(aggregate_total, emit_interval));
     // Prime the pill with a coherent 0/total the instant the phase
     // starts, so it shows the real denominator rather than lingering on
     // the previous phase's numbers. Skip entirely when there's nothing to
@@ -1046,10 +1074,11 @@ fn run_clip_encoder_with_intra(
             }
         }
         processed += chunk.len();
-        // Report against the shared aggregate. The emit only fires (and
-        // only while locked) if it climbs past the last value emitted, so
-        // a slower encoder can never blip the pill backwards.
-        progress.record_with(chunk.len(), |done| {
+        // Report against the shared aggregate at per-image granularity so
+        // the bar climbs smoothly rather than jumping this batch of 32 at
+        // once. Emits fire only while locked and only as the value climbs,
+        // so a slower encoder can never blip the pill backwards.
+        progress.advance(chunk.len(), |done| {
             emit(app, Phase::Encode, done, progress.total, Some("Encoding".into()));
         });
         // R3 — drain the WAL between batches so it can't grow without
@@ -1157,8 +1186,9 @@ where
             }
         }
         processed += chunk.len();
-        // Report against the shared aggregate (see the CLIP path).
-        progress.record_with(chunk.len(), |done| {
+        // Report against the shared aggregate at per-image granularity
+        // (see the CLIP path).
+        progress.advance(chunk.len(), |done| {
             emit(app, Phase::Encode, done, progress.total, Some("Encoding".into()));
         });
         // R3 — drain WAL between batches under wal_autocheckpoint=0.
@@ -1357,26 +1387,36 @@ mod tests {
     }
 
     #[test]
-    fn encode_progress_reports_monotonic_and_reaches_total() {
-        // Single-threaded: sequential records fire strictly increasing
-        // values and land exactly on total.
-        let p = EncodeProgress::new(100);
+    fn encode_progress_emits_per_image_at_interval_one() {
+        // Emit granularity is decoupled from the batch size: a single
+        // batch of 100 at interval 1 emits every value 1..=100, so the bar
+        // climbs per-image rather than jumping the whole batch at once.
+        let p = EncodeProgress::new(100, 1);
         let mut emitted = Vec::new();
-        for _ in 0..10 {
-            p.record_with(10, |done| emitted.push(done));
-        }
-        assert_eq!(emitted, (1..=10).map(|k| k * 10).collect::<Vec<_>>());
+        p.advance(100, |done| emitted.push(done));
+        assert_eq!(emitted, (1..=100).collect::<Vec<_>>());
         assert_eq!(p.processed.load(Ordering::SeqCst), 100);
         assert_eq!(*p.last_emitted.lock().unwrap(), 100);
     }
 
     #[test]
+    fn encode_progress_interval_caps_emits_but_hits_terminal() {
+        // A coarser interval (the large-library cap) emits only multiples
+        // of the interval — PLUS always the final unit, so the bar still
+        // lands exactly on total even when total isn't a multiple.
+        let p = EncodeProgress::new(95, 10);
+        let mut emitted = Vec::new();
+        p.advance(95, |done| emitted.push(done));
+        assert_eq!(emitted, vec![10, 20, 30, 40, 50, 60, 70, 80, 90, 95]);
+        assert_eq!(*p.last_emitted.lock().unwrap(), 95);
+    }
+
+    #[test]
     fn encode_progress_never_regresses_under_concurrent_encoders() {
-        // Mirror the real phase: three encoders, each with a 500-image
-        // workload, summed into one aggregate; every one advances the
-        // shared counter a single image at a time.
+        // Mirror the real phase: three encoders, each a 500-image workload
+        // processed in batches of 32, summed into one per-image aggregate.
         let total = 3 * 500;
-        let progress = Arc::new(EncodeProgress::new(total));
+        let progress = Arc::new(EncodeProgress::new(total, 1));
         let observed = Arc::new(std::sync::Mutex::new(Vec::<usize>::new()));
 
         let mut handles = Vec::new();
@@ -1384,8 +1424,11 @@ mod tests {
             let progress = Arc::clone(&progress);
             let observed = Arc::clone(&observed);
             handles.push(thread::spawn(move || {
-                for _ in 0..500 {
-                    progress.record_with(1, |done| observed.lock().unwrap().push(done));
+                let mut remaining = 500usize;
+                while remaining > 0 {
+                    let n = remaining.min(32);
+                    progress.advance(n, |done| observed.lock().unwrap().push(done));
+                    remaining -= n;
                 }
             }));
         }
@@ -1399,10 +1442,11 @@ mod tests {
         // The counter reached exactly total, never past it.
         assert_eq!(*observed.last().unwrap(), total);
         assert_eq!(*progress.last_emitted.lock().unwrap(), total);
-        // Because every emit runs under the lock, the observed sequence is
-        // strictly increasing on the wire — the property the whole struct
-        // exists to guarantee, and exactly what the old per-encoder emits
-        // violated (a late 0/N stomping a real value).
+        // Emits run under the lock in increasing order, so the observed
+        // wire sequence is strictly increasing — never a backwards blip,
+        // even though a slower encoder's batch can land after a faster
+        // one's (its already-surpassed range simply isn't emitted, which
+        // is why we don't assert every value appears).
         assert!(
             observed.windows(2).all(|w| w[0] < w[1]),
             "emitted progress must be strictly increasing, got {observed:?}"

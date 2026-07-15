@@ -1,6 +1,9 @@
-# Image Browser
+# Lynceus
 
 > A local-first desktop application for browsing and searching large image collections — Pinterest-style masonry layout, manual tagging, multi-encoder visual similarity search, and natural-language semantic search, all running entirely on your machine with no cloud, no accounts, and no external services.
+
+> [!note] Lynceus and the Mnemosyne engine
+> This repository is a monorepo. **Lynceus** (the sharp-eyed Argonaut) is the image-browser product and lives at [`apps/lynceus/`](./apps/lynceus). It is built on **Mnemosyne** ([`crates/engine/`](./crates/engine)) — a media-agnostic engine that owns the asset catalogue, embedding storage, and cosine/RRF retrieval, reusable across future asset browsers (audio and 3D are planned). Only the encoders, thumbnailer, indexing pipeline, and Tauri surface are image-specific. See [Repository layout](#repository-layout) below.
 
 ---
 
@@ -47,7 +50,7 @@ Everything runs locally. Embeddings are generated on your machine using ONNX Run
 
 - **Click any image** in the inspector to retrieve the most visually similar images from the entire library
 - **Multi-encoder fusion** combining three independently-trained vision models via **Reciprocal Rank Fusion** (Cormack 2009, k=60):
-  - **CLIP ViT-B/32** (OpenAI, 512-d) — strong on captionable visual concepts
+  - **CLIP ViT-B/32** (OpenCLIP, LAION-2B, MIT-licensed, 512-d) — strong on captionable visual concepts
   - **DINOv2-Base** (Meta, 768-d) — strong on self-supervised visual structure and texture
   - **SigLIP-2 Base 256** (Google, 768-d) — strong on full-image semantics with no centre-crop
 - **Per-encoder toggles** in settings — enable any subset; the fusion ranker adapts automatically
@@ -203,6 +206,36 @@ For the full structural map — module-by-module responsibilities, table layouts
 
 ---
 
+## Repository layout
+
+A Cargo workspace (the engine + product crates) mirrored by an npm workspace (the product frontends). The engine is a path dependency with no frozen public API until a second product proves the seams.
+
+```
+Mnemosyne/                         monorepo root
+├── crates/
+│   └── engine/                    Mnemosyne — media-agnostic core (Cargo lib `mnemosyne`)
+│                                    catalogue (SQLite/WAL) · cosine + RRF fusion ·
+│                                    domain types · paths · profiling
+├── apps/
+│   └── lynceus/                   the image-browser product
+│       ├── src/                   React 19 frontend (npm pkg `lynceus-ui`)
+│       └── src-tauri/             Tauri app crate (Cargo bin `lynceus`)
+│                                    image encoders · thumbnailer · indexing
+│                                    pipeline · watcher · Tauri command surface
+├── models/                        gitignored weights, fetched by the script below
+│   ├── image/                     OpenCLIP · DINOv2 · SigLIP-2
+│   ├── audio/                     (future — Syrinx)
+│   └── 3d/                        (future — Daedalus)
+├── scripts/
+│   ├── download_models.py         fetch encoder weights → models/<modality>/
+│   └── download_lol_splashes.py   optional test corpus → ~/Documents
+└── Cargo.toml                     workspace manifest
+```
+
+Future asset browsers — **Syrinx** (audio) and **Daedalus** (3D) — join as sibling `apps/<product>/` units that depend on the same engine.
+
+---
+
 ## Design principles
 
 - **Local-first** — all computation, storage, and inference runs on your machine. No cloud dependencies, no API keys, no network required after first-launch model download.
@@ -237,43 +270,49 @@ For the full structural map — module-by-module responsibilities, table layouts
 
 ```bash
 # Clone the repository
-git clone https://github.com/Capataina/PinterestStyleImageBrowser
-cd PinterestStyleImageBrowser
+git clone https://github.com/Capataina/Mnemosyne
+cd Mnemosyne
 
-# Install frontend dependencies
+# Install workspace dependencies (npm workspaces — installs all apps)
 npm install
 
-# Run in development mode
-npm run tauri dev
+# Fetch the encoder weights into the gitignored models/ tree (~2.4 GB, commercial-licensed)
+python3 scripts/download_models.py --modality image
 
-# Run in profiling mode (writes a markdown report on exit)
-npm run tauri dev -- -- --profiling
+# Run the image app (Lynceus) in development mode.
+# Point it at the weights you just fetched:
+LYNCEUS_MODELS_DIR="$(pwd)/models/image" npm run tauri --workspace apps/lynceus dev
+
+# Profiling mode (writes a markdown report on exit)
+LYNCEUS_MODELS_DIR="$(pwd)/models/image" npm run tauri --workspace apps/lynceus dev -- -- --profiling
 ```
 
 To build a release bundle:
 
 ```bash
-npm run tauri build
+npm run tauri --workspace apps/lynceus build
 ```
 
 To run the test suites:
 
 ```bash
-npm test                    # Vitest (frontend)
-cd src-tauri && cargo test  # cargo (backend)
+npm run test --workspace apps/lynceus   # Vitest (frontend)
+cargo test --workspace                  # cargo (engine + product)
 ```
 
-No API keys required. No internet connection required after the first launch. Encoder models are downloaded once from HuggingFace on first launch (~2.5 GB total) and cached in your platform's app-data directory.
+No API keys required, and no internet connection required once the weights are fetched. Model weights are **not** committed — `scripts/download_models.py` downloads them into the gitignored `models/<modality>/` tree at the repo root so they are inspectable on disk and ready for the Tauri bundler to package into a shipped app. All three encoders now carry commercial-friendly licences (OpenCLIP LAION MIT, DINOv2 and SigLIP-2 Apache-2.0).
 
 ### App data location
 
+Derived state (SQLite DB, thumbnails, cosine cache, settings) lives under:
+
 | Platform | Path |
 |----------|------|
-| macOS | `~/Library/Application Support/com.ataca.image-browser/` |
-| Linux | `~/.local/share/com.ataca.image-browser/` |
-| Windows | `%APPDATA%\com.ataca.image-browser\` |
+| macOS | `~/Library/Application Support/com.ataca.lynceus/` |
+| Linux | `~/.local/share/com.ataca.lynceus/` |
+| Windows | `%APPDATA%\com.ataca.lynceus\` |
 
-Override with the `IMAGE_BROWSER_DATA_DIR` environment variable. There is no separate dev-vs-release path — both write to the same location.
+Override the state directory with `LYNCEUS_DATA_DIR`, and the model-weights directory with `LYNCEUS_MODELS_DIR` (used above to point the app at the repo-local `models/image`). There is no separate dev-vs-release state path.
 
 ---
 
@@ -289,4 +328,4 @@ Override with the `IMAGE_BROWSER_DATA_DIR` environment variable. There is no sep
 
 ## Summary
 
-Image Browser is a local-first desktop application that brings intelligent image search to personal libraries without any cloud dependency. It delivers end-to-end product across a Rust backend, Tauri 2 desktop shell, React 19 frontend, SQLite persistence layer, and ONNX Runtime inference pipeline — with three independently-trained vision encoders (CLIP, DINOv2, SigLIP-2) fused via Reciprocal Rank Fusion to power both image-to-image and natural-language image search, all running entirely offline on consumer hardware.
+Lynceus is a local-first desktop application that brings intelligent image search to personal libraries without any cloud dependency. It delivers end-to-end product across a Rust backend, Tauri 2 desktop shell, React 19 frontend, SQLite persistence layer, and ONNX Runtime inference pipeline — with three independently-trained vision encoders (OpenCLIP, DINOv2, SigLIP-2) fused via Reciprocal Rank Fusion to power both image-to-image and natural-language image search, all running entirely offline on consumer hardware. It is the first product built on the Mnemosyne engine, whose media-agnostic catalogue-and-retrieval core is designed to power a family of asset browsers beyond images.

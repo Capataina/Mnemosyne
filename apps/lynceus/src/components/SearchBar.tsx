@@ -14,6 +14,11 @@ import { Tag } from "@/types";
 
 interface SearchBarProps {
   tags?: Tag[];
+  /** Controlled selected-tag set. The parent owns it (page.searchTags) so
+   *  the library drawer and this bar are two views of ONE filter state —
+   *  a folder picked in the drawer shows as a chip here, and neither
+   *  surface can clobber the other. Only the raw input text stays local. */
+  selectedTags: Tag[];
   onSearchChange: (selectedTags: Tag[], searchText: string) => void;
   placeholder?: string;
   onCreateTag?: (name: string, color: string) => Promise<Tag>;
@@ -21,8 +26,11 @@ interface SearchBarProps {
 }
 
 export function SearchBar(props: SearchBarProps) {
-  const [selectedTags, setSelectedTags] = useState<Tag[]>([]);
+  const selectedTags = props.selectedTags;
   const [inputText, setInputText] = useState("");
+  // Commit a tag-set change up to the parent (the single source of truth).
+  const commitTags = (next: Tag[], text: string = inputText) =>
+    props.onSearchChange(next, text.trim());
   const [showSuggestions, setShowSuggestions] = useState(false);
   const [suggestionsFilter, setSuggestionsFilter] = useState("");
   const inputRef = useRef<HTMLInputElement>(null);
@@ -67,26 +75,20 @@ export function SearchBar(props: SearchBarProps) {
   const showCreateOption =
     suggestionsFilter.trim() && !exactMatch && props.onCreateTag;
 
-  // Extract state for parent
-  useEffect(() => {
-    props.onSearchChange(selectedTags, inputText.trim());
-  }, [selectedTags, inputText]);
-
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     setInputText(e.target.value);
+    // Text is no longer pushed by an effect — push it as it changes. The
+    // page debounces downstream, so per-keystroke calls are cheap.
+    props.onSearchChange(selectedTags, e.target.value.trim());
   };
 
   const handleTagSelect = (tag: Tag) => {
-    // Find the # and remove only the #substring
+    // Strip the "#partial" the user was typing, then commit the new tag +
+    // cleaned text together in a single push to the parent.
     const hashIdx = inputText.lastIndexOf("#");
-    if (hashIdx !== -1) {
-      // Remove from # to the end of the input
-      const newText = inputText.slice(0, hashIdx);
-      setInputText(newText);
-    }
-
-    // Add tag to selected tags
-    setSelectedTags((prev) => [...prev, tag]);
+    const newText = hashIdx !== -1 ? inputText.slice(0, hashIdx) : inputText;
+    setInputText(newText);
+    commitTags([...selectedTags, tag], newText);
 
     setShowSuggestions(false);
     setTimeout(() => inputRef.current?.focus(), 0);
@@ -121,20 +123,20 @@ export function SearchBar(props: SearchBarProps) {
       inputRef.current?.selectionStart === 0
     ) {
       e.preventDefault();
-      setSelectedTags((prev) => prev.slice(0, -1));
+      commitTags(selectedTags.slice(0, -1));
     }
   };
 
   const handleClear = () => {
-    setSelectedTags([]);
     setInputText("");
+    commitTags([], "");
     inputRef.current?.focus();
   };
 
   const hasContent = selectedTags.length > 0 || inputText !== "";
 
   const removeTag = (tagId: number) => {
-    setSelectedTags((prev) => prev.filter((tag) => tag.id !== tagId));
+    commitTags(selectedTags.filter((tag) => tag.id !== tagId));
   };
 
   return (

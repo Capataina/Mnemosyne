@@ -116,10 +116,9 @@ export default function Home() {
   const [simTrail, setSimTrail] = useState<ImageItem[]>([]);
   // Library drawer (folders-as-tags): its open state + the exclude-tag
   // ("must not have") filter set. The include set is `searchTags`, shared
-  // with the search bar; `activeFolderId` just highlights the open folder.
+  // with the search bar; the open-folder highlight is DERIVED from it below.
   const [libraryDrawerOpen, setLibraryDrawerOpen] = useState(false);
   const [excludeTags, setExcludeTags] = useState<Tag[]>([]);
-  const [activeFolderId, setActiveFolderId] = useState<number | null>(null);
   const confirm = useConfirm();
 
   const images = useImages({
@@ -218,11 +217,15 @@ export default function Home() {
     () => new Set(excludeTags.map((t) => t.id)),
     [excludeTags],
   );
+  // The "active folder" highlight is DERIVED from the include set, not
+  // separate state: a single included tag IS "viewing that folder". Deriving
+  // it means removing that chip in the search bar also clears the drawer
+  // highlight — there's no second copy of the state to fall out of sync.
+  const activeFolderId = searchTags.length === 1 ? searchTags[0].id : null;
 
-  // Select a tag-folder: filter the feed to that single tag and highlight
-  // it. Passing null clears the folder selection.
+  // Select a tag-folder: filter the feed to that single tag (the derived
+  // highlight follows). Passing null clears the folder selection.
   const handleSelectFolder = (tagId: number | null) => {
-    setActiveFolderId(tagId);
     const tag = tagId === null ? null : (tags.data ?? []).find((t) => t.id === tagId);
     setSearchTags(tag ? [tag] : []);
   };
@@ -255,7 +258,6 @@ export default function Home() {
   const handleClearFilters = () => {
     setSearchTags([]);
     setExcludeTags([]);
-    setActiveFolderId(null);
   };
 
   // Active search mode, for the search-bar indicator.
@@ -565,6 +567,7 @@ export default function Home() {
             <div className="mx-auto min-w-0 max-w-3xl flex-1">
               <SearchBar
                 tags={tags.data}
+                selectedTags={searchTags}
                 mode={searchMode}
                 onSearchChange={(selectedTags, text) => {
                   recordAction("search_change", {

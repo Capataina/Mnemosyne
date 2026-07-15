@@ -14,11 +14,14 @@ import { Tag } from "@/types";
 
 interface SearchBarProps {
   tags?: Tag[];
-  /** Controlled selected-tag set. The parent owns it (page.searchTags) so
-   *  the library drawer and this bar are two views of ONE filter state —
-   *  a folder picked in the drawer shows as a chip here, and neither
-   *  surface can clobber the other. Only the raw input text stays local. */
+  /** Controlled selected-tag set AND text. The parent owns both
+   *  (page.searchTags + page.searchText) so the library drawer and this bar
+   *  are two views of ONE filter state: a folder picked in the drawer shows
+   *  as a chip here, and — crucially — a drawer action can clear the text
+   *  and it actually clears the input. Nothing about the filter lives only
+   *  inside this component, so nothing can silently fall out of sync. */
   selectedTags: Tag[];
+  searchText: string;
   onSearchChange: (selectedTags: Tag[], searchText: string) => void;
   placeholder?: string;
   onCreateTag?: (name: string, color: string) => Promise<Tag>;
@@ -27,10 +30,12 @@ interface SearchBarProps {
 
 export function SearchBar(props: SearchBarProps) {
   const selectedTags = props.selectedTags;
-  const [inputText, setInputText] = useState("");
-  // Commit a tag-set change up to the parent (the single source of truth).
+  // Controlled: the input renders the parent's text. We push RAW text up
+  // (no trim) so a trailing space survives while typing; the page trims
+  // only at the point of use (its debounced semanticQuery).
+  const inputText = props.searchText;
   const commitTags = (next: Tag[], text: string = inputText) =>
-    props.onSearchChange(next, text.trim());
+    props.onSearchChange(next, text);
   const [showSuggestions, setShowSuggestions] = useState(false);
   const [suggestionsFilter, setSuggestionsFilter] = useState("");
   const inputRef = useRef<HTMLInputElement>(null);
@@ -76,10 +81,10 @@ export function SearchBar(props: SearchBarProps) {
     suggestionsFilter.trim() && !exactMatch && props.onCreateTag;
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    setInputText(e.target.value);
-    // Text is no longer pushed by an effect — push it as it changes. The
-    // page debounces downstream, so per-keystroke calls are cheap.
-    props.onSearchChange(selectedTags, e.target.value.trim());
+    // Controlled input: push the raw value straight up — it round-trips back
+    // as props.searchText. The page debounces downstream, so per-keystroke
+    // pushes are cheap.
+    props.onSearchChange(selectedTags, e.target.value);
   };
 
   const handleTagSelect = (tag: Tag) => {
@@ -87,7 +92,6 @@ export function SearchBar(props: SearchBarProps) {
     // cleaned text together in a single push to the parent.
     const hashIdx = inputText.lastIndexOf("#");
     const newText = hashIdx !== -1 ? inputText.slice(0, hashIdx) : inputText;
-    setInputText(newText);
     commitTags([...selectedTags, tag], newText);
 
     setShowSuggestions(false);
@@ -128,7 +132,6 @@ export function SearchBar(props: SearchBarProps) {
   };
 
   const handleClear = () => {
-    setInputText("");
     commitTags([], "");
     inputRef.current?.focus();
   };

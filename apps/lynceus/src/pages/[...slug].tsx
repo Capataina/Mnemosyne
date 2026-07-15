@@ -223,6 +223,19 @@ export default function Home() {
   // highlight — there's no second copy of the state to fall out of sync.
   const activeFolderId = searchTags.length === 1 ? searchTags[0].id : null;
 
+  // A library-drawer filter means "browse the feed by this filter". If a
+  // competing view is up — an open similar-set (selectedItem) or an active
+  // semantic search (searchText) — the filter refetches the feed but the
+  // grid keeps showing the similar/semantic results, so the filter looks
+  // like it did nothing until you exit and the feed lurches to it. Leave
+  // that view first: clear the text (exits semantic) and, if an image is
+  // open, navigate home (exits the similar-set). Then the filter is applied
+  // to the visible feed, immediately and coherently.
+  const exitToFeed = () => {
+    setSearchText("");
+    if (selectedItem) navigate("/");
+  };
+
   // Select a tag-folder: filter the feed to that single tag (the derived
   // highlight follows). Passing null clears the folder selection.
   const handleSelectFolder = (tagId: number | null) => {
@@ -232,6 +245,7 @@ export default function Home() {
     // exclude set must drop it there, otherwise the same tag is required AND
     // forbidden and the grid is always empty under a highlighted folder.
     if (tag) setExcludeTags((prev) => prev.filter((t) => t.id !== tag.id));
+    exitToFeed();
   };
 
   // Toggle a tag's filter: include ("must have", lives in searchTags,
@@ -257,6 +271,9 @@ export default function Home() {
           : [...prev, tag]
         : prev.filter((t) => t.id !== tagId),
     );
+    // Applying a filter (not un-toggling one) means "show me the feed with
+    // this filter" — leave any competing similar/semantic view so it lands.
+    if (state !== null) exitToFeed();
   };
 
   const handleClearFilters = () => {
@@ -586,6 +603,7 @@ export default function Home() {
               <SearchBar
                 tags={tags.data}
                 selectedTags={searchTags}
+                searchText={searchText}
                 mode={searchMode}
                 onSearchChange={(selectedTags, text) => {
                   recordAction("search_change", {
@@ -594,6 +612,15 @@ export default function Home() {
                   });
                   setSearchTags(selectedTags);
                   setSearchText(text);
+                  // Typing a semantic query while an image's similar-set is
+                  // open would otherwise be silently deferred (the query is
+                  // suppressed while selectedItem is set) and then "explode"
+                  // onto the feed when the image closes. Exit the similar
+                  // view now so the search runs immediately and visibly.
+                  const q = text.trim();
+                  if (q.length > 0 && !q.startsWith("#") && selectedItem) {
+                    navigate("/");
+                  }
                 }}
                 placeholder="Search images or type # to filter by tags..."
                 onCreateTag={async (name, color) => {

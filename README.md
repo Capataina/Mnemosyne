@@ -42,6 +42,7 @@ Everything runs locally. Embeddings are generated on your machine using ONNX Run
 - **Manual tags** with optional colours, added and removed per image from the inspector or search bar
 - **Tag autocomplete** with `#tag` syntax in the search bar; tags can be created on the fly by typing a new name
 - **AND / OR tag filtering** — show images that match all selected tags or any of them
+- **Library drawer (folders-as-tags)** — a slide-in left drawer where every tag *is* a folder (no separate folder concept); open a folder to browse it, or compose the feed with include ("must have") and exclude ("must not have") filters, each showing a live per-folder image count. Applying a filter always acts on the visible feed, leaving any open similar-set or search
 - **Tag deletion** from the search bar dropdown, with optimistic UI updates throughout
 
 ### Notes
@@ -51,12 +52,14 @@ Everything runs locally. Embeddings are generated on your machine using ONNX Run
 ### Visual similarity search (image → image)
 
 - **Click any image** in the inspector to retrieve the most visually similar images from the entire library
+- **Similarity breadcrumb trail** — dive from one image into its similar-set and onward through a cascade, with a breadcrumb strip to rewind to any earlier image in the trail or step back one hop at a time
 - **Multi-encoder fusion** combining three independently-trained vision models via **Reciprocal Rank Fusion** (Cormack 2009, k=60):
   - **CLIP ViT-B/32** (OpenCLIP, LAION-2B, MIT-licensed, 512-d) — strong on captionable visual concepts
   - **DINOv2-Base** (Meta, 768-d) — strong on self-supervised visual structure and texture
   - **SigLIP-2 Base 256** (Google, 768-d) — strong on full-image semantics with no centre-crop
 - **Per-encoder toggles** in settings — enable any subset; the fusion ranker adapts automatically
 - **Cosine-based ranking** with persistent on-disk cache that survives restarts
+- **Gesture-drawing timer** — a figure-drawing practice mode launched from the inspector that cycles through an image's similar-set on a configurable interval, image count, and repeat setting
 
 ### Semantic search (text → image)
 
@@ -245,7 +248,7 @@ Future asset browsers — **Syrinx** (audio) and **Daedalus** (3D) — join as s
 - **Performance at scale** — thumbnail caching, embedding precomputation, cosine cache persistence, and parallel encoder execution mean the UI stays fast regardless of library size.
 - **Offline ML inference** — every encoder runs entirely via ONNX Runtime. No Python, no external ML service, no GPU required (CUDA used on non-macOS when available).
 - **Modularity and toggleability** — encoders are swappable; per-encoder toggles let you enable any subset without rebuilding. The fusion ranker adapts to whichever encoders are active.
-- **Separation of concerns** — React frontend, Tauri IPC layer, Rust backend logic, and SQLite persistence are cleanly separated and independently testable. 137 Rust unit tests + 71 Vitest tests gate every change.
+- **Separation of concerns** — React frontend, Tauri IPC layer, Rust backend logic, and SQLite persistence are cleanly separated and independently testable. 156 Rust tests + 72 Vitest tests gate every change.
 - **Observability when you need it, zero overhead when you don't** — the profiling layer is opt-in via a CLI flag and produces a structured markdown report on exit.
 
 ---

@@ -23,7 +23,8 @@ Everything runs locally. Embeddings are generated on your machine using ONNX Run
 
 - **Pinterest-style masonry grid** with shortest-column packing and aspect-ratio-preserving thumbnails — handles tens of thousands of images without performance degradation
 - **Infinite scroll** with virtualised loading via TanStack Query
-- **Adjustable column count, animation level, and sort mode** (recent, random, stable)
+- **Adjustable column count, animation level, and sort mode** (shuffle, name, added, or custom)
+- **Drag-to-reorder and drag-to-resize** in Custom sort mode — drag any tile to reposition it, or grab any of its four corners to widen or narrow its column span; aspect ratio is always preserved
 - **Hover micro-interactions** and 3D tilt animations (toggleable for low-power preference)
 - **Fullscreen modal inspector** with prev/next navigation, keyboard shortcuts, and inline tag/note editing
 - **Slideshow mode** — fullscreen auto-advancing slideshow over any view: main feed, tag-filtered results, or search results
@@ -68,7 +69,7 @@ Everything runs locally. Embeddings are generated on your machine using ONNX Run
 - **Theme** — light, dark, or system
 - **Display** — column count, animation level, image scale
 - **Search** — result counts, tag-filter mode (AND/OR)
-- **Sort** — recent, random, stable
+- **Sort** — shuffle, name, added, or custom (enables drag-to-reorder)
 - **Folders** — add, remove, enable/disable scan roots; trigger manual rescans
 - **Encoders** — per-encoder enable/disable toggles for image and text directions
 - **Reset** — clear preferences without touching the library
@@ -80,10 +81,11 @@ Everything runs locally. Embeddings are generated on your machine using ONNX Run
 - **WAL-mode SQLite** with separate writer and read-only secondary connections, batched embedding upserts, and manual checkpointing between encoder batches
 - **Live indexing-status pill** in the top-right showing scan, thumbnail, and encoder progress in real time
 - **Optional profiling mode** (`--profiling` flag) — span timing, 1 Hz RSS/CPU sampler, named domain diagnostics, on-exit markdown report; zero overhead when off
+- **INT8 quantized encoder weights** — `scripts/quantize_models.py` produces statically-calibrated INT8 variants (~4x smaller on disk) alongside the FP32 originals; `model_precision` in settings picks which one loads, so both can be A/B tested
 
 ### Privacy and offline operation
 
-- **Local-only storage** — SQLite database, thumbnail cache, and ONNX model files all live in your platform's app-data directory (`~/Library/Application Support/com.ataca.image-browser/` on macOS)
+- **Local-only storage** — SQLite database, thumbnail cache, and ONNX model files all live in your platform's app-data directory (`~/Library/Application Support/com.ataca.lynceus/` on macOS)
 - **No accounts, no telemetry, no API keys**
 - **First-launch model download** is the only network call the app makes — once models are cached locally, the app runs fully offline
 - **Original images are never modified or moved** — only metadata, thumbnails, and embeddings are derived
@@ -243,7 +245,7 @@ Future asset browsers — **Syrinx** (audio) and **Daedalus** (3D) — join as s
 - **Performance at scale** — thumbnail caching, embedding precomputation, cosine cache persistence, and parallel encoder execution mean the UI stays fast regardless of library size.
 - **Offline ML inference** — every encoder runs entirely via ONNX Runtime. No Python, no external ML service, no GPU required (CUDA used on non-macOS when available).
 - **Modularity and toggleability** — encoders are swappable; per-encoder toggles let you enable any subset without rebuilding. The fusion ranker adapts to whichever encoders are active.
-- **Separation of concerns** — React frontend, Tauri IPC layer, Rust backend logic, and SQLite persistence are cleanly separated and independently testable. 125 Rust unit tests + 62 Vitest tests gate every change.
+- **Separation of concerns** — React frontend, Tauri IPC layer, Rust backend logic, and SQLite persistence are cleanly separated and independently testable. 143 Rust unit tests + 68 Vitest tests gate every change.
 - **Observability when you need it, zero overhead when you don't** — the profiling layer is opt-in via a CLI flag and produces a structured markdown report on exit.
 
 ---

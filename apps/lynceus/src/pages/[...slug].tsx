@@ -228,6 +228,10 @@ export default function Home() {
   const handleSelectFolder = (tagId: number | null) => {
     const tag = tagId === null ? null : (tags.data ?? []).find((t) => t.id === tagId);
     setSearchTags(tag ? [tag] : []);
+    // Keep include and exclude disjoint: selecting a folder that was in the
+    // exclude set must drop it there, otherwise the same tag is required AND
+    // forbidden and the grid is always empty under a highlighted folder.
+    if (tag) setExcludeTags((prev) => prev.filter((t) => t.id !== tag.id));
   };
 
   // Toggle a tag's filter: include ("must have", lives in searchTags,
@@ -327,38 +331,40 @@ export default function Home() {
     feed,
   ]);
 
-  // Find selected item from URL.
+  // Resolve the selected image from the URL.
   //
-  // Bug fix (audit finding 3 + companion in `systems/search-routing.md`):
-  // we must look up the id in `displayImages` FIRST, then fall back to
-  // `images.data`. Previously this only walked `images.data`, which
-  // breaks every semantic-search-result click whose id is not in the
-  // currently-loaded catalogue page (the most common case once the user
-  // has applied a tag filter or shuffled the catalogue). The fix
-  // restores the documented intended behaviour — clicking a search
-  // result selects it.
+  // Lookup order: the loaded catalogue (`images.data`) FIRST, then the
+  // active result list (`displayImages`) as a fallback. Catalogue-first
+  // means an on-screen image keeps its REAL tags in the inspector; the
+  // displayImages fallback still makes a semantic/similar result whose id
+  // isn't in the currently-filtered catalogue selectable.
   //
-  // The cycle (`displayImages` derives from `selectedItem`,
-  // `selectedItem` derives from `displayImages`) is benign — React
-  // resolves it on the next render: first render computes
-  // displayImages from the previous selectedItem, then the effect runs
-  // and updates selectedItem if the URL changed, then displayImages
-  // recomputes against the new selectedItem.
+  // The early-return guard is load-bearing, not an optimisation. When a
+  // tag/exclude filter is active and the clicked id falls OUTSIDE it, the
+  // id is absent from `images.data`; and because `displayImages` flips with
+  // `selectedItem` (selecting an image swaps the grid to its similar-set,
+  // which never contains the image itself), the naive lookup oscillated the
+  // selection null↔id forever — "Maximum update depth exceeded". Once
+  // `selectedItem` already matches the URL, we stop re-deriving it.
   useEffect(() => {
     const pathId = location.pathname.replace(/\//g, "");
     if (!pathId) {
       setSelectedItem(null);
       setIsInspecting(false);
+      // Leaving to the feed root ends the similarity cascade — drop the
+      // breadcrumb trail so a later feed click can't inherit a stale one.
+      setSimTrail([]);
       return;
     }
-    const fromDisplay = displayImages?.find((i) => i.id.toString() === pathId);
+    if (selectedItem?.id.toString() === pathId) return;
     const fromCatalogue = images.data?.find((i) => i.id.toString() === pathId);
-    const item = fromDisplay ?? fromCatalogue ?? null;
+    const fromDisplay = displayImages?.find((i) => i.id.toString() === pathId);
+    const item = fromCatalogue ?? fromDisplay ?? null;
     setSelectedItem(item);
     if (!item) {
       setIsInspecting(false);
     }
-  }, [location, displayImages, images.data]);
+  }, [location, displayImages, images.data, selectedItem]);
 
   // Determine if we're in a loading state
   const isSearchLoading = shouldUseSemanticSearch && semanticSearchResults.isFetching;
@@ -372,6 +378,14 @@ export default function Home() {
     !shouldUseSemanticSearch &&
     searchTags.length === 0 &&
     excludeTags.length === 0;
+
+  // The manual reorder is a nudge over the UNFILTERED feed. The moment a
+  // filter narrows the feed, those ranks are meaningless — and worse, they'd
+  // clump the previously-dragged tiles at the top of a folder view. Clear
+  // them whenever reorder isn't available (any filter, similar, or search).
+  useEffect(() => {
+    if (!reorderEnabled) setSessionOrder(null);
+  }, [reorderEnabled]);
 
   const handleReorder = (orderedIds: number[]) => {
     recordAction("masonry_reorder", { count: orderedIds.length });
@@ -389,6 +403,7 @@ export default function Home() {
   const handleGoHome = () => {
     recordAction("go_home", { via: "wordmark" });
     setSearchTags([]);
+    setExcludeTags([]);
     setSearchText("");
     setIsInspecting(false);
     navigate("/");

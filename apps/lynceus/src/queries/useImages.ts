@@ -77,6 +77,11 @@ export function useAssignTagToImage() {
         queryClient.setQueryData(["images"], context.prevImages);
       }
     },
+
+    // Assigning a tag bumps that folder's count in the library drawer.
+    onSettled: () => {
+      queryClient.invalidateQueries({ queryKey: ["tagCounts"] });
+    },
   });
 }
 
@@ -147,6 +152,11 @@ export function useRemoveTagFromImage() {
       if (context?.prevImages) {
         queryClient.setQueryData(["images"], context.prevImages);
       }
+    },
+
+    // Removing a tag drops that folder's count in the library drawer.
+    onSettled: () => {
+      queryClient.invalidateQueries({ queryKey: ["tagCounts"] });
     },
   });
 }

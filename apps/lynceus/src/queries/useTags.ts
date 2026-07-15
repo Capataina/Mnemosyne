@@ -41,6 +41,12 @@ export function useCreateTag() {
         old.map((tag) => (tag.id === -1 ? newTag : tag))
       );
     },
+
+    // A new tag is a new (zero-count) folder in the library drawer — refresh
+    // the counts so it appears there without a manual reload.
+    onSettled: () => {
+      queryClient.invalidateQueries({ queryKey: ["tagCounts"] });
+    },
   });
 }
 
@@ -83,6 +89,11 @@ export function useDeleteTag() {
       // Image cache will self-correct on next refetch; we don't snapshot
       // every image query because there can be many cache keys.
       queryClient.invalidateQueries({ queryKey: ["images"] });
+    },
+
+    // The deleted tag's folder (and its count row) vanishes from the drawer.
+    onSettled: () => {
+      queryClient.invalidateQueries({ queryKey: ["tagCounts"] });
     },
   });
 }

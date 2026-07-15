@@ -364,11 +364,14 @@ export default function Home() {
   const isSearchLoading = shouldUseSemanticSearch && semanticSearchResults.isFetching;
 
   // Drag-to-reorder is a live in-session nudge, offered on the full,
-  // unfiltered feed only — reordering a tag-filtered or search subset
-  // is ambiguous against the shuffle, so it's withheld there. Not
-  // persisted: a reshuffle (new entry) clears it.
+  // unfiltered feed only — reordering any subset (tag-filtered, search, or
+  // exclude-filtered) is ambiguous against the shuffle, so it's withheld
+  // whenever a filter is active. Not persisted: a reshuffle clears it.
   const reorderEnabled =
-    !selectedItem && !shouldUseSemanticSearch && searchTags.length === 0;
+    !selectedItem &&
+    !shouldUseSemanticSearch &&
+    searchTags.length === 0 &&
+    excludeTags.length === 0;
 
   const handleReorder = (orderedIds: number[]) => {
     recordAction("masonry_reorder", { count: orderedIds.length });

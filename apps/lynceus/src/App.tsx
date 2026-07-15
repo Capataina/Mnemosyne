@@ -4,6 +4,7 @@ import "react";
 import { BrowserRouter, useRoutes } from "react-router-dom";
 
 import routes from "~react-pages";
+import { ConfirmProvider } from "./components/ui/confirm";
 import { queryClient } from "./queries/queryClient";
 
 function Routes() {
@@ -14,7 +15,9 @@ function App() {
   return (
     <BrowserRouter>
       <QueryClientProvider client={queryClient}>
-        <Routes />
+        <ConfirmProvider>
+          <Routes />
+        </ConfirmProvider>
       </QueryClientProvider>
     </BrowserRouter>
   );

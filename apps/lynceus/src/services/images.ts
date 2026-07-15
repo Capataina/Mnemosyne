@@ -22,12 +22,14 @@ export async function fetchImages(
   filterTagIds: number[] = [],
   filterString: string = "",
   matchAllTags: boolean = false,
+  excludeTagIds: number[] = [],
 ): Promise<ImageItem[]> {
   try {
     const imagesDB: ImageData[] = await perfInvoke("get_images", {
       filterTagIds,
       filterString,
       matchAllTags,
+      excludeTagIds,
     });
 
     // Backend returns stable id-ASC order. The main feed re-orders via

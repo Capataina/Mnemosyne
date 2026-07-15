@@ -1,4 +1,5 @@
 import { FolderPlus, Trash2 } from "lucide-react";
+import { useConfirm } from "@/components/ui/confirm";
 import {
   useAddRoot,
   useRemoveRoot,
@@ -14,6 +15,7 @@ export function FoldersSection() {
   const addRootMutation = useAddRoot();
   const removeRootMutation = useRemoveRoot();
   const toggleRootMutation = useSetRootEnabled();
+  const confirm = useConfirm();
 
   return (
     <Section
@@ -35,9 +37,12 @@ export function FoldersSection() {
               recordAction("folder_add", { path: folder });
               await addRootMutation.mutateAsync(folder);
             } catch (err) {
-              window.alert(
-                `Could not add folder: ${err instanceof Error ? err.message : String(err)}`,
-              );
+              await confirm({
+                title: "Could not add folder",
+                description: err instanceof Error ? err.message : String(err),
+                confirmLabel: "OK",
+                alert: true,
+              });
             }
           }}
         >
@@ -81,12 +86,14 @@ export function FoldersSection() {
               </p>
             </div>
             <button
-              onClick={() => {
-                if (
-                  window.confirm(
-                    `Remove ${root.path}?\n\nThe images from this folder will be removed from the index. The actual files on disk are not touched.`,
-                  )
-                ) {
+              onClick={async () => {
+                const confirmed = await confirm({
+                  title: "Remove folder?",
+                  description: `${root.path}\n\nThe images from this folder will be removed from the index. The actual files on disk are not touched.`,
+                  confirmLabel: "Remove folder",
+                  destructive: true,
+                });
+                if (confirmed) {
                   recordAction("folder_remove", {
                     id: root.id,
                     path: root.path,

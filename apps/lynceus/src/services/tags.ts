@@ -28,3 +28,19 @@ export async function deleteTag(tagId: number): Promise<void> {
     throw new Error(`Failed to delete tag: ${error}`);
   }
 }
+
+export interface TagCount {
+  tag_id: number;
+  count: number;
+}
+
+/** Per-tag image counts under the grid's visibility predicate, so a
+ *  tag-folder's number matches what opening it shows. Returns a row for
+ *  every tag, including zero-count ones. */
+export async function getTagCounts(): Promise<TagCount[]> {
+  try {
+    return await invoke<TagCount[]>("get_tag_counts");
+  } catch (error) {
+    throw new Error(`Failed to fetch tag counts: ${error}`);
+  }
+}

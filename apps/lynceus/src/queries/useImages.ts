@@ -13,6 +13,8 @@ export function useImages(filters?: {
   /** When true, match images that have ALL selected tags (AND).
    *  When false (default), match images with ANY selected tag (OR). */
   matchAllTags?: boolean;
+  /** Tags an image must NOT carry (the drawer's "must not have" filter). */
+  excludeTagIds?: number[];
 }) {
   const tagIds = filters?.tagIds ?? [];
   // searchText is intentionally NOT in the queryKey: the backend ignores
@@ -21,6 +23,7 @@ export function useImages(filters?: {
   // data. We still pass it through to fetchImages for future-proofing.
   const searchText = filters?.searchText ?? "";
   const matchAllTags = filters?.matchAllTags ?? false;
+  const excludeTagIds = filters?.excludeTagIds ?? [];
 
   return useQuery<ImageItem[]>({
     // Ordering (shuffle) and thumbnail-gating happen client-side in
@@ -29,8 +32,8 @@ export function useImages(filters?: {
     // progress invalidations refetch this same key; because the shuffle
     // key is derived per-image, existing tiles never move — only
     // newly-thumbnailed images pop into the feed.
-    queryKey: ["images", tagIds, matchAllTags],
-    queryFn: () => fetchImages(tagIds, searchText, matchAllTags),
+    queryKey: ["images", tagIds, matchAllTags, excludeTagIds],
+    queryFn: () => fetchImages(tagIds, searchText, matchAllTags, excludeTagIds),
     enabled: true,
   });
 }

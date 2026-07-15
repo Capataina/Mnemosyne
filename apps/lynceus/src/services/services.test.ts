@@ -116,6 +116,7 @@ describe("services/images", () => {
       filterTagIds: [1, 2],
       filterString: "skipped",
       matchAllTags: true,
+      excludeTagIds: [],
     });
   });
 
@@ -127,6 +128,21 @@ describe("services/images", () => {
       filterTagIds: [1],
       filterString: "",
       matchAllTags: false,
+      excludeTagIds: [],
+    });
+  });
+
+  it("fetchImages threads excludeTagIds through to invoke", async () => {
+    const { fetchImages } = await import("./images");
+    mockInvoke.mockResolvedValueOnce([]);
+    // Include tag 1, exclude tags 2 and 3 — the library drawer's
+    // "must have" / "must not have" split reaches the backend intact.
+    await fetchImages([1], "", false, [2, 3]);
+    expect(mockInvoke).toHaveBeenCalledWith("get_images", {
+      filterTagIds: [1],
+      filterString: "",
+      matchAllTags: false,
+      excludeTagIds: [2, 3],
     });
   });
 

@@ -9,6 +9,7 @@ import {
 
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
+import { useConfirm } from "@/components/ui/confirm";
 import {
   Command,
   CommandEmpty,
@@ -43,6 +44,7 @@ interface TagDropdownProps {
 
 export function TagDropdown(props: TagDropdownProps) {
   const [input, setInput] = useState("");
+  const confirm = useConfirm();
 
   useEffect(() => {
     if (props.open === false) {
@@ -157,15 +159,19 @@ export function TagDropdown(props: TagDropdownProps) {
                         title={`Delete tag "${tag.name}" from catalog`}
                         aria-label={`Delete tag ${tag.name}`}
                         className="ml-2 grid size-7 shrink-0 place-items-center rounded-lg text-muted-foreground opacity-0 transition-[opacity,color,background-color] group-hover:opacity-65 hover:bg-destructive/10 hover:text-destructive hover:opacity-100"
-                        onClick={(e) => {
+                        onClick={async (e) => {
                           // stopPropagation so the row's onSelect (toggle)
                           // doesn't fire when the user clicks the trash icon
                           e.stopPropagation();
-                          if (
-                            window.confirm(
-                              `Delete tag "${tag.name}" from the catalog? It will be removed from every image that has it.`
-                            )
-                          ) {
+                          props.setOpen(false);
+                          const confirmed = await confirm({
+                            title: `Delete tag "${tag.name}"?`,
+                            description:
+                              "This removes the tag from every image that has it.",
+                            confirmLabel: "Delete tag",
+                            destructive: true,
+                          });
+                          if (confirmed) {
                             props.onDeleteTag!(tag.id);
                           }
                         }}

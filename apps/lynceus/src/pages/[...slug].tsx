@@ -11,6 +11,9 @@ import { useSemanticSearch } from "../queries/useSemanticSearch";
 import { useDebouncedValue } from "../hooks/useDebouncedValue";
 import { useShuffledFeed, newShuffleSeed } from "../hooks/useShuffledFeed";
 import { useIndexingStatus } from "../hooks/useIndexingStatus";
+import { LibraryDrawer, LibraryMenuButton } from "@/components/library-drawer";
+import { useConfirm } from "@/components/ui/confirm";
+import { getTagCounts } from "@/services/tags";
 import { ImageItem, Tag } from "../types";
 import { AnimatePresence, motion } from "framer-motion";
 import { useLocation, useNavigate } from "react-router";
@@ -21,7 +24,7 @@ import { IndexingStatusPill } from "@/components/IndexingStatusPill";
 import { SettingsDrawer } from "@/components/settings";
 import { PerfOverlay } from "@/components/PerfOverlay";
 import { isProfilingEnabled, recordAction, onRenderProfiler } from "@/services/perf";
-import { useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { FolderPlus, Settings as SettingsIcon } from "lucide-react";
 import { pickScanFolder, fetchFusedSimilarImages } from "@/services/images";
 import { useAddRoot, useRoots } from "@/queries/useRoots";
@@ -106,17 +109,40 @@ export default function Home() {
   // In-session drag-reorder: a full id ordering applied on top of the
   // shuffle, NOT persisted — a reshuffle (new entry) clears it.
   const [sessionOrder, setSessionOrder] = useState<number[] | null>(null);
+  // Similarity navigation trail: the images dived through via
+  // similar→click→similar. Powers back-one-hop + a breadcrumb strip so a
+  // deep cascade stays navigable (the UX council's top pick). Cleared on
+  // return to the feed.
+  const [simTrail, setSimTrail] = useState<ImageItem[]>([]);
+  // Library drawer (folders-as-tags): its open state + the exclude-tag
+  // ("must not have") filter set. The include set is `searchTags`, shared
+  // with the search bar; `activeFolderId` just highlights the open folder.
+  const [libraryDrawerOpen, setLibraryDrawerOpen] = useState(false);
+  const [excludeTags, setExcludeTags] = useState<Tag[]>([]);
+  const [activeFolderId, setActiveFolderId] = useState<number | null>(null);
+  const confirm = useConfirm();
 
   const images = useImages({
     tagIds: searchTags.map((t) => t.id),
     searchText: searchText,
     matchAllTags: prefs.tagFilterMode === "all",
+    excludeTagIds: excludeTags.map((t) => t.id),
   });
 
   // The main feed: stable-key shuffle + thumbnail-gate + any in-session
   // reorder. Search / similar results bypass this and keep their ranking.
   const feed = useShuffledFeed(images.data, shuffleSeed, sessionOrder);
-  const { isIndexing } = useIndexingStatus();
+  const { isIndexing, stats: pipelineStats } = useIndexingStatus();
+
+  // "All images" count for the library drawer. NOT `images.data.length` —
+  // that's the currently-filtered catalogue, which shrinks to the selected
+  // folder's size. total_images − orphaned is the whole non-orphaned
+  // library: a stable superset of every tag-folder count (so "All images"
+  // never reads smaller than a folder), independent of the active filter.
+  // Falls back to the loaded catalogue length until the first stats poll.
+  const totalVisibleImages = pipelineStats
+    ? Math.max(0, pipelineStats.total_images - pipelineStats.orphaned)
+    : (images.data?.length ?? 0);
 
   // Re-shuffle whenever the user leaves a results view (search or
   // similar) back to the main feed. Launch is covered by the random
@@ -170,6 +196,74 @@ export default function Home() {
     selectedItem?.id,
     prefs.imageEncoder,
   );
+
+  // --- Library drawer wiring (folders-as-tags) -------------------------
+  // Merge the tag list with per-tag image counts (visibility-matched on
+  // the backend) so each folder shows how many images it contains.
+  const tagCounts = useQuery({ queryKey: ["tagCounts"], queryFn: getTagCounts });
+  const libraryTags = useMemo(() => {
+    const counts = new Map(
+      (tagCounts.data ?? []).map((c) => [c.tag_id, c.count] as const),
+    );
+    return (tags.data ?? []).map((t) => ({
+      ...t,
+      imageCount: counts.get(t.id) ?? 0,
+    }));
+  }, [tags.data, tagCounts.data]);
+  const includeTagIds = useMemo(
+    () => new Set(searchTags.map((t) => t.id)),
+    [searchTags],
+  );
+  const excludeTagIdSet = useMemo(
+    () => new Set(excludeTags.map((t) => t.id)),
+    [excludeTags],
+  );
+
+  // Select a tag-folder: filter the feed to that single tag and highlight
+  // it. Passing null clears the folder selection.
+  const handleSelectFolder = (tagId: number | null) => {
+    setActiveFolderId(tagId);
+    const tag = tagId === null ? null : (tags.data ?? []).find((t) => t.id === tagId);
+    setSearchTags(tag ? [tag] : []);
+  };
+
+  // Toggle a tag's filter: include ("must have", lives in searchTags,
+  // shared with the search bar) / exclude ("must not have", excludeTags) /
+  // off. The two sets stay disjoint.
+  const handleSetTagFilter = (
+    tagId: number,
+    state: "include" | "exclude" | null,
+  ) => {
+    const tag = (tags.data ?? []).find((t) => t.id === tagId);
+    if (!tag) return;
+    setSearchTags((prev) =>
+      state === "include"
+        ? prev.some((t) => t.id === tagId)
+          ? prev
+          : [...prev, tag]
+        : prev.filter((t) => t.id !== tagId),
+    );
+    setExcludeTags((prev) =>
+      state === "exclude"
+        ? prev.some((t) => t.id === tagId)
+          ? prev
+          : [...prev, tag]
+        : prev.filter((t) => t.id !== tagId),
+    );
+  };
+
+  const handleClearFilters = () => {
+    setSearchTags([]);
+    setExcludeTags([]);
+    setActiveFolderId(null);
+  };
+
+  // Active search mode, for the search-bar indicator.
+  const searchMode: "tags" | "semantic" | "idle" = shouldUseSemanticSearch
+    ? "semantic"
+    : searchTags.length > 0
+      ? "tags"
+      : "idle";
 
   const location = useLocation();
   const navigate = useNavigate();
@@ -298,6 +392,7 @@ export default function Home() {
   const handleClose = () => {
     recordAction("image_close", { id: selectedItem?.id });
     setIsInspecting(false);
+    setSimTrail([]);
     // Navigating home clears selectedItem; the entry effect above treats
     // that as a return to the feed and re-shuffles.
     navigate("/");
@@ -342,8 +437,33 @@ export default function Home() {
     } else {
       // Clicking on a different image → select it
       recordAction("image_click", { id: item.id });
+      // Diving deeper into a similarity cascade (already viewing an
+      // image's similar-set, now clicking one of those) → remember the
+      // current image so "back one hop" can return to it.
+      if (selectedItem && !shouldUseSemanticSearch) {
+        setSimTrail((t) => [...t, selectedItem]);
+      }
       navigate(`/${item.id}/`);
     }
+  };
+
+  // Back one similarity hop — return to the previous image in the trail.
+  const handleBackHop = () => {
+    const prev = simTrail[simTrail.length - 1];
+    if (!prev) return;
+    recordAction("similarity_back", { to: prev.id });
+    setSimTrail((t) => t.slice(0, -1));
+    navigate(`/${prev.id}/`);
+  };
+
+  // Rewind to a specific image in the breadcrumb trail (drop everything
+  // after it).
+  const handleRewindTo = (index: number) => {
+    const target = simTrail[index];
+    if (!target) return;
+    recordAction("similarity_rewind", { to: target.id, index });
+    setSimTrail((t) => t.slice(0, index));
+    navigate(`/${target.id}/`);
   };
 
   return (
@@ -355,6 +475,30 @@ export default function Home() {
       <SettingsDrawer
         open={settingsOpen}
         onClose={() => setSettingsOpen(false)}
+      />
+
+      {/* Library drawer — folders-as-tags, slides in from the left. Its
+          include set is the shared `searchTags`; exclude is `excludeTags`. */}
+      <LibraryDrawer
+        id="library-drawer"
+        open={libraryDrawerOpen}
+        onClose={() => setLibraryDrawerOpen(false)}
+        tags={libraryTags}
+        totalImageCount={totalVisibleImages}
+        activeTagId={activeFolderId}
+        includeTagIds={includeTagIds}
+        excludeTagIds={excludeTagIdSet}
+        onSelectFolder={handleSelectFolder}
+        onSetTagFilter={handleSetTagFilter}
+        onClearFilters={handleClearFilters}
+        loading={tags.isLoading || tagCounts.isLoading}
+        errorMessage={
+          tags.isError
+            ? "Could not load your tags."
+            : tagCounts.isError
+              ? "Could not load folder counts."
+              : null
+        }
       />
 
       {/* Performance overlay — toggled with ⌘⇧P */}
@@ -399,6 +543,13 @@ export default function Home() {
         {/* Search Bar + folder-picker control */}
         <header className="chrome-surface sticky top-0 z-40 border-b">
           <div className="mx-auto flex h-[72px] w-full items-center gap-3 px-5 md:px-8 lg:gap-4 lg:px-10">
+            {/* Library drawer toggle (folders-as-tags) — always visible, the
+                left-most anchor of the top bar. */}
+            <LibraryMenuButton
+              open={libraryDrawerOpen}
+              onOpen={() => setLibraryDrawerOpen(true)}
+              drawerId="library-drawer"
+            />
             <div className="hidden w-32 shrink-0 items-center xl:flex">
               <button
                 type="button"
@@ -414,6 +565,7 @@ export default function Home() {
             <div className="mx-auto min-w-0 max-w-3xl flex-1">
               <SearchBar
                 tags={tags.data}
+                mode={searchMode}
                 onSearchChange={(selectedTags, text) => {
                   recordAction("search_change", {
                     text,
@@ -447,16 +599,23 @@ export default function Home() {
                   // message. The backend still rejects duplicates as a
                   // safety net (the cache could be stale on cold start).
                   if (roots?.some((r) => r.path === folder)) {
-                    window.alert("That folder is already in your library.");
+                    await confirm({
+                      title: "Folder already added",
+                      description: "That folder is already in your library.",
+                      alert: true,
+                    });
                     return;
                   }
                   recordAction("folder_add", { path: folder, via: "topbar" });
                   await addRootMutation.mutateAsync(folder);
                 } catch (err) {
                   console.error("Folder picker failed:", err);
-                  window.alert(
-                    `Could not add folder: ${err instanceof Error ? err.message : String(err)}`
-                  );
+                  await confirm({
+                    title: "Could not add folder",
+                    description:
+                      err instanceof Error ? err.message : String(err),
+                    alert: true,
+                  });
                 }
               }}
             >
@@ -529,24 +688,63 @@ export default function Home() {
               initial={{ opacity: 0, y: -10 }}
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: -10 }}
-              className="mb-7 flex items-end justify-between gap-5 border-b border-border pb-5"
+              className="mb-7 flex flex-col gap-4 border-b border-border pb-5"
             >
-              <div>
-                <h2 className="text-[24px] font-[620] tracking-[-0.04em] text-foreground">
-                  More like this
-                </h2>
-                <p className="mt-1 text-[12px] tabular-nums text-muted-foreground">
-                  {tieredSimilarImages.isFetching
-                    ? "Finding similar images..."
-                    : `${tieredSimilarImages.data?.length || 0} similar images`}
-                </p>
+              {/* Similarity breadcrumb trail — the images dived through to
+                  reach here; click any thumbnail to rewind to that fork. */}
+              {simTrail.length > 0 && (
+                <div className="flex items-center gap-1.5 overflow-x-auto pb-0.5">
+                  {simTrail.map((img, i) => (
+                    <button
+                      key={`${img.id}-${i}`}
+                      onClick={() => handleRewindTo(i)}
+                      title={`Back to ${img.name}`}
+                      className="group flex shrink-0 items-center gap-1.5"
+                    >
+                      <img
+                        src={img.thumbnailUrl ?? img.url}
+                        alt={img.name}
+                        className="h-8 w-8 rounded-[7px] object-cover opacity-65 ring-1 ring-border transition-opacity group-hover:opacity-100"
+                      />
+                      <span className="text-[11px] text-muted-foreground">›</span>
+                    </button>
+                  ))}
+                  <img
+                    src={selectedItem.thumbnailUrl ?? selectedItem.url}
+                    alt={selectedItem.name}
+                    className="h-8 w-8 shrink-0 rounded-[7px] object-cover ring-2 ring-primary/60"
+                  />
+                </div>
+              )}
+
+              <div className="flex items-end justify-between gap-5">
+                <div>
+                  <h2 className="text-[24px] font-[620] tracking-[-0.04em] text-foreground">
+                    More like this
+                  </h2>
+                  <p className="mt-1 text-[12px] tabular-nums text-muted-foreground">
+                    {tieredSimilarImages.isFetching
+                      ? "Finding similar images..."
+                      : `${tieredSimilarImages.data?.length || 0} similar images`}
+                  </p>
+                </div>
+                <div className="flex shrink-0 items-center gap-2">
+                  {simTrail.length > 0 && (
+                    <button
+                      onClick={handleBackHop}
+                      className="h-9 rounded-[10px] border border-border bg-surface/65 px-3.5 text-[12px] font-[560] text-foreground transition-[background-color,border-color,transform] hover:border-border-strong hover:bg-accent active:scale-[0.98]"
+                    >
+                      ‹ Back one
+                    </button>
+                  )}
+                  <button
+                    onClick={handleClose}
+                    className="h-9 rounded-[10px] border border-border bg-surface/65 px-3.5 text-[12px] font-[560] text-secondary-foreground transition-[background-color,border-color,transform] hover:border-border-strong hover:bg-accent active:scale-[0.98]"
+                  >
+                    ← Back to all
+                  </button>
+                </div>
               </div>
-              <button
-                onClick={handleClose}
-                className="h-9 shrink-0 rounded-[10px] border border-border bg-surface/65 px-3.5 text-[12px] font-[560] text-secondary-foreground transition-[background-color,border-color,transform] hover:border-border-strong hover:bg-accent active:scale-[0.98]"
-              >
-                ← Back to all
-              </button>
             </motion.div>
           )}
         </AnimatePresence>

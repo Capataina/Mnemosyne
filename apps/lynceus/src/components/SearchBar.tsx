@@ -17,6 +17,7 @@ interface SearchBarProps {
   onSearchChange: (selectedTags: Tag[], searchText: string) => void;
   placeholder?: string;
   onCreateTag?: (name: string, color: string) => Promise<Tag>;
+  mode?: "tags" | "semantic" | "idle";
 }
 
 export function SearchBar(props: SearchBarProps) {
@@ -174,6 +175,19 @@ export function SearchBar(props: SearchBarProps) {
             className="min-w-[120px] flex-1 bg-transparent text-[13px] text-foreground outline-none placeholder:text-muted-foreground"
           />
         </div>
+
+        {props.mode && props.mode !== "idle" && (
+          <Badge
+            variant="outline"
+            className={
+              props.mode === "semantic"
+                ? "h-5 border-primary/25 bg-primary/[0.07] px-2 py-0 text-[9.5px] font-[620] tracking-[0.02em] text-primary"
+                : "h-5 border-border bg-surface-raised/45 px-2 py-0 text-[9.5px] font-[620] tracking-[0.02em] text-muted-foreground"
+            }
+          >
+            {props.mode === "tags" ? "Tags" : "Semantic"}
+          </Badge>
+        )}
 
         {hasContent && (
           <button

@@ -2,22 +2,13 @@ use super::math::{cosine_similarity, score_cmp_desc};
 use crate::db;
 use ndarray::Array1;
 use rand::prelude::*;
+use rayon::prelude::*;
 use std::path::PathBuf;
 use std::time::Instant;
 use tracing::{debug, info, warn};
 
 pub struct CosineIndex {
     pub cached_images: Vec<(PathBuf, Array1<f32>)>,
-    /// Reusable scratch buffer for per-query similarity calculations.
-    /// Holds `(index_into_cached_images, similarity)` tuples — keyed
-    /// by index so the inner loop never clones a `PathBuf`. Cleared
-    /// on entry to each retrieval method, capacity is preserved.
-    ///
-    /// Composes with `select_nth_unstable_by` (used by
-    /// `get_similar_images_sorted` and the diversity-pool prefix in
-    /// `get_similar_images`) to make warm queries effectively
-    /// allocation-free in the inner loop.
-    pub(super) scratch: Vec<(usize, f32)>,
 }
 
 impl Default for CosineIndex {
@@ -30,7 +21,6 @@ impl CosineIndex {
     pub fn new() -> Self {
         CosineIndex {
             cached_images: Vec::new(),
-            scratch: Vec::new(),
         }
     }
 
@@ -189,12 +179,50 @@ impl CosineIndex {
         cosine_similarity(a, b)
     }
 
+    /// Score every cached image against `embedding` in parallel, skipping
+    /// the optionally-excluded query image. Returns `(cache_idx,
+    /// similarity)` tuples.
+    ///
+    /// This is the shared hot loop behind all three retrieval methods.
+    /// Each per-image cosine score is independent, so rayon fans the scan
+    /// across the thread pool — the throughput win at 100k-image scale,
+    /// where a serial 100k-dot-product scan was the bottleneck.
+    ///
+    /// **Ranking is identical to the old serial loop.** rayon's `collect`
+    /// on a slice-derived parallel iterator preserves element order, so
+    /// the returned Vec is in `cached_images` order with excluded rows
+    /// dropped — byte-for-byte the same sequence the serial `for` loop
+    /// produced. The downstream `select_nth_unstable_by` / `sort_unstable_by`
+    /// are deterministic functions of that sequence, so tie-ordering and
+    /// the final top-k match the serial reference exactly (see
+    /// `parallel_scoring_matches_serial_reference`). Taking `&self` (no
+    /// shared scratch buffer) is also what lets concurrent queries score
+    /// under a shared read lock instead of serialising on a write lock.
+    fn score_all(
+        &self,
+        embedding: &Array1<f32>,
+        exclude_path: Option<&PathBuf>,
+    ) -> Vec<(usize, f32)> {
+        self.cached_images
+            .par_iter()
+            .enumerate()
+            .filter_map(|(idx, (path, emb))| {
+                if let Some(exclude) = exclude_path {
+                    if path == exclude {
+                        return None;
+                    }
+                }
+                Some((idx, cosine_similarity(embedding, emb)))
+            })
+            .collect()
+    }
+
     // write the return images function. This function is going to take an embedding and return the top n most similar images from the cached_images vector
     // the images that ir returns will be a top x percent of the cached images based on cosine similarity to encourage diversity
     // exclude_path: optional path to exclude from results (e.g., the query image itself)
     #[tracing::instrument(name = "cosine.get_similar_images", skip(self, embedding, exclude_path), fields(cached = self.cached_images.len(), top_n))]
     pub fn get_similar_images(
-        &mut self,
+        &self,
         embedding: &Array1<f32>,
         top_n: usize,
         exclude_path: Option<&PathBuf>,
@@ -206,31 +234,19 @@ impl CosineIndex {
             exclude_path
         );
 
-        // Step 1: compute similarities for every cached image (except the
-        // optionally-excluded query image) into the reusable scratch
-        // buffer. Indices into cached_images, NOT cloned PathBufs — we
-        // only clone the paths that actually survive into the final result.
-        self.scratch.clear();
-        let mut excluded_count = 0;
-        for (idx, (path, emb)) in self.cached_images.iter().enumerate() {
-            if let Some(exclude) = exclude_path {
-                if path == exclude {
-                    excluded_count += 1;
-                    continue;
-                }
-            }
-            let sim = Self::cosine_similarity(embedding, emb);
-            self.scratch.push((idx, sim));
-        }
+        // Step 1: score every cached image (except the optionally-excluded
+        // query) in parallel. `scores` holds (cache_idx, similarity) in
+        // cached_images order — no PathBuf clones in the hot loop; we only
+        // clone the paths that survive into the final result.
+        let mut scores = self.score_all(embedding, exclude_path);
 
         debug!(
-            "Calculated similarities for {} images (excluded {}), query embedding length: {}",
-            self.scratch.len(),
-            excluded_count,
+            "Calculated similarities for {} images, query embedding length: {}",
+            scores.len(),
             embedding.len()
         );
 
-        if self.scratch.is_empty() {
+        if scores.is_empty() {
             warn!("No similarities calculated! Returning empty result.");
             return Vec::new();
         }
@@ -245,28 +261,26 @@ impl CosineIndex {
         // *within* the pool doesn't matter because we random-sample.
         // This is the algorithm pinned by
         // tests/cosine_topk_partial_sort_diagnostic.rs.
-        let base_pool = (self.scratch.len() as f32 * 0.2).ceil() as usize;
-        let select_count = base_pool.max(top_n).min(self.scratch.len());
-        if select_count > 0 && select_count < self.scratch.len() {
-            self.scratch
-                .select_nth_unstable_by(select_count - 1, score_cmp_desc);
-            self.scratch.truncate(select_count);
+        let base_pool = (scores.len() as f32 * 0.2).ceil() as usize;
+        let select_count = base_pool.max(top_n).min(scores.len());
+        if select_count > 0 && select_count < scores.len() {
+            scores.select_nth_unstable_by(select_count - 1, score_cmp_desc);
+            scores.truncate(select_count);
         }
 
         debug!(
             "Diversity pool - base_pool: {}, select_count: {}, pool size: {}",
             base_pool,
             select_count,
-            self.scratch.len()
+            scores.len()
         );
 
         // Random sample top_n from the pool. We sample indices into the
-        // (now trimmed) scratch, then materialise the surviving paths
+        // (now trimmed) score list, then materialise the surviving paths
         // exactly once each.
         let mut rng = rand::rng();
-        let take = top_n.min(self.scratch.len());
-        let sampled: Vec<&(usize, f32)> =
-            self.scratch.choose_multiple(&mut rng, take).collect();
+        let take = top_n.min(scores.len());
+        let sampled: Vec<&(usize, f32)> = scores.choose_multiple(&mut rng, take).collect();
         let selected: Vec<(PathBuf, f32)> = sampled
             .iter()
             .map(|(cache_idx, sim)| (self.cached_images[*cache_idx].0.clone(), *sim))
@@ -291,7 +305,7 @@ impl CosineIndex {
     /// ranking accuracy matters.
     #[tracing::instrument(name = "cosine.get_similar_sorted", skip(self, embedding, exclude_path), fields(cached = self.cached_images.len(), top_n))]
     pub fn get_similar_images_sorted(
-        &mut self,
+        &self,
         embedding: &Array1<f32>,
         top_n: usize,
         exclude_path: Option<&PathBuf>,
@@ -303,20 +317,11 @@ impl CosineIndex {
             exclude_path
         );
 
-        // Step 1: scratch buffer of (cache_idx, similarity) for every
-        // non-excluded image. No PathBuf clones in the inner loop.
-        self.scratch.clear();
-        for (idx, (path, emb)) in self.cached_images.iter().enumerate() {
-            if let Some(exclude) = exclude_path {
-                if path == exclude {
-                    continue;
-                }
-            }
-            let sim = Self::cosine_similarity(embedding, emb);
-            self.scratch.push((idx, sim));
-        }
+        // Step 1: parallel score list of (cache_idx, similarity) for every
+        // non-excluded image. No PathBuf clones in the hot loop.
+        let mut scores = self.score_all(embedding, exclude_path);
 
-        if self.scratch.is_empty() {
+        if scores.is_empty() {
             warn!("No similarities calculated! Returning empty result.");
             return Vec::new();
         }
@@ -330,20 +335,19 @@ impl CosineIndex {
         // The sort *after* the partial-select preserves the
         // descending-order contract that semantic-search and the modal
         // navigation rely on.
-        let want = top_n.min(self.scratch.len());
+        let want = top_n.min(scores.len());
         if want == 0 {
             return Vec::new();
         }
-        if want < self.scratch.len() {
-            self.scratch.select_nth_unstable_by(want - 1, score_cmp_desc);
-            self.scratch.truncate(want);
+        if want < scores.len() {
+            scores.select_nth_unstable_by(want - 1, score_cmp_desc);
+            scores.truncate(want);
         }
-        self.scratch.sort_unstable_by(score_cmp_desc);
+        scores.sort_unstable_by(score_cmp_desc);
 
         // Step 3: materialise the surviving top_n into the return shape.
         // This is the only PathBuf clone — `want` clones, not `n`.
-        let result: Vec<(PathBuf, f32)> = self
-            .scratch
+        let result: Vec<(PathBuf, f32)> = scores
             .iter()
             .map(|(cache_idx, sim)| (self.cached_images[*cache_idx].0.clone(), *sim))
             .collect();
@@ -383,7 +387,7 @@ impl CosineIndex {
     /// ... and so on until top 50%
     #[tracing::instrument(name = "cosine.get_tiered_similar", skip(self, embedding, exclude_path), fields(cached = self.cached_images.len()))]
     pub fn get_tiered_similar_images(
-        &mut self,
+        &self,
         embedding: &Array1<f32>,
         exclude_path: Option<&PathBuf>,
     ) -> Vec<(PathBuf, f32)> {
@@ -393,20 +397,11 @@ impl CosineIndex {
             exclude_path
         );
 
-        // Step 1: similarities into the scratch buffer (index-keyed,
-        // no PathBuf clones in the inner loop).
-        self.scratch.clear();
-        for (idx, (path, emb)) in self.cached_images.iter().enumerate() {
-            if let Some(exclude) = exclude_path {
-                if path == exclude {
-                    continue;
-                }
-            }
-            let sim = Self::cosine_similarity(embedding, emb);
-            self.scratch.push((idx, sim));
-        }
+        // Step 1: parallel score list (index-keyed, no PathBuf clones in
+        // the hot loop).
+        let mut scores = self.score_all(embedding, exclude_path);
 
-        if self.scratch.is_empty() {
+        if scores.is_empty() {
             warn!("No similarities calculated! Returning empty result.");
             return Vec::new();
         }
@@ -414,11 +409,11 @@ impl CosineIndex {
         // Tiered sampling needs a fully-sorted list because tiers span
         // 0-50% in 5% buckets. Partial-sort can't help here without
         // restructuring the tier definitions, so we keep the full sort
-        // — but the scratch buffer still wins by skipping the per-item
+        // — the index-keyed score list still wins by skipping the per-item
         // PathBuf clone.
-        self.scratch.sort_unstable_by(score_cmp_desc);
+        scores.sort_unstable_by(score_cmp_desc);
 
-        let total = self.scratch.len();
+        let total = scores.len();
         let mut result: Vec<(PathBuf, f32)> = Vec::new();
         let mut rng = rand::rng();
         let mut used_indices: std::collections::HashSet<usize> =
@@ -455,11 +450,11 @@ impl CosineIndex {
                 .cloned()
                 .collect();
 
-            // Resolve scratch index → cache index → (PathBuf, f32) here.
-            // Only sampled items pay the clone cost.
-            for scratch_idx in sampled {
-                used_indices.insert(scratch_idx);
-                let (cache_idx, sim) = self.scratch[scratch_idx];
+            // Resolve sorted-list index → cache index → (PathBuf, f32)
+            // here. Only sampled items pay the clone cost.
+            for sorted_idx in sampled {
+                used_indices.insert(sorted_idx);
+                let (cache_idx, sim) = scores[sorted_idx];
                 result.push((self.cached_images[cache_idx].0.clone(), sim));
             }
         }
@@ -608,12 +603,87 @@ mod tests {
 
     #[test]
     fn test_empty_index() {
-        // The retrieval methods take &mut self for the scratch buffer.
-        let mut index = CosineIndex::new();
+        // The retrieval methods now take &self (parallel-scored into a
+        // local buffer, no shared scratch).
+        let index = CosineIndex::new();
         let query = array![1.0, 2.0, 3.0];
 
         let results = index.get_similar_images(&query, 5, None);
 
         assert_eq!(results.len(), 0, "Empty index should return no results");
+    }
+
+    #[test]
+    fn parallel_scoring_matches_serial_reference() {
+        // The rayon-parallel scan must produce the SAME top-k ranking as a
+        // serial reference. We compare the score *sequence* (the ranking
+        // in score terms), which is robust to tie path-ordering — equal
+        // scores may land in a different path order between a stable and
+        // an unstable sort, but the sequence of scores is identical.
+        let mut index = CosineIndex::new();
+        let dim = 16;
+        let n = 400;
+        for i in 0..n {
+            // Deterministic, varied embeddings (with some intentional
+            // ties, since scores repeat under this modular fill).
+            let v: Vec<f32> = (0..dim)
+                .map(|j| (((i * 31 + j * 7) % 13) as f32) - 6.0)
+                .collect();
+            index.add_image(PathBuf::from(format!("/img_{i}.jpg")), Array1::from_vec(v));
+        }
+        let query = Array1::from_vec((0..dim).map(|j| ((j % 5) as f32) - 2.0).collect());
+
+        let top_k = 25;
+        let parallel = index.get_similar_images_sorted(&query, top_k, None);
+
+        // Serial reference: score every candidate, sort desc, take top_k.
+        let mut ref_scores: Vec<f32> = index
+            .cached_images
+            .iter()
+            .map(|(_, e)| CosineIndex::cosine_similarity(&query, e))
+            .collect();
+        ref_scores.sort_by(|a, b| b.partial_cmp(a).unwrap());
+        ref_scores.truncate(top_k);
+
+        let par_scores: Vec<f32> = parallel.iter().map(|(_, s)| *s).collect();
+
+        assert_eq!(
+            par_scores.len(),
+            ref_scores.len(),
+            "parallel returned {} results, serial reference {}",
+            par_scores.len(),
+            ref_scores.len()
+        );
+        for (rank, (p, r)) in par_scores.iter().zip(ref_scores.iter()).enumerate() {
+            assert!(
+                (p - r).abs() < 1e-6,
+                "rank {rank}: parallel score {p} != serial reference {r}"
+            );
+        }
+        // And the sorted contract holds: strictly non-increasing.
+        assert!(
+            par_scores.windows(2).all(|w| w[0] >= w[1] - 1e-6),
+            "sorted results must be descending, got {par_scores:?}"
+        );
+    }
+
+    #[test]
+    fn parallel_scoring_excludes_query_path() {
+        // Exclusion must still work under the parallel scan — the excluded
+        // path never appears, and the result count reflects one fewer
+        // candidate.
+        let mut index = CosineIndex::new();
+        for i in 0..50 {
+            let v = vec![i as f32, (i % 7) as f32, 1.0];
+            index.add_image(PathBuf::from(format!("/img_{i}.jpg")), Array1::from_vec(v));
+        }
+        let query = array![10.0, 3.0, 1.0];
+        let exclude = PathBuf::from("/img_10.jpg");
+        let results = index.get_similar_images_sorted(&query, 50, Some(&exclude));
+        assert_eq!(results.len(), 49, "excluded path should drop one candidate");
+        assert!(
+            !results.iter().any(|(p, _)| p == &exclude),
+            "excluded path must not appear in results"
+        );
     }
 }

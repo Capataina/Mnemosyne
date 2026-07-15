@@ -347,7 +347,11 @@ pub fn get_tiered_similar_images(
         .ensure_loaded_for(&db, &encoder_id)
         .map_err(ApiError::Cosine)?;
 
-    let mut index = cosine_state.index.lock()?;
+    // Read lock: scoring is `&self`, so a burst of concurrent tiered
+    // queries (the frontend prefetches every on-screen tile) all score
+    // in parallel instead of serialising. ensure_loaded_for above already
+    // populated under a write lock if the encoder changed.
+    let index = cosine_state.index.read()?;
 
     if index.cached_images.is_empty() {
         debug!("Cache empty even after ensure_loaded_for — encoder probably has no embeddings yet (run indexing).");
@@ -497,7 +501,10 @@ pub fn get_similar_images(
         .ensure_loaded_for(&db, &encoder_id)
         .map_err(ApiError::Cosine)?;
 
-    let mut index = cosine_state.index.lock()?;
+    // Read lock: scoring is `&self`, so concurrent similar-image queries
+    // score in parallel rather than serialising on a write lock.
+    // ensure_loaded_for above handled any repopulate under a write lock.
+    let index = cosine_state.index.read()?;
 
     // Hoist db.get_all_images() to once per command (audit finding —
     // was called twice: once for the exclude-path lookup and once again

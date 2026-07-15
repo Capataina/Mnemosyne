@@ -8,7 +8,7 @@
 // require touching ~10 files with no behavioural value.
 #![allow(clippy::doc_lazy_continuation)]
 
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, RwLock};
 use tauri::Manager;
 use tracing::{error, info, warn};
 
@@ -41,9 +41,14 @@ pub mod thumbnail;
 pub mod watcher;
 
 pub struct CosineIndexState {
-    /// Wrapped in Arc<Mutex<...>> rather than plain Mutex<...> so the
-    /// indexing thread (Pass 5) can hold a clone alongside the Tauri-
-    /// managed state. Both point at the same in-memory cache.
+    /// Wrapped in Arc<RwLock<...>> so the indexing thread (Pass 5) can
+    /// hold a clone alongside the Tauri-managed state — both point at the
+    /// same in-memory cache — AND so a read-heavy burst of concurrent
+    /// similarity queries (the frontend prefetches every on-screen tile's
+    /// similar-set) can score under shared read locks instead of
+    /// serialising on a `Mutex`. Writes (repopulate on encoder switch,
+    /// startup warm) take the write lock; scoring is `&self` and takes a
+    /// read lock, so the common same-encoder burst never blocks.
     ///
     /// The cache holds embeddings from ONE encoder at a time —
     /// whichever the user's `imageEncoder` setting selects. When the
@@ -51,7 +56,7 @@ pub struct CosineIndexState {
     /// embeddings table for the new encoder. Repopulate is fast
     /// because the embeddings are already on disk; only the new
     /// encoder's embeddings need DB → memory transfer.
-    pub index: Arc<Mutex<CosineIndex>>,
+    pub index: Arc<RwLock<CosineIndex>>,
     pub db_path: String,
     /// The encoder_id whose embeddings are currently loaded into
     /// `index`. Empty string when uninitialised. Read at search-time
@@ -86,7 +91,7 @@ impl CosineIndexState {
     /// deadlock-free.
     pub fn invalidate(&self) {
         if let (Ok(mut cur), Ok(mut idx)) =
-            (self.current_encoder_id.lock(), self.index.lock())
+            (self.current_encoder_id.lock(), self.index.write())
         {
             idx.cached_images.clear();
             cur.clear();
@@ -118,8 +123,8 @@ impl CosineIndexState {
             .map_err(|e| format!("current_encoder_id mutex poisoned: {e}"))?;
         let mut index = self
             .index
-            .lock()
-            .map_err(|e| format!("index mutex poisoned: {e}"))?;
+            .write()
+            .map_err(|e| format!("index rwlock poisoned: {e}"))?;
         // Re-check under the lock (another thread might've switched).
         if *cur == encoder_id {
             return Ok(());
@@ -147,14 +152,20 @@ impl CosineIndexState {
 /// `invalidate_all()` clears every slot (and is wired into the same
 /// root-change paths that already invalidate `CosineIndexState`).
 pub struct FusionIndexState {
+    /// `RwLock` (not `Mutex`) so a burst of concurrent fused queries can
+    /// score under shared read locks once the per-encoder caches are
+    /// warm; a `Mutex` here serialised every fused query on the whole
+    /// map even when they touched disjoint encoders. Populate (first use,
+    /// startup warm) takes the write lock via the double-checked path in
+    /// `ranked_for_encoder`.
     pub per_encoder:
-        Arc<Mutex<std::collections::HashMap<String, CosineIndex>>>,
+        Arc<RwLock<std::collections::HashMap<String, CosineIndex>>>,
 }
 
 impl FusionIndexState {
     pub fn new() -> Self {
         Self {
-            per_encoder: Arc::new(Mutex::new(std::collections::HashMap::new())),
+            per_encoder: Arc::new(RwLock::new(std::collections::HashMap::new())),
         }
     }
 
@@ -164,7 +175,7 @@ impl FusionIndexState {
     /// happily return images from a now-disabled root because its
     /// cached entries weren't cleared.
     pub fn invalidate_all(&self) {
-        if let Ok(mut m) = self.per_encoder.lock() {
+        if let Ok(mut m) = self.per_encoder.write() {
             m.clear();
         }
     }
@@ -184,22 +195,51 @@ impl FusionIndexState {
         top_k: usize,
         exclude_path: Option<&std::path::PathBuf>,
     ) -> Result<Vec<(std::path::PathBuf, f32)>, String> {
-        let mut map = self
-            .per_encoder
-            .lock()
-            .map_err(|e| format!("fusion mutex poisoned: {e}"))?;
-        let entry = map
-            .entry(encoder_id.to_string())
-            .or_insert_with(CosineIndex::new);
-        if entry.cached_images.is_empty() {
-            entry.populate_from_db_for_encoder(db, encoder_id);
+        // Double-checked locking so the common (warm) case scores under a
+        // SHARED read lock — concurrent fused queries against an
+        // already-populated cache never serialise. Only the first query
+        // for an encoder (or after invalidation) takes the write lock to
+        // populate.
+        //
+        // Fast path: read lock, score if the entry is already populated.
+        {
+            let map = self
+                .per_encoder
+                .read()
+                .map_err(|e| format!("fusion rwlock poisoned: {e}"))?;
+            if let Some(entry) = map.get(encoder_id) {
+                if !entry.cached_images.is_empty() {
+                    return Ok(entry.get_similar_images_sorted(query, top_k, exclude_path));
+                }
+            }
         }
-        if entry.cached_images.is_empty() {
+        // Slow path: write lock, populate if still empty (another thread
+        // may have populated between the read and write locks).
+        {
+            let mut map = self
+                .per_encoder
+                .write()
+                .map_err(|e| format!("fusion rwlock poisoned: {e}"))?;
+            let entry = map
+                .entry(encoder_id.to_string())
+                .or_insert_with(CosineIndex::new);
+            if entry.cached_images.is_empty() {
+                entry.populate_from_db_for_encoder(db, encoder_id);
+            }
+        }
+        // Re-read and score under a shared read lock.
+        let map = self
+            .per_encoder
+            .read()
+            .map_err(|e| format!("fusion rwlock poisoned: {e}"))?;
+        match map.get(encoder_id) {
+            Some(entry) if !entry.cached_images.is_empty() => {
+                Ok(entry.get_similar_images_sorted(query, top_k, exclude_path))
+            }
             // No embeddings available for this encoder — return empty
             // ranked list. Fusion still works with the other encoders.
-            return Ok(Vec::new());
+            _ => Ok(Vec::new()),
         }
-        Ok(entry.get_similar_images_sorted(query, top_k, exclude_path))
     }
 }
 
@@ -230,6 +270,84 @@ pub struct TextEncoderState {
     >,
 }
 
+/// Background cache warm, spawned right at launch so the FIRST
+/// similarity click — and the frontend's prefetch burst across every
+/// on-screen tile — is instant on a cold session instead of paying the
+/// DB→memory populate lazily on first use.
+///
+/// Warms two caches, each guarded by an `is_empty` check so it
+/// cooperates with the indexing pipeline's own warm rather than
+/// duplicating it:
+///   - the primary single-encoder `CosineIndexState.index` — prefers the
+///     on-disk snapshot (`cosine_cache.bin`) when fresh, else populates
+///     the active encoder from the DB;
+///   - every enabled encoder's `FusionIndexState` slot — the real gap,
+///     since nothing else warmed these, so the first FUSED query used to
+///     pay a cold per-encoder populate under the fusion lock.
+///
+/// Runs on its own thread and returns immediately; the window opens
+/// without waiting for it. On a first-ever launch the DB has no
+/// embeddings yet, so the warm loads nothing and the pipeline populates
+/// as it indexes; the payoff is every subsequent (already-indexed)
+/// launch.
+fn spawn_cache_warm(
+    db_path: String,
+    index: Arc<RwLock<CosineIndex>>,
+    current_encoder_id: Arc<Mutex<String>>,
+    fusion: Arc<RwLock<std::collections::HashMap<String, CosineIndex>>>,
+) {
+    std::thread::spawn(move || {
+        let db = match ImageDatabase::new(&db_path) {
+            Ok(d) => d,
+            Err(e) => {
+                warn!("cache warm: DB open failed: {e}");
+                return;
+            }
+        };
+        if let Err(e) = db.initialize() {
+            warn!("cache warm: DB init failed: {e}");
+            return;
+        }
+        let settings = crate::settings::Settings::load();
+        let active = settings
+            .priority_image_encoder
+            .clone()
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| "clip_vit_b_32".to_string());
+
+        // Primary single-encoder index. Take both locks in the documented
+        // order (current_encoder_id first, then index) to stay
+        // deadlock-free with ensure_loaded_for / invalidate. Only warm
+        // when empty so we never fight the pipeline's own populate: prefer
+        // the on-disk snapshot, falling back to a DB populate of the
+        // active encoder when it's missing or stale.
+        if let (Ok(mut cur), Ok(mut idx)) = (current_encoder_id.lock(), index.write()) {
+            if idx.cached_images.is_empty() {
+                let loaded = idx.load_from_disk_if_fresh(std::path::Path::new(&db_path));
+                if !loaded {
+                    idx.populate_from_db_for_encoder(&db, &active);
+                }
+                if !idx.cached_images.is_empty() {
+                    *cur = active.clone();
+                }
+            }
+        }
+
+        // Fusion per-encoder caches — the slot nothing else warms. One
+        // write per encoder (rather than one held across all three) so a
+        // real fused query can slip in between populates.
+        for enc in settings.resolved_enabled_encoders() {
+            if let Ok(mut map) = fusion.write() {
+                let entry = map.entry(enc.clone()).or_insert_with(CosineIndex::new);
+                if entry.cached_images.is_empty() {
+                    entry.populate_from_db_for_encoder(&db, &enc);
+                }
+            }
+        }
+        info!("cache warm complete");
+    });
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run(db: ImageDatabase, db_path: String) {
     use commands::encoders::{
@@ -255,7 +373,7 @@ pub fn run(db: ImageDatabase, db_path: String) {
         add_tag_to_image, create_tag, delete_tag, get_tags, remove_tag_from_image,
     };
 
-    let cosine_index = Arc::new(Mutex::new(CosineIndex::new()));
+    let cosine_index = Arc::new(RwLock::new(CosineIndex::new()));
     let current_encoder_id = Arc::new(Mutex::new(String::new()));
     let cosine_state = CosineIndexState {
         index: cosine_index.clone(),
@@ -275,6 +393,19 @@ pub fn run(db: ImageDatabase, db_path: String) {
     // get_fused_similar_images call asks for an encoder; lazy-populated
     // from the same DB rows the primary CosineIndexState reads.
     let fusion_state = FusionIndexState::new();
+
+    // Pre-warm both cosine caches in the background right at launch, so
+    // the first similarity click — and the frontend's prefetch burst
+    // across every on-screen tile — is instant on a cold session instead
+    // of paying the DB→memory populate lazily on first use. Idempotent
+    // (each cache is only populated when empty), so it cooperates with
+    // the indexing pipeline's own warm rather than duplicating it.
+    spawn_cache_warm(
+        db_path.clone(),
+        cosine_index.clone(),
+        current_encoder_id.clone(),
+        fusion_state.per_encoder.clone(),
+    );
 
     // Single-flight guard for the indexing pipeline. Wrapped in Arc so
     // the .setup() callback (and later set_scan_root commands) can both

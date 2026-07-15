@@ -118,11 +118,13 @@ impl From<std::io::Error> for ApiError {
     }
 }
 
-/// Convenience for the many `cosine_state.index.lock().map_err(...)`
-/// sites — Mutex poison errors all become Cosine errors.
+/// Convenience for the many `cosine_state.index.read()?` / `.write()?`
+/// sites — RwLock (and Mutex) poison errors all become Cosine errors.
+/// Generic over the guard type, so it covers `PoisonError` from a
+/// `Mutex`, an `RwLock` read guard, and an `RwLock` write guard alike.
 impl<T> From<std::sync::PoisonError<T>> for ApiError {
     fn from(e: std::sync::PoisonError<T>) -> Self {
-        ApiError::Cosine(format!("mutex poisoned: {e}"))
+        ApiError::Cosine(format!("lock poisoned: {e}"))
     }
 }
 

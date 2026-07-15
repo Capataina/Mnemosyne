@@ -1,4 +1,4 @@
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, RwLock};
 
 use lynceus_lib::db::ImageDatabase;
 use lynceus_lib::similarity_and_semantic_search::cosine::CosineIndex;
@@ -24,15 +24,15 @@ fn ensure_loaded_for_repopulates_when_current_encoder_matches_but_cache_is_empty
     db.update_image_embedding(id_b, vec![0.0, 1.0, 0.0]).unwrap();
 
     let state = CosineIndexState {
-        index: Arc::new(Mutex::new(CosineIndex::new())),
+        index: Arc::new(RwLock::new(CosineIndex::new())),
         db_path: String::new(),
         current_encoder_id: Arc::new(Mutex::new(String::new())),
     };
 
     state.ensure_loaded_for(&db, "clip_vit_b_32").unwrap();
-    assert_eq!(state.index.lock().unwrap().cached_images.len(), 2);
+    assert_eq!(state.index.read().unwrap().cached_images.len(), 2);
 
-    state.index.lock().unwrap().cached_images.clear();
+    state.index.write().unwrap().cached_images.clear();
     assert_eq!(
         state.current_encoder_id.lock().unwrap().as_str(),
         "clip_vit_b_32",
@@ -41,7 +41,7 @@ fn ensure_loaded_for_repopulates_when_current_encoder_matches_but_cache_is_empty
 
     state.ensure_loaded_for(&db, "clip_vit_b_32").unwrap();
     assert_eq!(
-        state.index.lock().unwrap().cached_images.len(),
+        state.index.read().unwrap().cached_images.len(),
         2,
         "ensure_loaded_for must repopulate an empty cache even when the encoder id marker already matches",
     );

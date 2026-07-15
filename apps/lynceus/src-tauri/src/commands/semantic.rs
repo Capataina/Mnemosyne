@@ -87,7 +87,10 @@ pub fn semantic_search(
     cosine_state
         .ensure_loaded_for(&db, cosine_cache_id)
         .map_err(ApiError::Cosine)?;
-    let mut index = cosine_state.index.lock()?;
+    // Write lock: the empty-cache fallback below repopulates in place.
+    // Semantic text search is not the concurrent-burst path (the user
+    // types one query at a time), so serialising here costs nothing.
+    let mut index = cosine_state.index.write()?;
 
     if index.cached_images.is_empty() {
         debug!("Populating cosine index from database (cache was empty)...");

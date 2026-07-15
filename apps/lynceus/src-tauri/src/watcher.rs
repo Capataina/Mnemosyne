@@ -54,7 +54,7 @@ pub fn start(
     paths_to_watch: Vec<PathBuf>,
     db_path: String,
     indexing_state: Arc<indexing::IndexingState>,
-    cosine_index: Arc<std::sync::Mutex<CosineIndex>>,
+    cosine_index: Arc<std::sync::RwLock<CosineIndex>>,
     cosine_current_encoder: Arc<std::sync::Mutex<String>>,
 ) -> Option<WatcherHandle> {
     if paths_to_watch.is_empty() {

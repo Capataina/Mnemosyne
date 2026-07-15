@@ -128,7 +128,7 @@ pub fn try_spawn_pipeline(
     app: AppHandle,
     state: Arc<IndexingState>,
     db_path: String,
-    cosine_index: Arc<std::sync::Mutex<CosineIndex>>,
+    cosine_index: Arc<std::sync::RwLock<CosineIndex>>,
     cosine_current_encoder: Arc<std::sync::Mutex<String>>,
 ) -> Result<(), IndexingError> {
     // Acquire the single-flight slot atomically.
@@ -178,7 +178,7 @@ pub fn try_spawn_pipeline(
 fn run_pipeline_inner(
     app: &AppHandle,
     db_path: &str,
-    cosine_index: &Arc<std::sync::Mutex<CosineIndex>>,
+    cosine_index: &Arc<std::sync::RwLock<CosineIndex>>,
     cosine_current_encoder: &Arc<std::sync::Mutex<String>>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     // 0. Try the on-disk cosine cache before doing anything else. On a
@@ -190,7 +190,7 @@ fn run_pipeline_inner(
     //    file is newer than it.
     {
         let db_path_buf = std::path::PathBuf::from(db_path);
-        if let Ok(mut idx) = cosine_index.lock() {
+        if let Ok(mut idx) = cosine_index.write() {
             if idx.cached_images.is_empty() {
                 idx.load_from_disk_if_fresh(&db_path_buf);
             }
@@ -605,7 +605,7 @@ fn run_pipeline_inner(
     // CosineIndexState::ensure_loaded_for to keep the search path
     // deadlock-free.
     if let (Ok(mut cur), Ok(mut idx)) =
-        (cosine_current_encoder.lock(), cosine_index.lock())
+        (cosine_current_encoder.lock(), cosine_index.write())
     {
         // Skip the DB read if the per-encoder hot-populate inside
         // run_encoder_phase already loaded this same encoder — a
@@ -708,7 +708,7 @@ fn run_encoder_phase(
     app: &AppHandle,
     db_path: &str,
     image_model_path: &Path,
-    cosine_index: &Arc<std::sync::Mutex<CosineIndex>>,
+    cosine_index: &Arc<std::sync::RwLock<CosineIndex>>,
     cosine_current_encoder: &Arc<std::sync::Mutex<String>>,
 ) -> Result<(), String> {
     // Phase 11c + 11e — encode through every USER-ENABLED image

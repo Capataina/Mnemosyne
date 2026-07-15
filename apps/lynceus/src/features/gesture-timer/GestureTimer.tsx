@@ -126,7 +126,7 @@ export function GestureTimer({
         onClick={openInitialConfig}
         title={
           triggerDisabled
-            ? "Load similar images before starting a timer"
+            ? "No similar images to cycle through"
             : undefined
         }
       />

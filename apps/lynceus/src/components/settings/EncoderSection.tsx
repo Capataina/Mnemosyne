@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { invoke } from "@tauri-apps/api/core";
 import { recordAction } from "../../services/perf";
 import { Section } from "./controls";
@@ -37,6 +38,7 @@ interface EncoderInfo {
 }
 
 export function EncoderSection() {
+  const queryClient = useQueryClient();
   const [encoders, setEncoders] = useState<EncoderInfo[] | null>(null);
   const [enabled, setEnabled] = useState<Set<string> | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -106,6 +108,13 @@ export function EncoderSection() {
     recordAction("encoder_toggle", { id, enabled: want });
     try {
       await invoke("set_enabled_encoders", { ids: Array.from(next) });
+      // The enabled set is NOT part of the fused-query keys (they key on
+      // query/image + primary encoder only), so a cached similar/semantic
+      // result — 5-minute staleTime — would keep showing rankings from the
+      // OLD encoder set for minutes after a toggle. Invalidate both so the
+      // next search/similar recomputes fusion over the new set.
+      queryClient.invalidateQueries({ queryKey: ["fused-similar-images"] });
+      queryClient.invalidateQueries({ queryKey: ["fused-semantic-search"] });
     } catch (e) {
       // Backend rejected — re-fetch authoritative state.
       console.warn("set_enabled_encoders failed:", e);

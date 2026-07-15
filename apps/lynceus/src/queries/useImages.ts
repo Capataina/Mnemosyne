@@ -78,8 +78,14 @@ export function useAssignTagToImage() {
       }
     },
 
-    // Assigning a tag bumps that folder's count in the library drawer.
+    // Assigning a tag can change folder membership (a filtered view must
+    // gain the newly-matching image / lose a de-matched one) and bumps that
+    // folder's count in the drawer. Invalidate both: the optimistic tag
+    // stamp already gave instant feedback, and useShuffledFeed's stable keys
+    // mean the refetch only pops the membership-changed image in or out —
+    // not a whole-grid reshuffle.
     onSettled: () => {
+      queryClient.invalidateQueries({ queryKey: ["images"] });
       queryClient.invalidateQueries({ queryKey: ["tagCounts"] });
     },
   });
@@ -154,8 +160,12 @@ export function useRemoveTagFromImage() {
       }
     },
 
-    // Removing a tag drops that folder's count in the library drawer.
+    // Removing a tag can change folder membership (a filtered view must drop
+    // the now-unmatching image) and drops that folder's count in the drawer.
+    // Same reasoning as assign: stable shuffle keys keep the refetch to a
+    // single pop-out, not a reshuffle.
     onSettled: () => {
+      queryClient.invalidateQueries({ queryKey: ["images"] });
       queryClient.invalidateQueries({ queryKey: ["tagCounts"] });
     },
   });

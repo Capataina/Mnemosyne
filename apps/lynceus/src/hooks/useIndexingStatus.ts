@@ -158,6 +158,19 @@ export function useIndexingStatus(): IndexingStatus {
             if (readyInvalidatedFor.current !== runKey) {
               readyInvalidatedFor.current = runKey;
               queryClient.invalidateQueries({ queryKey: ["images"] });
+              // Indexing completing means embeddings just landed. Any
+              // similarity / semantic result cached DURING indexing was
+              // computed against an incomplete index and, with its 5-minute
+              // staleTime, would otherwise be served stale after the run
+              // finishes. Drop both so the next open recomputes against the
+              // now-complete index. (Prefix match invalidates every id/query
+              // variant of each key.)
+              queryClient.invalidateQueries({
+                queryKey: ["fused-similar-images"],
+              });
+              queryClient.invalidateQueries({
+                queryKey: ["fused-semantic-search"],
+              });
             }
           }
         },

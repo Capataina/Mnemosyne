@@ -3,13 +3,12 @@
   "private": true,
   "version": "0.2.0",
   "description": "Monorepo for the Mnemosyne asset-browser engine and its products (Lynceus — images; Syrinx and Daedalus to come).",
-  "workspaces": [
-    "apps/*"
-  ],
   "scripts": {
-    "dev": "npm run dev --workspace apps/lynceus",
-    "build": "npm run build --workspace apps/lynceus",
-    "test": "npm run test --workspace apps/lynceus",
-    "tauri": "npm run tauri --workspace apps/lynceus"
+    "dev": "pnpm --filter ./apps/lynceus run dev",
+    "build": "pnpm --filter ./apps/lynceus run build",
+    "test": "pnpm --filter ./apps/lynceus run test",
+    "tauri": "pnpm --filter ./apps/lynceus run tauri",
+    "lynceus:dev": "bash scripts/start_lynceus.sh dev",
+    "lynceus:release": "bash scripts/start_lynceus.sh release"
   }
 }

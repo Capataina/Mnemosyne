@@ -3521,7 +3521,7 @@ window.ARCH = JSON.parse(`{
     },
     {
       "title": "apps/<product>/ monorepo layout to keep Tauri paths valid",
-      "why": "f7d1422: each product lives under apps/<product>/ with its React frontend beside its src-tauri crate — the Tauri-monorepo convention chosen specifically so tauri.conf.json frontendDist ../dist and the npm before-commands stay valid without change. Kept npm (not pnpm): a package-manager swap mid-restructure is unverifiable risk for no structural gain.",
+      "why": "f7d1422: each product lives under apps/<product>/ with its React frontend beside its src-tauri crate — the Tauri-monorepo convention chosen specifically so tauri.conf.json frontendDist ../dist and the npm before-commands stay valid without change. Kept npm (not pnpm) at the time: a package-manager swap mid-restructure was unverifiable risk for no structural gain. Reversed 2026-07-15 once a second and third product (Syrinx, Daedalus) were concretely on the roadmap — pnpm's content-addressable store avoids per-app node_modules duplication (602MB for one app under npm; the planned three products share nearly all of that footprint), and the migration surface (4 root scripts, a handful of README lines) was cheap while only one product existed. See pnpm-workspace.yaml and the justfile.",
       "node": "app_shell"
     },
     {

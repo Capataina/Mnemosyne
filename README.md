@@ -140,7 +140,7 @@ Everything runs locally. Embeddings are generated on your machine using ONNX Run
 If you're investigating performance, launch with the profiling flag:
 
 ```bash
-npm run tauri dev -- -- --profiling
+pnpm run tauri dev -- -- --profiling
 ```
 
 (The double `--` is required: the first separates `tauri` from its CLI, the second passes the flag through to the Rust binary.) An on-exit markdown report is written to the app-data directory. The flag is `--profiling`, not `--profile` — the latter collides with Tauri's own cargo-profile flag.
@@ -208,7 +208,7 @@ For the full structural map — module-by-module responsibilities, table layouts
 
 ## Repository layout
 
-A Cargo workspace (the engine + product crates) mirrored by an npm workspace (the product frontends). The engine is a path dependency with no frozen public API until a second product proves the seams.
+A Cargo workspace (the engine + product crates) mirrored by a pnpm workspace (the product frontends). The engine is a path dependency with no frozen public API until a second product proves the seams.
 
 ```
 Mnemosyne/                         monorepo root
@@ -218,7 +218,7 @@ Mnemosyne/                         monorepo root
 │                                    domain types · paths · profiling
 ├── apps/
 │   └── lynceus/                   the image-browser product
-│       ├── src/                   React 19 frontend (npm pkg `lynceus-ui`)
+│       ├── src/                   React 19 frontend (pnpm pkg `lynceus-ui`)
 │       └── src-tauri/             Tauri app crate (Cargo bin `lynceus`)
 │                                    image encoders · thumbnailer · indexing
 │                                    pipeline · watcher · Tauri command surface
@@ -273,30 +273,43 @@ Future asset browsers — **Syrinx** (audio) and **Daedalus** (3D) — join as s
 git clone https://github.com/Capataina/Mnemosyne
 cd Mnemosyne
 
-# Install workspace dependencies (npm workspaces — installs all apps)
-npm install
+# Install workspace dependencies (pnpm workspace — installs all apps)
+pnpm install
 
 # Fetch the encoder weights into the gitignored models/ tree (~2.4 GB, commercial-licensed)
 python3 scripts/download_models.py --modality image
-
-# Run the image app (Lynceus) in development mode.
-# Point it at the weights you just fetched:
-LYNCEUS_MODELS_DIR="$(pwd)/models/image" npm run tauri --workspace apps/lynceus dev
-
-# Profiling mode (writes a markdown report on exit)
-LYNCEUS_MODELS_DIR="$(pwd)/models/image" npm run tauri --workspace apps/lynceus dev -- -- --profiling
 ```
 
-To build a release bundle:
+The fastest way to run Lynceus — a `just`/`pnpm` wrapper that points
+`LYNCEUS_MODELS_DIR` at the repo-local weights automatically, so you
+never type that env var:
 
 ```bash
-npm run tauri --workspace apps/lynceus build
+just lynceus-dev       # dev mode, hot-reloading frontend
+just lynceus-release   # optimized release build, opens the .app — for real perf testing
+# or, without `just` installed:
+pnpm run lynceus:dev
+pnpm run lynceus:release
+```
+
+For everything else — profiling mode, a manual release bundle, or
+targeting a non-default models directory — the underlying commands:
+
+```bash
+# Dev mode, explicit models path
+LYNCEUS_MODELS_DIR="$(pwd)/models/image" pnpm --filter ./apps/lynceus run tauri dev
+
+# Profiling mode (writes a markdown report on exit)
+LYNCEUS_MODELS_DIR="$(pwd)/models/image" pnpm --filter ./apps/lynceus run tauri dev -- -- --profiling
+
+# Release bundle (full, including DMG — see `just lynceus-release` for a faster .app-only build)
+pnpm --filter ./apps/lynceus run tauri build
 ```
 
 To run the test suites:
 
 ```bash
-npm run test --workspace apps/lynceus   # Vitest (frontend)
+pnpm --filter ./apps/lynceus run test   # Vitest (frontend)
 cargo test --workspace                  # cargo (engine + product)
 ```
 

@@ -1,0 +1,7 @@
+packages:
+  - "apps/*"
+allowBuilds:
+  # esbuild's postinstall step fetches its platform-native binary
+  # (@esbuild/darwin-arm64 etc.) — Vite depends on this at dev-server
+  # and build time, so it needs to run.
+  esbuild: true

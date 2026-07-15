@@ -2,6 +2,24 @@ import { memo, useState, useCallback, useRef } from "react";
 import { ImageItem } from "../types";
 import { motion } from "framer-motion";
 
+/** Which corner of a tile a resize drag started from. Only the
+ *  left/right side matters for the actual span math (there's no row
+ *  span, so top vs bottom don't change behaviour) — top and bottom
+ *  variants exist so a handle is reachable from whichever corner is
+ *  physically closest to the pointer. */
+export type ResizeCorner = "tl" | "tr" | "bl" | "br";
+
+const RESIZE_CORNERS: Array<{
+  corner: ResizeCorner;
+  position: string;
+  rotation: string;
+}> = [
+  { corner: "tl", position: "-top-1 -left-1", rotation: "rotate-180" },
+  { corner: "tr", position: "-top-1 -right-1", rotation: "-rotate-90" },
+  { corner: "bl", position: "-bottom-1 -left-1", rotation: "rotate-90" },
+  { corner: "br", position: "-bottom-1 -right-1", rotation: "rotate-0" },
+];
+
 interface MasonryItemProps {
   item: ImageItem;
   isSelected?: boolean;
@@ -19,10 +37,14 @@ interface MasonryItemProps {
   isDragging?: boolean;
   /** Pointer went down on the tile body (drag-to-reorder start). */
   onDragHandlePointerDown?: (e: React.PointerEvent<HTMLDivElement>) => void;
-  /** Pointer went down on the corner resize grip (drag-to-resize start). */
-  onResizeHandlePointerDown?: (e: React.PointerEvent<HTMLDivElement>) => void;
-  /** True while THIS tile's resize grip is being dragged. */
-  isResizing?: boolean;
+  /** Pointer went down on one of the four corner resize grips. */
+  onResizeHandlePointerDown?: (
+    corner: ResizeCorner,
+    e: React.PointerEvent<HTMLDivElement>,
+  ) => void;
+  /** Which corner (if any) of THIS tile currently has an active resize
+   *  drag. Null/undefined when not resizing. */
+  activeResizeCorner?: ResizeCorner | null;
 }
 
 /**
@@ -183,50 +205,71 @@ export const MasonryItem = memo(function MasonryItem(props: MasonryItemProps) {
           <div className="absolute top-2 left-2 h-5 w-5 rounded-full bg-primary border-2 border-background shadow-md" />
         )}
 
-        {/* Resize grip — hold and drag horizontally to widen/narrow the
-            tile's column span. Preserves aspect ratio by construction:
+        {/* Resize grips — all four corners, each a small curved bracket
+            sitting right at the actual corner. Dragging any of them
+            widens/narrows the tile's column span (there's no row-span
+            concept, so top vs bottom corners behave identically —
+            left corners just invert the drag direction so "away from
+            the tile" always grows regardless of which corner you
+            grabbed). Preserves aspect ratio by construction:
             masonryPacking always scales height from the placed width,
-            span-driven or not, so this handle never distorts the
-            image — it only changes how many columns it occupies.
-            Hidden on the hero card, which already spans via a
-            separate promotion mechanism. */}
-        {!props.isSelected && (
-          // Oversized invisible hit zone around a small visible glyph:
-          // the 16px grip was hard to land a pointer on precisely, so
-          // pointerdown kept slipping onto the image next to it. The
-          // outer div is the real (larger) interactive target; the
-          // inner div is what's actually drawn.
-          <div
-            role="slider"
-            aria-label={`Resize ${props.item.name}`}
-            aria-orientation="horizontal"
-            onPointerDown={(e) => {
-              e.stopPropagation();
-              props.onResizeHandlePointerDown?.(e);
-            }}
-            onClick={(e) => {
-              // A click landing squarely on the handle must never
-              // reach the tile's own onClick (which selects the
-              // image) — this is the direct case; the "pointer
-              // strayed off the handle mid-drag" case is handled by
-              // Masonry.tsx's suppressNextClickRef instead, since by
-              // then the click's target may not even be this element.
-              e.stopPropagation();
-            }}
-            className="absolute -bottom-1 -right-1 h-7 w-7 cursor-ew-resize flex items-center justify-center"
-          >
+            span-driven or not, so this never distorts the image — it
+            only changes how many columns it occupies. Hidden on the
+            hero card, which already spans via a separate promotion
+            mechanism.
+            The hit zone (20px) is deliberately modest — four of these
+            now exist per tile, and an oversized zone at every corner
+            would eat too far into the area the tile needs to stay
+            grabbable for drag-to-reorder. */}
+        {!props.isSelected &&
+          RESIZE_CORNERS.map(({ corner, position, rotation }) => (
             <div
-              className={[
-                "h-4 w-4 rounded-sm flex items-center justify-center transition-opacity duration-150",
-                props.isResizing
-                  ? "opacity-100 bg-primary"
-                  : "opacity-0 group-hover:opacity-80 bg-black/50 hover:bg-primary",
-              ].join(" ")}
+              key={corner}
+              role="slider"
+              aria-label={`Resize ${props.item.name} from the ${corner} corner`}
+              aria-orientation="horizontal"
+              onPointerDown={(e) => {
+                e.stopPropagation();
+                props.onResizeHandlePointerDown?.(corner, e);
+              }}
+              onClick={(e) => {
+                // A click landing squarely on a handle must never
+                // reach the tile's own onClick (which selects the
+                // image) — this is the direct case; the "pointer
+                // strayed off the handle mid-drag" case is handled by
+                // Masonry.tsx's suppressNextClickRef instead, since by
+                // then the click's target may not even be this
+                // element.
+                e.stopPropagation();
+              }}
+              className={`absolute ${position} h-5 w-5 cursor-ew-resize flex items-center justify-center`}
             >
-              <div className="h-2 w-0.5 rounded-full bg-white/90" />
+              <svg
+                width="11"
+                height="11"
+                viewBox="0 0 11 11"
+                className={[
+                  rotation,
+                  "transition-opacity duration-150",
+                  props.activeResizeCorner === corner
+                    ? "opacity-100 text-primary"
+                    : "opacity-0 group-hover:opacity-70 text-white",
+                ].join(" ")}
+              >
+                {/* A quarter-circle bow hugging the corner — a curved
+                    bracket rather than a filled shape, so it reads as
+                    "grab here to resize" without looking like a
+                    selection dot. */}
+                <path
+                  d="M2 2 A6.5 6.5 0 0 1 9 9"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="1.75"
+                  strokeLinecap="round"
+                />
+              </svg>
             </div>
-          </div>
-        )}
+          ))}
       </motion.div>
     </motion.div>
   );

@@ -1,12 +1,18 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ImageItem } from "../types";
-import { MasonryItem } from "./MasonryItem";
+import { MasonryItem, type ResizeCorner } from "./MasonryItem";
 import debounce from "lodash/debounce";
 import { MasonryAnchor } from "./MasonryAnchor";
 import {
   computeMasonryLayout,
   type MasonryItemPlacement,
 } from "./masonryPacking";
+
+/** Corners on the left side invert the drag-delta sign so "away from
+ *  the tile" always grows it, regardless of which corner was grabbed. */
+function signForCorner(corner: ResizeCorner): 1 | -1 {
+  return corner === "tl" || corner === "bl" ? -1 : 1;
+}
 
 export type MasonryItemData = MasonryItemPlacement;
 
@@ -123,6 +129,7 @@ export default function Masonry(props: MasonryProps) {
   // --- Drag-to-resize state ------------------------------------------
   const [resizeState, setResizeState] = useState<{
     id: number;
+    corner: ResizeCorner;
     startX: number;
     baseSpan: number;
     previewSpan: number;
@@ -290,11 +297,12 @@ export default function Masonry(props: MasonryProps) {
 
   // --- Drag-to-resize pointer handling --------------------------------
   const handleResizeHandlePointerDown = useCallback(
-    (itemId: number, e: React.PointerEvent<HTMLDivElement>) => {
+    (itemId: number, corner: ResizeCorner, e: React.PointerEvent<HTMLDivElement>) => {
       const current = itemsRef.current.find((p) => p.itemData.id === itemId);
       const baseSpan = current?.colSpan ?? 1;
       setResizeState({
         id: itemId,
+        corner,
         startX: e.clientX,
         baseSpan,
         previewSpan: baseSpan,
@@ -313,7 +321,7 @@ export default function Masonry(props: MasonryProps) {
       if (!state) return;
       const colWidth = columnWidthRef.current || 1;
       const maxSpan = Math.max(1, columnCountRef.current);
-      const dx = e.clientX - state.startX;
+      const dx = (e.clientX - state.startX) * signForCorner(state.corner);
       const spanDelta = Math.round(dx / colWidth);
       const nextSpan = Math.max(1, Math.min(state.baseSpan + spanDelta, maxSpan));
       if (nextSpan !== state.previewSpan) {
@@ -492,9 +500,11 @@ export default function Masonry(props: MasonryProps) {
             onDragHandlePointerDown={(e) =>
               handleDragHandlePointerDown(item.itemData.id, e)
             }
-            isResizing={item.itemData.id === resizingId}
-            onResizeHandlePointerDown={(e) =>
-              handleResizeHandlePointerDown(item.itemData.id, e)
+            activeResizeCorner={
+              item.itemData.id === resizingId ? resizeState?.corner ?? null : null
+            }
+            onResizeHandlePointerDown={(corner, e) =>
+              handleResizeHandlePointerDown(item.itemData.id, corner, e)
             }
           />
         </MasonryAnchor>

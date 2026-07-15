@@ -584,7 +584,7 @@ mod tests {
     #[test]
     fn pipeline_stats_counts_orphaned_separately() {
         let db = fresh_db();
-        let r = db.add_root("/root".into()).unwrap();
+        let r = db.add_root("/root".into(), None).unwrap();
         db.add_image("/root/alive.jpg".into(), Some(r.id)).unwrap();
         db.add_image("/root/dead.jpg".into(), Some(r.id)).unwrap();
         // Mark dead.jpg as orphan (not in alive set).
@@ -623,8 +623,8 @@ mod tests {
     #[test]
     fn grid_query_excludes_disabled_root_images() {
         let db = fresh_db();
-        let a = db.add_root("/a".into()).unwrap();
-        let b = db.add_root("/b".into()).unwrap();
+        let a = db.add_root("/a".into(), None).unwrap();
+        let b = db.add_root("/b".into(), None).unwrap();
         db.add_image("/a/x.jpg".into(), Some(a.id)).unwrap();
         db.add_image("/b/y.jpg".into(), Some(b.id)).unwrap();
 
@@ -659,7 +659,7 @@ mod tests {
     // ============================================================
 
     fn setup_tagged_images(db: &ImageDatabase) -> (i64, i64, i64, i64) {
-        let r = db.add_root("/r".into()).unwrap();
+        let r = db.add_root("/r".into(), None).unwrap();
         // 3 images: A has tag-1, B has tag-2, C has both.
         db.add_image("/r/a.jpg".into(), Some(r.id)).unwrap();
         db.add_image("/r/b.jpg".into(), Some(r.id)).unwrap();

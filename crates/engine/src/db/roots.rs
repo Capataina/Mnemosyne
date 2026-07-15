@@ -34,18 +34,60 @@ impl ImageDatabase {
     /// Insert a new root. Returns the populated Root row. The path
     /// uniqueness constraint surfaces as an `Err` to the caller when
     /// the user adds the same path twice.
-    pub fn add_root(&self, path: String) -> rusqlite::Result<Root> {
+    ///
+    /// `bookmark` is the macOS security-scoped bookmark for `path`
+    /// (see `security_scope::create_bookmark`), or `None` on
+    /// non-macOS targets and on macOS dev builds outside a sandbox
+    /// where nothing needs one. Stored as-is; resolving it back into
+    /// live access on a later launch is the caller's job (this is a
+    /// pure CRUD layer, no Cocoa dependency belongs here).
+    pub fn add_root(&self, path: String, bookmark: Option<Vec<u8>>) -> rusqlite::Result<Root> {
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .map(|d| d.as_secs() as i64)
             .unwrap_or(0);
         let conn = self.connection.lock().unwrap();
         conn.execute(
-            "INSERT INTO roots (path, enabled, added_at) VALUES (?1, 1, ?2)",
-            params![path, now],
+            "INSERT INTO roots (path, enabled, added_at, bookmark) VALUES (?1, 1, ?2, ?3)",
+            params![path, now, bookmark],
         )?;
         let id = conn.last_insert_rowid();
         Ok(Root::new(id, path, true, now))
+    }
+
+    /// Fetch every enabled root's bookmark, for resolving security
+    /// scopes at startup before the watcher/scanner touch any of
+    /// them. Roots added before the bookmark migration (or added on
+    /// non-macOS, or in a dev build that never called
+    /// `create_bookmark`) have `bookmark = NULL` and are simply
+    /// skipped by the caller — no bookmark to resolve means no scope
+    /// to start, and on an unsandboxed dev build that's fine because
+    /// nothing is gating access anyway.
+    pub fn enabled_roots_with_bookmarks(&self) -> rusqlite::Result<Vec<(String, Vec<u8>)>> {
+        let conn = self.connection.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT path, bookmark FROM roots WHERE enabled = 1 AND bookmark IS NOT NULL",
+        )?;
+        let rows = stmt.query_map([], |r| {
+            Ok((r.get::<_, String>(0)?, r.get::<_, Vec<u8>>(1)?))
+        })?;
+        rows.collect::<rusqlite::Result<Vec<_>>>()
+    }
+
+    /// Fetch a single root's bookmark by id, for the caller to release
+    /// the security scope (`security_scope::stop_accessing`) before
+    /// the row itself is deleted or disabled. Returns `Ok(None)` both
+    /// when the root has no bookmark and when the id doesn't exist —
+    /// callers don't need to distinguish those cases, since "nothing
+    /// to release" is the correct handling either way.
+    pub fn get_root_bookmark(&self, id: ID) -> rusqlite::Result<Option<Vec<u8>>> {
+        let conn = self.connection.lock().unwrap();
+        conn.query_row(
+            "SELECT bookmark FROM roots WHERE id = ?1",
+            [id],
+            |r| r.get::<_, Option<Vec<u8>>>(0),
+        )
+        .or(Ok(None))
     }
 
     /// Remove a root. The ON DELETE CASCADE on images.root_id wipes
@@ -87,7 +129,7 @@ impl ImageDatabase {
         }
         drop(conn);
 
-        let root = self.add_root(path.clone())?;
+        let root = self.add_root(path.clone(), None)?;
 
         // Backfill: every NULL-root_id row whose path starts with this
         // root path now belongs to this root.
@@ -147,7 +189,7 @@ mod tests {
     #[test]
     fn add_root_creates_row_with_enabled_true() {
         let db = fresh_db();
-        let r = db.add_root("/tmp/photos".into()).unwrap();
+        let r = db.add_root("/tmp/photos".into(), None).unwrap();
         assert_eq!(r.path, "/tmp/photos");
         assert!(r.enabled);
         assert!(r.added_at > 0);
@@ -156,9 +198,9 @@ mod tests {
     #[test]
     fn add_root_rejects_duplicate_path() {
         let db = fresh_db();
-        db.add_root("/tmp/photos".into()).unwrap();
+        db.add_root("/tmp/photos".into(), None).unwrap();
         // Path UNIQUE constraint should error on second insert.
-        let result = db.add_root("/tmp/photos".into());
+        let result = db.add_root("/tmp/photos".into(), None);
         assert!(
             result.is_err(),
             "second add_root with the same path must error"
@@ -168,10 +210,10 @@ mod tests {
     #[test]
     fn list_roots_orders_by_added_at_ascending() {
         let db = fresh_db();
-        let a = db.add_root("/a".into()).unwrap();
+        let a = db.add_root("/a".into(), None).unwrap();
         // Sleep 1s so added_at differs (unix-second granularity).
         std::thread::sleep(std::time::Duration::from_millis(1100));
-        let b = db.add_root("/b".into()).unwrap();
+        let b = db.add_root("/b".into(), None).unwrap();
         let listed = db.list_roots().unwrap();
         assert_eq!(listed.len(), 2);
         assert_eq!(listed[0].id, a.id);
@@ -181,7 +223,7 @@ mod tests {
     #[test]
     fn remove_root_cascades_to_images() {
         let db = fresh_db();
-        let r = db.add_root("/x".into()).unwrap();
+        let r = db.add_root("/x".into(), None).unwrap();
         db.add_image("/x/a.jpg".into(), Some(r.id)).unwrap();
         db.add_image("/x/b.jpg".into(), Some(r.id)).unwrap();
         // Sanity: rows are there
@@ -198,8 +240,8 @@ mod tests {
     #[test]
     fn remove_root_does_not_affect_other_roots_images() {
         let db = fresh_db();
-        let a = db.add_root("/a".into()).unwrap();
-        let b = db.add_root("/b".into()).unwrap();
+        let a = db.add_root("/a".into(), None).unwrap();
+        let b = db.add_root("/b".into(), None).unwrap();
         db.add_image("/a/x.jpg".into(), Some(a.id)).unwrap();
         db.add_image("/b/y.jpg".into(), Some(b.id)).unwrap();
         db.remove_root(a.id).unwrap();
@@ -211,7 +253,7 @@ mod tests {
     #[test]
     fn set_root_enabled_round_trips() {
         let db = fresh_db();
-        let r = db.add_root("/r".into()).unwrap();
+        let r = db.add_root("/r".into(), None).unwrap();
         assert!(r.enabled);
         db.set_root_enabled(r.id, false).unwrap();
         let listed = db.list_roots().unwrap();
@@ -273,7 +315,7 @@ mod tests {
     #[test]
     fn get_root_id_by_path_returns_some_when_known() {
         let db = fresh_db();
-        let r = db.add_root("/r".into()).unwrap();
+        let r = db.add_root("/r".into(), None).unwrap();
         db.add_image("/r/a.jpg".into(), Some(r.id)).unwrap();
         assert_eq!(db.get_root_id_by_path("/r/a.jpg"), Some(r.id));
     }

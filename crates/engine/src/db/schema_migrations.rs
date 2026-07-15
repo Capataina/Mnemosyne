@@ -188,4 +188,27 @@ impl ImageDatabase {
 
         Ok(())
     }
+
+    /// Adds `roots.bookmark` (BLOB, nullable) for existing DBs created
+    /// before macOS security-scoped bookmark support. NULL for every
+    /// pre-existing root — a root added before this migration has no
+    /// bookmark to fall back on until the user re-adds it (or, once a
+    /// re-grant flow exists, re-confirms it via the dialog); this
+    /// migration only makes the column exist, it can't retroactively
+    /// grant sandbox access nothing was ever recorded for.
+    pub(super) fn migrate_add_roots_bookmark_column(&self) -> rusqlite::Result<()> {
+        let conn = self.connection.lock().unwrap();
+        let mut stmt = conn.prepare("PRAGMA table_info(roots)")?;
+        let columns: Vec<String> = stmt
+            .query_map([], |row| row.get::<_, String>(1))?
+            .filter_map(|r| r.ok())
+            .collect();
+
+        if !columns.contains(&"bookmark".to_string()) {
+            info!("Migrating database: Adding roots.bookmark column...");
+            conn.execute("ALTER TABLE roots ADD COLUMN bookmark BLOB", [])?;
+        }
+
+        Ok(())
+    }
 }

@@ -33,6 +33,8 @@ pub mod commands;
 pub mod filesystem;
 pub mod indexing;
 pub mod model_download;
+#[cfg(target_os = "macos")]
+pub mod security_scope;
 pub mod settings;
 pub mod similarity_and_semantic_search;
 pub mod thumbnail;
@@ -450,6 +452,42 @@ pub fn run(db: ImageDatabase, db_path: String) {
                 // rescan when files change on disk.
                 {
                     let temp_db = ImageDatabase::new(&db_path);
+
+                    // Resolve every enabled root's security-scoped
+                    // bookmark and start accessing it BEFORE the
+                    // watcher or the indexing pipeline touch that
+                    // path — under App Sandbox, nothing below this
+                    // point can see the folder otherwise. Not paired
+                    // with a matching stop_accessing here: this scope
+                    // needs to stay open for the app's whole session,
+                    // released only when a root is disabled/removed
+                    // (commands/roots.rs) or the process exits (the OS
+                    // reclaims every open scope automatically). A
+                    // resolve failure is logged and that root is
+                    // simply skipped — same degraded-but-not-fatal
+                    // handling as a missing model file elsewhere in
+                    // this same setup callback; the rest of the app
+                    // still starts.
+                    #[cfg(target_os = "macos")]
+                    if let Ok(d) = &temp_db {
+                        for (path, bookmark) in d.enabled_roots_with_bookmarks().unwrap_or_default() {
+                            match crate::security_scope::start_accessing(&bookmark) {
+                                Ok((resolved, is_stale)) => {
+                                    if is_stale {
+                                        warn!(
+                                            "security-scoped bookmark for {path} resolved but is stale; \
+                                             it should be re-created from {} soon",
+                                            resolved.display()
+                                        );
+                                    }
+                                }
+                                Err(e) => warn!(
+                                    "could not start security-scoped access for root {path}: {e}"
+                                ),
+                            }
+                        }
+                    }
+
                     let watch_paths: Vec<std::path::PathBuf> = match temp_db {
                         Ok(d) => d
                             .list_roots()

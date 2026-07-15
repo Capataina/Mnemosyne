@@ -2627,6 +2627,8 @@ dependencies = [
  "ndarray 0.17.1",
  "notify",
  "notify-debouncer-mini",
+ "objc2 0.6.3",
+ "objc2-foundation 0.3.2",
  "ort",
  "rand 0.9.2",
  "rayon",

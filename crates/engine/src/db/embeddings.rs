@@ -577,8 +577,8 @@ mod tests {
         // but the search path didn't), so "View Similar" / semantic
         // search returned images from folders the user had toggled off.
         let db = fresh_db();
-        let enabled = db.add_root("/enabled".into()).unwrap();
-        let disabled = db.add_root("/disabled".into()).unwrap();
+        let enabled = db.add_root("/enabled".into(), None).unwrap();
+        let disabled = db.add_root("/disabled".into(), None).unwrap();
         db.add_image("/enabled/keep.jpg".into(), Some(enabled.id))
             .unwrap();
         db.add_image("/disabled/hide.jpg".into(), Some(disabled.id))
@@ -606,7 +606,7 @@ mod tests {
     #[test]
     fn get_all_embeddings_excludes_orphaned_images() {
         let db = fresh_db();
-        let r = db.add_root("/r".into()).unwrap();
+        let r = db.add_root("/r".into(), None).unwrap();
         db.add_image("/r/alive.jpg".into(), Some(r.id)).unwrap();
         db.add_image("/r/dead.jpg".into(), Some(r.id)).unwrap();
         let alive_id = db.get_image_id_by_path("/r/alive.jpg").unwrap();
@@ -628,8 +628,8 @@ mod tests {
         // table. This is the path that drives image-image search via
         // populate_from_db_for_encoder.
         let db = fresh_db();
-        let kept = db.add_root("/kept".into()).unwrap();
-        let off = db.add_root("/off".into()).unwrap();
+        let kept = db.add_root("/kept".into(), None).unwrap();
+        let off = db.add_root("/off".into(), None).unwrap();
         db.add_image("/kept/a.jpg".into(), Some(kept.id)).unwrap();
         db.add_image("/off/b.jpg".into(), Some(off.id)).unwrap();
         let a = db.get_image_id_by_path("/kept/a.jpg").unwrap();

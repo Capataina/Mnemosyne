@@ -141,7 +141,7 @@ mod tests {
     #[test]
     fn mark_orphaned_marks_missing_paths() {
         let db = fresh_db();
-        let r = db.add_root("/r".into()).unwrap();
+        let r = db.add_root("/r".into(), None).unwrap();
         db.add_image("/r/keep.jpg".into(), Some(r.id)).unwrap();
         db.add_image("/r/lost.jpg".into(), Some(r.id)).unwrap();
 
@@ -160,7 +160,7 @@ mod tests {
     #[test]
     fn mark_orphaned_unmarks_returned_files() {
         let db = fresh_db();
-        let r = db.add_root("/r".into()).unwrap();
+        let r = db.add_root("/r".into(), None).unwrap();
         db.add_image("/r/file.jpg".into(), Some(r.id)).unwrap();
         // First scan: file is alive.
         db.mark_orphaned(r.id, &["/r/file.jpg".into()]).unwrap();
@@ -181,7 +181,7 @@ mod tests {
     #[test]
     fn mark_orphaned_empty_alive_set_orphans_everything_in_root() {
         let db = fresh_db();
-        let r = db.add_root("/r".into()).unwrap();
+        let r = db.add_root("/r".into(), None).unwrap();
         for i in 0..3 {
             db.add_image(format!("/r/{i}.jpg"), Some(r.id)).unwrap();
         }
@@ -192,8 +192,8 @@ mod tests {
     #[test]
     fn mark_orphaned_does_not_affect_other_roots() {
         let db = fresh_db();
-        let a = db.add_root("/a".into()).unwrap();
-        let b = db.add_root("/b".into()).unwrap();
+        let a = db.add_root("/a".into(), None).unwrap();
+        let b = db.add_root("/b".into(), None).unwrap();
         db.add_image("/a/1.jpg".into(), Some(a.id)).unwrap();
         db.add_image("/b/1.jpg".into(), Some(b.id)).unwrap();
 
@@ -211,7 +211,7 @@ mod tests {
         // The chunked-IN logic kicks in above 500 ids. Stress with 1200
         // to exercise the chunk boundary.
         let db = fresh_db();
-        let r = db.add_root("/big".into()).unwrap();
+        let r = db.add_root("/big".into(), None).unwrap();
         for i in 0..1200 {
             db.add_image(format!("/big/{i}.jpg"), Some(r.id)).unwrap();
         }

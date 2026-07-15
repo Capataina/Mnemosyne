@@ -47,7 +47,23 @@ pub fn set_scan_root(
         db.remove_root(r.id)?;
     }
     db.wipe_images_for_new_root()?;
-    db.add_root(path.clone())?;
+    // Security-scoped bookmark creation must happen synchronously
+    // here, while the sandbox still remembers granting this process
+    // access to `scan_root` from the folder-picker dialog that led to
+    // this call — see security_scope.rs's module doc for why this
+    // can't be deferred. `None` on non-macOS (no such concept) and if
+    // creation fails (e.g. this build isn't actually sandboxed, so
+    // there's nothing for the OS to have granted) — a failure here is
+    // not fatal to adding the root, just means startup falls back to
+    // plain filesystem access for it, same as before this feature
+    // existed.
+    #[cfg(target_os = "macos")]
+    let bookmark = crate::security_scope::create_bookmark(&scan_root)
+        .inspect_err(|e| warn!("could not create security-scoped bookmark for {scan_root:?}: {e}"))
+        .ok();
+    #[cfg(not(target_os = "macos"))]
+    let bookmark: Option<Vec<u8>> = None;
+    db.add_root(path.clone(), bookmark)?;
 
     cosine_state.invalidate();
     // Phase 5 — fusion caches contain entries from the now-removed
@@ -90,7 +106,13 @@ pub fn add_root(
     if !scan_root.is_dir() {
         return Err(ApiError::BadInput(format!("Not a directory: {path}")));
     }
-    let root = db.add_root(path)?;
+    #[cfg(target_os = "macos")]
+    let bookmark = crate::security_scope::create_bookmark(&scan_root)
+        .inspect_err(|e| warn!("could not create security-scoped bookmark for {scan_root:?}: {e}"))
+        .ok();
+    #[cfg(not(target_os = "macos"))]
+    let bookmark: Option<Vec<u8>> = None;
+    let root = db.add_root(path, bookmark)?;
 
     indexing::try_spawn_pipeline(
         app.clone(),
@@ -116,6 +138,19 @@ pub fn remove_root(
     fusion_state: State<'_, FusionIndexState>,
     id: i64,
 ) -> Result<(), ApiError> {
+    // Release the security scope before the row (and its bookmark
+    // along with it) is gone — fetch-then-delete, not the other way
+    // round, or there's nothing left to resolve stop_accessing
+    // against. Best-effort like the thumbnail cleanup right below:
+    // the OS reclaims every open scope on process exit regardless, so
+    // a failure here just means this one root's scope outlives the
+    // root row until the app restarts, not a real leak.
+    #[cfg(target_os = "macos")]
+    if let Ok(Some(bookmark)) = db.get_root_bookmark(id) {
+        if let Err(e) = crate::security_scope::stop_accessing(&bookmark) {
+            warn!("could not release security scope for root {id}: {e}");
+        }
+    }
     db.remove_root(id)?;
     // Clean the per-root thumbnail subfolder. Best-effort — if the
     // remove fails (permissions, file locked) we log and move on; the

@@ -92,6 +92,19 @@ tempfile = "3.27.0"
 [target.'cfg(target_os = "macos")'.dependencies.accelerate-src]
 version = "0.3"
 
+# NSURL security-scoped bookmarks (security_scope.rs) — the only way
+# to persist App Sandbox access to a user-picked folder across
+# relaunches. No pure-Rust equivalent exists; this is a direct Cocoa
+# binding, the standard approach for macOS-specific Foundation APIs
+# from Rust (this is what Tauri's own macOS-specific internals use
+# the same crate family for).
+[target.'cfg(target_os = "macos")'.dependencies.objc2]
+version = "0.6"
+
+[target.'cfg(target_os = "macos")'.dependencies.objc2-foundation]
+version = "0.3"
+features = ["NSURL", "NSString", "NSError", "NSData"]
+
 [target.'cfg(target_os = "macos")'.dependencies.blas-src]
 version = "0.10"
 features = ["accelerate"]

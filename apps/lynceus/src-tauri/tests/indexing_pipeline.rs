@@ -66,7 +66,7 @@ fn scan_inserts_every_image_under_root() {
     assert_eq!(paths.len(), 4);
 
     // Add a root and insert each. Should idempotently land 4 rows.
-    let root = db.add_root(root_path.to_string_lossy().into_owned()).unwrap();
+    let root = db.add_root(root_path.to_string_lossy().into_owned(), None).unwrap();
     for p in &paths {
         db.add_image(p.clone(), Some(root.id)).unwrap();
     }
@@ -79,7 +79,7 @@ fn scan_is_idempotent_on_re_run() {
     let (_tmp, db, root_path, _thumb_dir) = setup_workspace();
     let scanner = ImageScanner::new();
     let paths = scanner.scan_directory(&root_path).unwrap();
-    let root = db.add_root(root_path.to_string_lossy().into_owned()).unwrap();
+    let root = db.add_root(root_path.to_string_lossy().into_owned(), None).unwrap();
     for p in &paths {
         db.add_image(p.clone(), Some(root.id)).unwrap();
     }
@@ -96,7 +96,7 @@ fn thumbnail_generator_produces_files_under_per_root_subdir() {
     let (_tmp, db, root_path, thumb_dir) = setup_workspace();
     let scanner = ImageScanner::new();
     let paths = scanner.scan_directory(&root_path).unwrap();
-    let root = db.add_root(root_path.to_string_lossy().into_owned()).unwrap();
+    let root = db.add_root(root_path.to_string_lossy().into_owned(), None).unwrap();
     for p in &paths {
         db.add_image(p.clone(), Some(root.id)).unwrap();
     }
@@ -140,7 +140,7 @@ fn orphan_detection_marks_disappeared_files() {
     let (_tmp, db, root_path, _thumb_dir) = setup_workspace();
     let scanner = ImageScanner::new();
     let paths = scanner.scan_directory(&root_path).unwrap();
-    let root = db.add_root(root_path.to_string_lossy().into_owned()).unwrap();
+    let root = db.add_root(root_path.to_string_lossy().into_owned(), None).unwrap();
     for p in &paths {
         db.add_image(p.clone(), Some(root.id)).unwrap();
     }
@@ -172,7 +172,7 @@ fn remove_root_cascade_takes_thumbnails_with_it_logically() {
     let (_tmp, db, root_path, _thumb_dir) = setup_workspace();
     let scanner = ImageScanner::new();
     let paths = scanner.scan_directory(&root_path).unwrap();
-    let root = db.add_root(root_path.to_string_lossy().into_owned()).unwrap();
+    let root = db.add_root(root_path.to_string_lossy().into_owned(), None).unwrap();
     for p in &paths {
         db.add_image(p.clone(), Some(root.id)).unwrap();
     }
@@ -199,8 +199,8 @@ fn multi_folder_grid_query_unions_enabled_roots() {
     let db = ImageDatabase::new(db_path.to_str().unwrap()).unwrap();
     db.initialize().unwrap();
 
-    let root_a = db.add_root(dir_a.to_string_lossy().into_owned()).unwrap();
-    let root_b = db.add_root(dir_b.to_string_lossy().into_owned()).unwrap();
+    let root_a = db.add_root(dir_a.to_string_lossy().into_owned(), None).unwrap();
+    let root_b = db.add_root(dir_b.to_string_lossy().into_owned(), None).unwrap();
     let scanner = ImageScanner::new();
     for p in scanner.scan_directory(&dir_a).unwrap() {
         db.add_image(p, Some(root_a.id)).unwrap();

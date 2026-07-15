@@ -183,10 +183,12 @@ impl ImageDatabase {
                 id INTEGER PRIMARY KEY,
                 path TEXT NOT NULL UNIQUE,
                 enabled INTEGER NOT NULL DEFAULT 1,
-                added_at INTEGER NOT NULL
+                added_at INTEGER NOT NULL,
+                bookmark BLOB
             );",
             [],
         )?;
+        self.migrate_add_roots_bookmark_column()?;
 
         // Images table — `notes` and `orphaned` are Phase 11 / Phase 7
         // additions; `root_id` is Phase 6. Existing DBs migrate via

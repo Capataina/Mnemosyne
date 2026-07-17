@@ -210,9 +210,39 @@ export default function Masonry(props: MasonryProps) {
   const resizingId = rs?.id ?? null;
   const resizingCorner = rs?.corner ?? null;
 
+  // Render the anchors in a STABLE id order, decoupled from the visual/pack
+  // order. Every tile is absolutely positioned by `transform: translate()`,
+  // so DOM order does not drive tile *placement*. It matters because React's
+  // keyed reconciliation relocates a node via insertBefore when its position
+  // in the child list changes — and a re-inserted node loses its
+  // CSS-transition start frame, so its next `translate()` lands in a single
+  // commit with no interpolation (a teleport instead of a slide). A reorder
+  // that moved a tile *earlier* used to re-insert exactly the displaced tiles
+  // (React's lastPlacedIndex flags the lower-old-index nodes as moved), so
+  // dragging up teleported the grid while dragging down slid it — the
+  // direction asymmetry telemetry pinned down (the down-drag slide is the
+  // control: same async-worker commit path, no node relocation, animates
+  // fine). Sorting by id makes the persistent tiles' relative DOM order
+  // invariant under any reorder, so every position change is a prop-only
+  // update the CSS transition animates. `visiblePlacements` itself stays in
+  // pack order — the settle-time prewarm above depends on it leading with the
+  // most likely-next-click tiles.
+  //
+  // Known minor trade-off: among two *ordinary* (non-`onTop`) tiles that cross
+  // paths mid-slide, painter order now follows id rather than pack order, so
+  // which briefly paints over the other during the ~400ms cross is arbitrary.
+  // The settled pack never overlaps (masonryPacking guarantees it) and the
+  // dragged/resizing/selected tiles are raised by z-50, so this is a
+  // sub-second z-flip between two opaque image tiles, not a layout artefact.
+  const renderOrder = useMemo(
+    () =>
+      [...visiblePlacements].sort((a, b) => a.itemData.id - b.itemData.id),
+    [visiblePlacements],
+  );
+
   return (
     <div ref={containerRef} className="w-full relative" style={{ height }}>
-      {visiblePlacements.map((item) => {
+      {renderOrder.map((item) => {
         const id = item.itemData.id;
         const isDraggingThis = id === drag.dragItemId;
         return (

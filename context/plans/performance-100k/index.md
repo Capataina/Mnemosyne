@@ -1,89 +1,100 @@
-# Performance roadmap — buttery-smooth at 100k images
+# Performance roadmap — buttery-smooth at 100k images (verified edition)
 
-A whole-stack performance survey of Lynceus produced by `gpt-5.6-sol` (advisory, read-only)
-on 2026-07-15, reorganised and verified against the code by the session. The hard constraint
-throughout: **no functionality is removed** — every idea keeps the feature and makes it fast.
-Approximate-nearest-neighbour similarity (HNSW etc.) was explicitly rejected because missed
-neighbours change which results the user sees.
+The original 20-idea survey (gpt-5.6-sol advisory, 2026-07-15) has been **adversarially verified
+against the code** on 2026-07-17: four parallel read-only agents (feed/layout, similarity/caches,
+indexing/DB, render/memory/startup) traced every claim to `file:line`, and the kill-driving
+citations were independently re-checked in the main session. This folder now contains only what
+survived. Everything cut is recorded in [`rejected.md`](./rejected.md) with its refuting evidence —
+**read that before proposing anything new**, because most "obvious" additions were already
+evaluated and killed for cause.
 
-The scale target is **100,000 images**. At a few thousand most of this is invisible — so the
-frontend scroll/render wins (#1, #15, #17) and the indexing wins matter first, and the heavy
-architectural items (#2, #3, #8, #20) can wait until real libraries approach the target.
+The hard constraints are unchanged: **no functionality removed, no visible behaviour degraded,
+search stays exact full-corpus** (no ANN — missed neighbours change results). Scale target:
+100,000 images.
 
-## The framing insight — catalogue amplification
+## What verification actually changed
 
-The dominant 100k cost is that the app loads, serialises, URL-converts, shuffles, and re-packs
-the **entire** library on every feed refresh — and during indexing that repeats every ~5s
-(`useIndexingStatus.ts` invalidates `["images"]`; `fetchImages` materialises all rows;
-`useShuffledFeed` sorts all of them; the engine packs all of them). Almost every other idea is
-a quick win *around* this; **idea #2 (compact manifest + delta protocol)** is the architectural
-fix *for* it. Strategy: rack up the safe quick wins now, treat #2 as its own planned effort so
-it doesn't destabilise the feed right after we got it correct and smooth.
+| | Original plan | After verification |
+|---|---|---|
+| Work items | 20 ideas across 6 areas | **12 items in 3 tiers** (7 ideas killed or absorbed) |
+| Wrongest claim | "CLIP has a real batched ONNX path" (#12) | FALSE — no encoder batches today; CLIP *can't* without a provenance-touching re-export |
+| Understated cost | ~4,000 progress events/run (#13) | ~9,000 events/run, each forcing a full images-table scan |
+| Missed finding | — | The primary cosine cache is warmed at startup then sits **idle** (live UI only calls fused commands) — ~205 MB pure waste at 100k |
+| Missed finding | — | The scroll listener isn't even rAF-coalesced — ~80% of #1's win is trivial |
+| Missed finding | — | `useIndexingStatus` holds per-event `message` state inside the route's fiber + registers 2–3 duplicate Tauri listeners → the render storm is worse than the plan says |
+| Web instincts killed | — | #19 lazy-loading (disk-loaded JS, lazy JSC compile — net negative), #18's byte-capped LRU |
 
-## Highest-leverage wins (advisor's top 5)
+## The two failures that actually matter at 100k
 
-| # | Change | Payoff | Effort | Verify |
-|---|---|---|---|---|
-| 1 | Range-index the scroll virtualiser (binary-search columns, not filter-all-N) | ~100k checks/scroll → visible-count | M | ✅ confirmed |
-| 2 | Streamed compact manifest + delta updates instead of full `["images"]` refetch | kills the re-materialise/shuffle/pack cycle | L | ✅ confirmed |
-| 3 | ID-native similarity results + batch-hydrate metadata | removes a full catalogue load + 30–50 SQL lookups/search | M | ⚠️ backend, plausible |
-| 4 | Hoist cosine norms + contiguous shared per-encoder storage | ~3× less cosine arithmetic, ~200–300 MB less RAM | S–L | ⚠️ backend, plausible |
-| 5 | Batch DB writes + real SigLIP/DINO batch inference + decode-once fan-out | orders-of-magnitude fewer transactions; faster indexing | M–L | ⚠️ backend, plausible |
+Everything else is polish around these:
 
-## The menu by lane (full 20 ideas)
+1. **Catalogue amplification (frontend)** — every feed refresh re-materialises, re-shuffles, and
+   re-packs the whole library; during indexing this repeats every ~5s. At 100k that's a **~1–4s
+   stall every 5 seconds** — the app is effectively unusable while indexing. Fixed by **T3-1
+   (compact manifest + deltas)**.
+2. **Embedding-cache waste (backend)** — ~819 MB of raw f32 across three encoders **plus** a
+   ~205 MB duplicate primary cache the UI never queries, held as 400k separate allocations, all
+   rebuilt from the DB on every launch. Fixed by the **T3-2 chain (ID-native search → flat
+   mmap-able store)**.
 
-**🟢 Quick wins — safe, small, do-now (S, low risk):** #1 (range-indexed scroll, actually M but
-top-bang), #7 (cosine norms once), #14 (reverse tag index + compact grid query), #17 (adaptive-
-thumbnail resolution cache), #19 (lazy-load Settings/modal/timer chunks).
+## The plan
 
-**🟡 Mid-effort — clear wins, some plumbing (M):** #15 (stable route callbacks + selector-based
-indexing state → stop route/grid re-render storms during indexing), #10 (cancel stale semantic
-searches end-to-end), #11 (batch scan/thumbnail DB writes), #13 (O(1) progress counters + the
-pill-reads-event smoothness fix backend-smith already spec'd), #18 (prioritise/predecode images).
+**Tier 1 — free wins.** Six S-sized, low-risk items: the pill smoothness fix, the reverse tag
+index (one line), rAF-coalesced scroll + guard band, cached cosine norms, the adaptive-thumbnail
+cache, and modal/timer predecode-next. → [`tier-1-quick-wins.md`](./tier-1-quick-wins.md)
 
-**🔴 Architectural — the real 100k unlock, plan carefully (L):** #2 (compact manifest + delta
-protocol — the big one), #3 (packing in a Web Worker with typed-array geometry), #8/#20 (flat,
-memory-mapped, shared embedding caches), #12 (decode-once fan-out across the three encoders),
-#5/#9 (local drag-reorder previews + governed batch prefetch).
+**Tier 2 — contained mid-effort.** Three items: make the tile memo hold during indexing
+(#15+#16-B merged, the *lighter* fix — not an external store), batch the scan-phase inserts, and
+the SigLIP-2/DINOv2 `encode_batch` override (honest expectation: ~1.2–2× on CPU, not "32→1").
+Plus one deferred tail: semantic-search cancellation. → [`tier-2-mid-effort.md`](./tier-2-mid-effort.md)
+
+**Tier 3 — the two architectural builds (+ one follow-on).** The compact manifest + delta
+protocol; the ID-native → flat-unified-mmap embedding store chain; then the Web Worker pack.
+Each wants its own plan file when picked up. → [`tier-3-architectural.md`](./tier-3-architectural.md)
+
+## Superset map — why 20 became 12
+
+```
+T3-1 manifest+delta  ──subsumes──▶  #4 (recurring shuffle rebuild)
+                     ──subsumes──▶  #14's query-split half
+                     ──removes trigger for──▶  most of #16-B's churn, #3's recurring packs
+
+T3-3 worker pack     ──absorbs──▶  #5 (drag-swap repack: off-thread + id→index map)
+                     ──absorbs──▶  #4's one-time sort (radix in worker)
+
+T3-2 ID-native (#6)  ──kills the expensive half of──▶  #9 (prefetch burst = 20-30 catalogue joins)
+     flat store (#8+#20, one unit)  ──absorbs──▶  #7's norms (stored in the flat header)
+
+T2-1 tile-memo fix   =  #15 (callback stability) + #16-B (identity stability), one work item
+#10 cancellation     ◀──hosts──  #9's only surviving sliver (a cancel guard)
+```
 
 ## Recommended sequence
 
 ```
-Immediate, low-risk          →  #1 range-indexed viewport · #7 cached norms
-                                #14 reverse tag index · #17 adaptive-thumbnail cache
-Remove catalogue amplification → #2 compact manifest + deltas · #3 worker/typed geometry
-                                #15 selector-based React subscriptions
-Make exact similarity scale   →  #6 ID-native results · #8 shared contiguous caches
-                                #9 governed batch prefetch · #10 cancellation
-Accelerate background work    →  #11 batched DB writes · #12 true encoder batches + shared decode
-                                #13 materialised progress counters · #19–#20 startup + mapped caches
+Now (any order, afternoon-sized each) →  T1-1 pill fix · T1-2 tag index · T1-3 rAF scroll
+                                         T1-4 cosine norms · T1-5 thumb cache · T1-6 predecode
+Next (contained)                      →  T2-1 tile-memo fix · T2-2 scan batching · T2-3 encoder batch
+Then (each gets its own plan)         →  T3-1 manifest + deltas   (the frontend unlock)
+                                      →  T3-2 ID-native → flat mmap store   (the backend unlock)
+                                      →  T3-3 worker pack   (after T3-1; absorbs drag-swap cost)
+Only if it still hurts after all that →  #10 cancellation (tier-2 tail)
 ```
 
-Advisor's strongest first slice: **#1 + #7 + #6** (scroll, raw similarity arithmetic, search
-metadata amplification) without the larger catalogue redesign. The architectural target after
-that is **#2**, because repeated full-catalogue materialisation otherwise keeps resurfacing in
-feed refresh, filtering, cache mutation, IPC, shuffle, and layout.
+Dependency notes: T3-2's internal order is fixed (#6 first — it makes the flat file path-free —
+then #8+#20 together; T1-4's norms fold into the flat header when it lands). T3-3 sequences after
+T3-1 because deltas remove the every-5s repack that makes packing hurt today; what remains for the
+worker is launch/resize packs, memory (~15–25 MB → ~3 MB), and drag-swap smoothness.
 
-## What is already done (do not re-propose)
+## Verification provenance
 
-- **Masonry resize/drag freeze** — fixed 2026-07-15 (`889b765`): per-frame full re-pack removed;
-  continuous motion is imperative rAF on the one active tile; re-pack only on discrete span/hover
-  change. This closes the *per-frame* half of idea #5; the *invisible-suffix repack* half (#5's
-  O(100k) clone per hover-swap) remains open.
-- **Similarity at scale (partial)** — rayon-parallel cosine + startup cache-warm + hover/visible
-  prefetch already landed (`f48241e`, `46fb75c`). Ideas #6/#7/#8/#9 extend this.
-- **Indexing progress cadence** — per-image emit landed (`55655a7`); the pill still reads the DB
-  snapshot so encode steps per-batch — idea #13's tail is the frontend fix, spec'd and parked
-  with backend-smith.
-- `content-visibility` was already tried and **correctly removed** (`App.css`) after it caused
-  disappearing tiles — do not reintroduce it.
-
-## Verification notes
-
-Confirmed against code this session: #1 (`useMasonryEngine` filters all placements per viewport
-change), #2 (full `get_images`→shuffle→pack cycle, re-invalidated every 5s), #15 (`handleImageClick`
-/`handleReorder`/`handleResizeCommit` are NOT `useCallback`'d → recreated every render → defeat
-`MasonryItem` memo, and the route re-renders on every 1500ms progress poll). Backend claims (#6,
-#7, #8, #11–14, #20) are plausible standard optimisations cited with `file:line` but were not
-line-verified — confirm before implementing. Full ideas live in the `area-*.md` siblings.
-</content>
+- Four read-only verification reports, 2026-07-17, all claims at `file:line` against commit
+  `243bbda`'s tree; main session independently re-checked every kill-driving citation
+  (encoder batch loop, missing tag_id index, per-candidate norms, dual cache warm, prefetch loop,
+  static imports, un-coalesced scroll, non-memoised route handlers).
+- Stale references in the original survey corrected along the way (e.g. it cited
+  `useMasonryEngine.ts:245-255` in a 227-line file; the filter lives at `:214-224`).
+- Already-landed work this folder must not re-propose: masonry gesture rewrite (`889b765`),
+  rayon cosine + RwLock + startup warm (`f48241e`), visible-tile prefetch (`46fb75c`), per-image
+  progress cadence (`55655a7`), eager thumbnail buckets (`aa7e093`), `content-visibility`
+  tried-and-removed (do not reintroduce).

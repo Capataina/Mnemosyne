@@ -26,7 +26,8 @@ const PHASE_LABELS: Record<IndexingPhase, string> = {
  * "Ready" confirmation when a run finishes, then fades.
  */
 export function IndexingStatusPill() {
-  const { isIndexing, phase, message, overall } = useIndexingStatus();
+  const { isIndexing, phase, message, eventFraction, overall } =
+    useIndexingStatus();
   const [dismissed, setDismissed] = useState(false);
   const [showFinal, setShowFinal] = useState(false);
   const wasIndexing = useRef(false);
@@ -55,7 +56,13 @@ export function IndexingStatusPill() {
 
   const isReady = showFinal && !isIndexing && !isError;
   const label = isReady ? PHASE_LABELS.ready : PHASE_LABELS[phase];
-  const pct = Math.round(overall.fraction * 100);
+  // During an active run the pill tracks the current phase's per-image event
+  // climb (smooth per-image, guaranteed terminal per phase). At idle/terminal
+  // it falls back to the DB-derived aggregate so the "Ready" state stays the
+  // authority for reaching 100% and clearing.
+  const fraction =
+    isIndexing && eventFraction != null ? eventFraction : overall.fraction;
+  const pct = Math.round(fraction * 100);
   const showBar = isIndexing && !isError;
 
   return (

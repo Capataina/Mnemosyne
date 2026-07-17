@@ -116,8 +116,19 @@ export function useGestureTimer({
       ? "∞"
       : sequence.length.toString();
 
+  // The next reference is deterministic whenever it already exists in the
+  // built sequence — that's the case predecode can act on ahead of the swap.
+  // The continuous+repeat tail appends a random pick at advance time
+  // (`next`), so its next image is unknowable here; `undefined` there means
+  // "nothing to predecode", handled honestly by the caller.
+  const nextImageUrl =
+    currentIndex < sequence.length - 1
+      ? sequence[currentIndex + 1]?.url
+      : undefined;
+
   return {
     currentImage: sequence[currentIndex] ?? startingImage,
+    nextImageUrl,
     currentIndex,
     positionLabel: `${currentIndex + 1} / ${totalLabel}`,
     remainingMs,

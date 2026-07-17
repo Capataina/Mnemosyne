@@ -1,4 +1,4 @@
-import { useIndexingStatus } from "../../hooks/useIndexingStatus";
+import { usePipelineStats } from "../../hooks/useIndexingStatus";
 import { Section } from "./controls";
 
 /**
@@ -8,7 +8,7 @@ import { Section } from "./controls";
  * `with_thumbnail` counts images with a base preview, not the number of
  * adaptive-resolution preview files stored for each image.
  *
- * Reads the shared `useIndexingStatus` snapshot (react-query keyed
+ * Reads the shared `usePipelineStats` snapshot (react-query keyed
  * `["pipelineStats"]`), which is the same authoritative source the
  * top-right status pill uses — one poll, one source of truth, so the two
  * surfaces can never disagree. The query is a single SELECT on the
@@ -21,7 +21,7 @@ import { Section } from "./controls";
  * state of the index.
  */
 export function StatsSection() {
-  const { stats } = useIndexingStatus();
+  const stats = usePipelineStats();
 
   if (!stats) {
     return (

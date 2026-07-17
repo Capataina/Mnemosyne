@@ -81,6 +81,52 @@ interface MasonryItemProps {
  * both read as cheap. The resize grips here are neutral and functional;
  * the v2 visual pass restyles the whole tile against these same props.
  */
+/**
+ * Custom memo comparator. The default shallow compare breaks on every
+ * catalogue refetch because react-query hands back a fresh `item` object even
+ * when its values are identical, re-rendering every visible tile during an
+ * indexing run (T2-1). We compare `item`'s pixel-affecting fields by value and
+ * everything else by reference.
+ *
+ * The field list below must stay in sync with `MasonryItemProps` and with what
+ * this component (and `useAdaptiveThumbnail`) actually reads:
+ *  - item.{id,url,thumbnailUrl,hasThumbnail}  → displayUrl / adaptive bucket
+ *  - item.{width,height}                       → packed footprint / aspect
+ *  - item.name                                 → alt text + resize-grip aria
+ *  - isSelected, animationLevel, reorderEnabled, isDragging,
+ *    activeResizeCorner, renderedWidth         → scalar render inputs
+ *  - onClick/onHover/onDragHandlePointerDown/onResizeHandlePointerDown/
+ *    onTileElement                             → callbacks, stable by reference
+ *    once the route (T2-1 step 1) and Masonry useCallback them; a ref change is
+ *    a genuine handler swap and correctly re-renders.
+ * A field that affects output but is missing here would hide a real update, so
+ * any new render-affecting prop must be added to both the type and this list.
+ */
+function propsAreEqual(prev: MasonryItemProps, next: MasonryItemProps): boolean {
+  const a = prev.item;
+  const b = next.item;
+  return (
+    a.id === b.id &&
+    a.url === b.url &&
+    a.thumbnailUrl === b.thumbnailUrl &&
+    a.hasThumbnail === b.hasThumbnail &&
+    a.width === b.width &&
+    a.height === b.height &&
+    a.name === b.name &&
+    prev.isSelected === next.isSelected &&
+    prev.animationLevel === next.animationLevel &&
+    prev.reorderEnabled === next.reorderEnabled &&
+    prev.isDragging === next.isDragging &&
+    prev.activeResizeCorner === next.activeResizeCorner &&
+    prev.renderedWidth === next.renderedWidth &&
+    prev.onClick === next.onClick &&
+    prev.onHover === next.onHover &&
+    prev.onDragHandlePointerDown === next.onDragHandlePointerDown &&
+    prev.onResizeHandlePointerDown === next.onResizeHandlePointerDown &&
+    prev.onTileElement === next.onTileElement
+  );
+}
+
 export const MasonryItem = memo(function MasonryItem(props: MasonryItemProps) {
   const itemId = props.item.id;
   const registerTileElement = useCallback(
@@ -205,4 +251,4 @@ export const MasonryItem = memo(function MasonryItem(props: MasonryItemProps) {
       </motion.div>
     </div>
   );
-});
+}, propsAreEqual);

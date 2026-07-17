@@ -289,6 +289,20 @@ impl ImageDatabase {
              ON images(root_id, orphaned);",
             [],
         )?;
+        // Reverse tag index. `images_tags` has only `PRIMARY KEY
+        // (image_id, tag_id)`, so no index leads with `tag_id`. But the
+        // tag-count query joins on `it.tag_id = t.id` (tags.rs) and the
+        // include-filter subquery keys on `tag_id` (images_query.rs);
+        // both had to full-scan `images_tags` to resolve a tag. At 100k
+        // images × ~3 tags that is a ~300k-row scan per tag count, and
+        // the library drawer shows a live count for every folder at once
+        // — dozens of those scans fire together. Leading with `tag_id`
+        // and covering `image_id` turns each into an index range scan.
+        self.connection.lock().unwrap().execute(
+            "CREATE INDEX IF NOT EXISTS idx_images_tags_tag
+             ON images_tags(tag_id, image_id);",
+            [],
+        )?;
 
         // One-shot embedding-pipeline invalidation. Runs AFTER the
         // embeddings table is created (it issues DELETE against that
@@ -362,5 +376,26 @@ mod tests {
         db.add_image("/x.jpg".into(), None).unwrap();
         let imgs = db.get_all_images().unwrap();
         assert_eq!(imgs.len(), 1);
+    }
+
+    #[test]
+    fn initialize_creates_reverse_tag_index() {
+        // The reverse tag index (tag_id, image_id) accelerates the
+        // tag-count join and the include-filter subquery, both of which
+        // key on tag_id. Prove initialize() actually creates it, since a
+        // dropped/renamed index would silently regress those read paths
+        // back to a full images_tags scan with no compile-time signal.
+        let db = ImageDatabase::new(":memory:").unwrap();
+        db.initialize().unwrap();
+        let conn = db.connection.lock().unwrap();
+        let count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master
+                 WHERE type = 'index' AND name = 'idx_images_tags_tag'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(count, 1, "idx_images_tags_tag should exist after initialize");
     }
 }

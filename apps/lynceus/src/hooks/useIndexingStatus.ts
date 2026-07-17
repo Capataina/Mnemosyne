@@ -1,6 +1,10 @@
-import { useEffect, useRef, useState } from "react";
-import { listen, type UnlistenFn } from "@tauri-apps/api/event";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useEffect, useSyncExternalStore } from "react";
+import { listen } from "@tauri-apps/api/event";
+import {
+  useQuery,
+  useQueryClient,
+  type QueryClient,
+} from "@tanstack/react-query";
 import { getPipelineStats, type PipelineStats } from "../services/stats";
 
 /**
@@ -17,18 +21,15 @@ export type IndexingPhase =
 
 /**
  * Raw `indexing-progress` event payload from the backend. Mirrors the
- * IndexingProgress struct in indexing.rs. We consume it for the *phase
- * label* and for cache-invalidation timing only — the *numbers* shown
- * to the user come from the authoritative DB snapshot below, not from
- * this stream.
+ * IndexingProgress struct in indexing.rs.
  *
- * Why: with three encoder threads running concurrently, the encode-phase
- * events are inherently racy (each thread reports its own count against
- * the same total), so the last event the UI happens to see can carry a
- * stale or zero `processed`. That was the "pill stuck at 0/21 while the
- * drawer shows 100%" bug — the pill trusted the event stream, the drawer
- * queried the DB. Now both read the DB; the event stream only tells us
- * *which phase* is live and *when* to refresh.
+ * `processed / total` is the *current phase's* per-image high-water climb
+ * (55655a7: mutex-guarded, strictly increasing, with a guaranteed terminal
+ * at the end of each phase — scan 0→total_found, thumbnail 0→total_thumbs,
+ * encode 0→aggregate_total). The pill uses it directly during an active run
+ * so its number climbs smoothly under the current phase label; the settings
+ * drawer and the pill's terminal state still read the authoritative DB
+ * snapshot below.
  */
 interface IndexingProgressEvent {
   phase: IndexingPhase;
@@ -54,20 +55,6 @@ export interface IndexingOverall {
   fraction: number;
 }
 
-export interface IndexingStatus {
-  /** True while a pipeline run is actively in flight. */
-  isIndexing: boolean;
-  /** Latest phase from the event stream, for the status label. Null
-   *  before any event has arrived this session. */
-  phase: IndexingPhase | null;
-  /** Latest human-readable message from the event stream, if any. */
-  message: string | null;
-  /** Aggregate progress across the whole pipeline (DB-derived). */
-  overall: IndexingOverall;
-  /** Raw per-stage snapshot for detailed display (the settings drawer). */
-  stats: PipelineStats | null;
-}
-
 const EMPTY_OVERALL: IndexingOverall = { processed: 0, total: 0, fraction: 0 };
 
 function computeOverall(stats: PipelineStats | null): IndexingOverall {
@@ -83,115 +70,231 @@ function computeOverall(stats: PipelineStats | null): IndexingOverall {
   return { processed, total, fraction };
 }
 
+/* ---------------------------------------------------------------------------
+ * Module singleton: one `indexing-progress` listener for the whole app.
+ *
+ * Previously each mounted consumer (pill, route, open settings drawer) ran
+ * its own `listen()` + its own event-driven useState, so a single progress
+ * event fired 2–3 duplicate `["pipelineStats"]` invalidations and re-rendered
+ * every consumer per event. Now one listener owns the event-derived state and
+ * runs the invalidation policy exactly once per event; consumers subscribe to
+ * just the slice they read via `useSyncExternalStore`, so a varying `message`
+ * only re-renders the surface that displays it (the pill), never the route.
+ * ------------------------------------------------------------------------- */
+
+interface EventState {
+  /** Latest phase from the stream; null before any event this session. */
+  phase: IndexingPhase | null;
+  /** Latest human-readable message from the stream, if any. */
+  message: string | null;
+  /** True while a pipeline run is actively in flight. */
+  active: boolean;
+  /** Current phase's per-image fraction (0..1) during an active run; null at
+   *  idle/terminal so consumers fall back to the DB snapshot. */
+  eventFraction: number | null;
+}
+
+let eventState: EventState = {
+  phase: null,
+  message: null,
+  active: false,
+  eventFraction: null,
+};
+
+const subscribers = new Set<() => void>();
+let listenerStarted = false;
+
+// The QueryClient is registered by the first mounted `usePipelineStats`
+// (react-query owns the pipeline snapshot). The app shell always mounts a
+// stats consumer, so it is set before any indexing event can invalidate.
+let queryClientRef: QueryClient | null = null;
+
+// Grid-refresh bookkeeping — module-level now that a single listener owns it.
+let lastImagesInvalidatedAt = 0;
+let readyInvalidatedFor: string | null = null;
+
+function notify() {
+  for (const cb of subscribers) cb();
+}
+
 /**
- * Single source of truth for indexing progress, shared by the status
- * pill and the settings drawer.
+ * Handle one `indexing-progress` event: update the event-derived state and run
+ * the cache-invalidation policy once.
  *
- * - The `get_pipeline_stats` DB snapshot (react-query keyed
- *   `["pipelineStats"]`, deduped across every consumer) is authoritative
- *   for all displayed numbers.
- * - The `indexing-progress` event stream drives three things and nothing
- *   the user sees directly: the current phase label, when to refresh the
- *   snapshot, and when to refresh the visible image grid.
- *
- * Grid-refresh policy (preserved from the previous useIndexingProgress):
- * - `thumbnail` phase: invalidate `["images"]` every ~5s so newly
- *   thumbnailed images pop into the feed as they land (this is what makes
- *   the "new tiles appear during indexing" behaviour work).
+ * Grid-refresh policy (preserved from the previous useIndexingStatus):
+ * - `thumbnail` phase: invalidate `["images"]` every ~5s so newly thumbnailed
+ *   images pop into the feed as they land.
  * - `encode` phase: never invalidate `["images"]` — encoders populate
- *   search-readiness, not the visible grid, and full grid refetches
- *   contended with SigLIP-2 inference (the ~22s stalls documented in
- *   context/plans/performance-analysis.md).
- * - `ready`: invalidate `["images"]` once so any final metadata lands.
+ *   search-readiness, not the visible grid, and full grid refetches contended
+ *   with SigLIP-2 inference (the ~22s stalls in performance-analysis.md).
+ * - `ready`: invalidate `["images"]` once so final metadata lands, plus drop
+ *   similarity/search caches computed against the mid-index state.
  */
-export function useIndexingStatus(): IndexingStatus {
+function handleEvent(payload: IndexingProgressEvent) {
+  const { phase, message, processed, total } = payload;
+  const active = ACTIVE_PHASES.includes(phase);
+  const eventFraction =
+    active && total > 0 ? Math.min(1, Math.max(0, processed / total)) : null;
+  eventState = { phase, message, active, eventFraction };
+  notify();
+
+  const queryClient = queryClientRef;
+  if (!queryClient) return;
+
+  // Any progress event → pull a fresh authoritative snapshot so the displayed
+  // numbers track reality closely between polls.
+  queryClient.invalidateQueries({ queryKey: ["pipelineStats"] });
+
+  if (phase === "scan") {
+    // New run starting — re-arm the ready de-dupe.
+    readyInvalidatedFor = null;
+  } else if (phase === "thumbnail") {
+    const now = Date.now();
+    if (now - lastImagesInvalidatedAt > 5000) {
+      lastImagesInvalidatedAt = now;
+      queryClient.invalidateQueries({ queryKey: ["images"] });
+    }
+  } else if (phase === "ready") {
+    lastImagesInvalidatedAt = 0;
+    const runKey = message ?? "ready";
+    if (readyInvalidatedFor !== runKey) {
+      readyInvalidatedFor = runKey;
+      queryClient.invalidateQueries({ queryKey: ["images"] });
+      // Indexing completing means embeddings just landed. Any similarity /
+      // semantic result cached DURING indexing was computed against an
+      // incomplete index and, with its 5-minute staleTime, would otherwise be
+      // served stale after the run finishes. Drop both so the next open
+      // recomputes against the now-complete index. (Prefix match invalidates
+      // every id/query variant of each key.)
+      queryClient.invalidateQueries({ queryKey: ["fused-similar-images"] });
+      queryClient.invalidateQueries({ queryKey: ["fused-semantic-search"] });
+      // A re-index of the SAME root regenerates bucket files at identical
+      // paths, and the adaptive-thumbnail cache's Infinity staleTime would
+      // keep serving the old converted URL's stale pixels. Root changes
+      // self-heal (new ids → new keys), so this prefix drop is specifically
+      // for the same-id re-index case.
+      queryClient.invalidateQueries({ queryKey: ["thumbnail"] });
+    }
+  }
+}
+
+/** Stable subscribe fn for `useSyncExternalStore`. Lazily starts the single
+ *  Tauri listener on first subscription and keeps it for the app lifetime. */
+function subscribe(cb: () => void): () => void {
+  subscribers.add(cb);
+  if (!listenerStarted) {
+    listenerStarted = true;
+    // Registered once and kept for the app lifetime (Tauri holds the
+    // callback); there is no teardown because the pill/route/drawer that read
+    // it are effectively always mounted in the shell.
+    listen<IndexingProgressEvent>("indexing-progress", (event) =>
+      handleEvent(event.payload),
+    ).catch(() => {
+      // Registration failed — allow a later mount to retry.
+      listenerStarted = false;
+    });
+  }
+  return () => {
+    subscribers.delete(cb);
+  };
+}
+
+// getSnapshot selectors — each returns a primitive slice, so a subscriber only
+// re-renders when *its* slice changes (Object.is comparison in React).
+const getPhase = () => eventState.phase;
+const getMessage = () => eventState.message;
+const getActive = () => eventState.active;
+const getEventFraction = () => eventState.eventFraction;
+
+/* --------------------------------------------------------------------------- */
+
+/**
+ * The DB-backed pipeline snapshot (react-query keyed `["pipelineStats"]`,
+ * deduped across every consumer). Authoritative for all displayed counts.
+ *
+ * Consuming this subscribes to the coarse `active` flag (to drive polling)
+ * but NOT to `message`, so an indexing run's per-event message churn cannot
+ * re-render a stats consumer. This is the hook the route and the settings
+ * drawer read.
+ */
+export function usePipelineStats(): PipelineStats | null {
   const queryClient = useQueryClient();
-  const [phase, setPhase] = useState<IndexingPhase | null>(null);
-  const [message, setMessage] = useState<string | null>(null);
-  const [active, setActive] = useState(false);
+  useEffect(() => {
+    queryClientRef = queryClient;
+  }, [queryClient]);
 
-  // Throttle marker for the thumbnail-phase ["images"] invalidation.
-  const lastImagesInvalidatedAt = useRef<number>(0);
-  // De-dupe the one-shot ready invalidation (the pipeline can re-emit
-  // `ready` after a slow background encoder finishes).
-  const readyInvalidatedFor = useRef<string | null>(null);
+  const active = useSyncExternalStore(subscribe, getActive);
 
-  const { data: stats } = useQuery<PipelineStats>({
+  const { data } = useQuery<PipelineStats>({
     queryKey: ["pipelineStats"],
     queryFn: getPipelineStats,
-    // Poll while a run is active; stop when idle so an untouched app
-    // isn't hitting the DB forever. The snapshot is a single SELECT, so
-    // the polling cost is negligible even on a large library.
+    // Poll while a run is active; stop when idle so an untouched app isn't
+    // hitting the DB forever. The snapshot is a single SELECT, so the polling
+    // cost is negligible even on a large library.
     refetchInterval: active ? 1500 : false,
     refetchOnWindowFocus: false,
   });
 
-  useEffect(() => {
-    let unlisten: UnlistenFn | null = null;
-    let cancelled = false;
+  return data ?? null;
+}
 
-    (async () => {
-      const off = await listen<IndexingProgressEvent>(
-        "indexing-progress",
-        (event) => {
-          const { phase: p, message: m } = event.payload;
-          setPhase(p);
-          setMessage(m);
-          setActive(ACTIVE_PHASES.includes(p));
+/** Coarse "is a run in flight" flag. Flips on phase transitions only, so
+ *  consuming it never re-renders on per-message event churn. */
+export function useIsIndexing(): boolean {
+  return useSyncExternalStore(subscribe, getActive);
+}
 
-          // Any progress event → pull a fresh authoritative snapshot so
-          // the displayed numbers track reality closely between polls.
-          queryClient.invalidateQueries({ queryKey: ["pipelineStats"] });
+/** Fine-grained event-derived state for the status pill: the phase label,
+ *  the live message, and the current phase's per-image fraction. */
+export interface IndexingPhaseState {
+  isIndexing: boolean;
+  phase: IndexingPhase | null;
+  message: string | null;
+  /** Current phase's per-image fraction (0..1) during an active run; null at
+   *  idle/terminal. */
+  eventFraction: number | null;
+}
 
-          if (p === "scan") {
-            // New run starting — re-arm the ready de-dupe.
-            readyInvalidatedFor.current = null;
-          } else if (p === "thumbnail") {
-            const now = Date.now();
-            if (now - lastImagesInvalidatedAt.current > 5000) {
-              lastImagesInvalidatedAt.current = now;
-              queryClient.invalidateQueries({ queryKey: ["images"] });
-            }
-          } else if (p === "ready") {
-            lastImagesInvalidatedAt.current = 0;
-            const runKey = m ?? "ready";
-            if (readyInvalidatedFor.current !== runKey) {
-              readyInvalidatedFor.current = runKey;
-              queryClient.invalidateQueries({ queryKey: ["images"] });
-              // Indexing completing means embeddings just landed. Any
-              // similarity / semantic result cached DURING indexing was
-              // computed against an incomplete index and, with its 5-minute
-              // staleTime, would otherwise be served stale after the run
-              // finishes. Drop both so the next open recomputes against the
-              // now-complete index. (Prefix match invalidates every id/query
-              // variant of each key.)
-              queryClient.invalidateQueries({
-                queryKey: ["fused-similar-images"],
-              });
-              queryClient.invalidateQueries({
-                queryKey: ["fused-semantic-search"],
-              });
-            }
-          }
-        },
-      );
-      if (cancelled) off();
-      else unlisten = off;
-    })();
-
-    return () => {
-      cancelled = true;
-      if (unlisten) unlisten();
-    };
-  }, [queryClient]);
-
+export function useIndexingPhase(): IndexingPhaseState {
+  const phase = useSyncExternalStore(subscribe, getPhase);
+  const message = useSyncExternalStore(subscribe, getMessage);
+  const eventFraction = useSyncExternalStore(subscribe, getEventFraction);
   const isIndexing = phase !== null && ACTIVE_PHASES.includes(phase);
+  return { isIndexing, phase, message, eventFraction };
+}
 
+export interface IndexingStatus {
+  /** True while a pipeline run is actively in flight. */
+  isIndexing: boolean;
+  /** Latest phase from the event stream, for the status label. */
+  phase: IndexingPhase | null;
+  /** Latest human-readable message from the event stream, if any. */
+  message: string | null;
+  /** Current phase's per-image fraction (0..1) during an active run; null at
+   *  idle/terminal. */
+  eventFraction: number | null;
+  /** Aggregate progress across the whole pipeline (DB-derived). */
+  overall: IndexingOverall;
+  /** Raw per-stage snapshot for detailed display (the settings drawer). */
+  stats: PipelineStats | null;
+}
+
+/**
+ * Thin compatibility wrapper composing the fine-grained event state and the
+ * DB snapshot. Used by the status pill, which needs both the per-image event
+ * fraction (smooth climb during an active run) and the DB-derived `overall`
+ * (the terminal authority for reaching 100% and clearing). Prefer the narrow
+ * hooks above for surfaces that only read one side.
+ */
+export function useIndexingStatus(): IndexingStatus {
+  const { isIndexing, phase, message, eventFraction } = useIndexingPhase();
+  const stats = usePipelineStats();
   return {
     isIndexing,
     phase,
     message,
-    overall: computeOverall(stats ?? null),
-    stats: stats ?? null,
+    eventFraction,
+    overall: computeOverall(stats),
+    stats,
   };
 }

@@ -374,10 +374,34 @@ fn run_pipeline_inner(
 
     // Second pass: insert into DB. Idempotent — INSERT OR IGNORE on the
     // path uniqueness constraint means existing rows aren't duplicated.
-    for (i, (path, root_id)) in all_paths.iter().enumerate() {
-        database.add_image(path.clone(), Some(*root_id))?;
-        if (i + 1) % 100 == 0 || i + 1 == total_found {
-            emit(app, Phase::Scan, i + 1, total_found, None);
+    //
+    // Batched: one BEGIN IMMEDIATE transaction per SCAN_INSERT_BATCH
+    // paths instead of one autocommit per path (see add_images_batch).
+    // The progress emit is decoupled from the insert batch size and
+    // keeps its original cadence exactly — one emit at every 100-th
+    // processed path plus one at total_found — by replaying the 100-
+    // boundaries each insert batch crosses.
+    const SCAN_INSERT_BATCH: usize = 256;
+    let mut processed = 0usize;
+    for chunk in all_paths.chunks(SCAN_INSERT_BATCH) {
+        let start = processed;
+        let batch: Vec<(String, Option<i64>)> =
+            chunk.iter().map(|(p, rid)| (p.clone(), Some(*rid))).collect();
+        database.add_images_batch(&batch)?;
+        processed += chunk.len();
+
+        // Emit at every multiple of 100 this batch crossed, matching the
+        // pre-batching per-100 cadence value-for-value.
+        let mut boundary = (start / 100 + 1) * 100;
+        while boundary <= processed {
+            emit(app, Phase::Scan, boundary, total_found, None);
+            boundary += 100;
+        }
+        // Terminal emit — only when total_found isn't itself a multiple
+        // of 100 (otherwise the boundary loop already emitted it), so we
+        // never double-emit the final value.
+        if processed == total_found && !total_found.is_multiple_of(100) {
+            emit(app, Phase::Scan, total_found, total_found, None);
         }
     }
 

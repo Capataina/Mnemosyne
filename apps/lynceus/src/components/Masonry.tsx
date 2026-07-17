@@ -165,7 +165,12 @@ export default function Masonry(props: MasonryProps) {
         const isDraggingThis = id === drag.dragItemId;
         return (
           <MasonryAnchor
-            key={`${id}-${item.itemData.url}`}
+            // Key by stable id alone. Keying by url too made a thumbnail-URL
+            // change (base→sharp swap, re-index) unmount/remount the whole
+            // anchor+item subtree, dropping useAdaptiveThumbnail state and
+            // re-firing the pop-in. The comparator on MasonryItem handles the
+            // url change as a cheap prop update instead.
+            key={id}
             x={item.x}
             y={item.y}
             width={item.width}

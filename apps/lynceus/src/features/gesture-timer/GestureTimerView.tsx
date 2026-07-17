@@ -19,6 +19,23 @@ import { GestureTimerProgress } from "./GestureTimerProgress";
 import type { GestureTimerConfig, GestureTimerImage } from "./types";
 import { useGestureTimer } from "./useGestureTimer";
 
+/**
+ * Warm the browser's decode cache for `url` off-screen so the real <img> hits
+ * a decoded bitmap on swap. Returns the Image whose reference must be held for
+ * the window (dropping it lets the decoded data be reclaimed). A rejected
+ * decode — AbortError is normal on rapid navigation — is swallowed but logged.
+ */
+function predecodeImage(url: string): HTMLImageElement {
+  const img = new Image();
+  img.src = url;
+  void img.decode().catch((err: unknown) => {
+    if ((err as DOMException | undefined)?.name !== "AbortError") {
+      console.debug("gesture-timer predecode failed", url, err);
+    }
+  });
+  return img;
+}
+
 type GestureTimerViewProps = {
   startingImage: GestureTimerImage;
   candidateImages: readonly GestureTimerImage[];
@@ -40,6 +57,9 @@ export function GestureTimerView({
 }: GestureTimerViewProps) {
   const rootRef = useRef<HTMLDivElement>(null);
   const idleTimerRef = useRef<number | null>(null);
+  // 1-deep predecode window: a reference to only the upcoming reference's
+  // Image, replaced (older dropped) whenever the next candidate changes.
+  const nextDecodeRef = useRef<HTMLImageElement | null>(null);
   const [controlsVisible, setControlsVisible] = useState(true);
   const [imageStatus, setImageStatus] = useState<
     "loading" | "ready" | "error"
@@ -91,6 +111,14 @@ export function GestureTimerView({
   useEffect(() => {
     setImageStatus("loading");
   }, [timer.currentImage.id]);
+
+  // Predecode the next reference so the keyed hard-swap lands on a warm
+  // bitmap instead of pulsing the skeleton while a fresh original decodes.
+  useEffect(() => {
+    nextDecodeRef.current = timer.nextImageUrl
+      ? predecodeImage(timer.nextImageUrl)
+      : null;
+  }, [timer.nextImageUrl]);
 
   useEffect(() => {
     revealControls();

@@ -19,6 +19,7 @@ function status(overrides: Partial<IndexingStatus>): IndexingStatus {
     isIndexing: false,
     phase: null,
     message: null,
+    eventFraction: null,
     overall: { processed: 0, total: 0, fraction: 0 },
     stats: null,
     ...overrides,
@@ -70,6 +71,21 @@ describe("IndexingStatusPill", () => {
     expect(screen.getByText(/Encoding embeddings/i)).toBeInTheDocument();
     // 61 / 84 = 72.6% → rounds to 73%.
     expect(screen.getByText("73%")).toBeInTheDocument();
+  });
+
+  it("prefers the per-image event fraction over the DB aggregate while active", () => {
+    // T1-1: during an active run the pill climbs with the current phase's
+    // per-image event fraction, not the coarser whole-pipeline DB aggregate.
+    mockStatus = status({
+      isIndexing: true,
+      phase: "encode",
+      eventFraction: 0.42,
+      overall: { processed: 61, total: 84, fraction: 61 / 84 },
+    });
+    renderPill();
+    // 0.42 → 42%, NOT the aggregate's 73%.
+    expect(screen.getByText("42%")).toBeInTheDocument();
+    expect(screen.queryByText("73%")).not.toBeInTheDocument();
   });
 
   it("renders the 'Error' state when phase is error", () => {

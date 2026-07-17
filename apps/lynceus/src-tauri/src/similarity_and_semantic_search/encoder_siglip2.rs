@@ -192,6 +192,76 @@ impl ImageEncoder for Siglip2ImageEncoder {
         Ok(normalize(&raw))
     }
 
+    /// Batched image encode. The SigLIP-2 vision export declares dynamic
+    /// batch dims (symbolic, verified during the quantisation work), so a
+    /// single `[N, 3, 256, 256]` inference replaces N `[1, 3, 256, 256]`
+    /// calls, amortising per-call ORT overhead. On CPU-only ORT (CoreML
+    /// disabled) that is roughly a 1.2–2× win on the inference portion,
+    /// NOT a GPU-style "32 calls → 1" collapse.
+    ///
+    /// Failure semantics are byte-identical to the trait default this
+    /// overrides. That default is `image_paths.iter().map(|p|
+    /// self.encode(p)).collect()`, whose `collect()` short-circuits on
+    /// the FIRST failing image and returns its error — so today one bad
+    /// image already fails the whole `encode_batch` call (the indexing
+    /// loop then records the entire chunk as failed). We reproduce that
+    /// exactly: preprocessing short-circuits on the first decode error
+    /// via `?`, so which images end up embedded is unchanged. We do NOT
+    /// drop failures from the tensor or fall back per-image — that would
+    /// let a chunk-mate's failure stop dragging its neighbours down,
+    /// which is a behaviour change, not a preservation.
+    ///
+    /// For a clean batch the per-image embeddings are identical to serial
+    /// `encode` (cosine ≈ 1.0), pinned by the equivalence diagnostic.
+    #[tracing::instrument(name = "siglip2.encode_image_batch", skip(self, image_paths), fields(batch = image_paths.len()))]
+    fn encode_batch(
+        &mut self,
+        image_paths: &[&Path],
+    ) -> Result<Vec<Vec<f32>>, Box<dyn Error>> {
+        if image_paths.is_empty() {
+            return Ok(Vec::new());
+        }
+        // Cap the ONNX batch to bound peak tensor memory even if a caller
+        // passes a large slice (the indexing loop already chunks by 32).
+        const INFER_BATCH: usize = 32;
+        let plane = (IMG_SIZE * IMG_SIZE) as usize;
+        let mut all_embeddings = Vec::with_capacity(image_paths.len());
+
+        for chunk in image_paths.chunks(INFER_BATCH) {
+            let n = chunk.len();
+            let mut batch_data: Vec<f32> = Vec::with_capacity(n * 3 * plane);
+            for path in chunk {
+                // `?` short-circuits on the first decode failure, matching
+                // the trait default's collect() exactly.
+                let arr = self.preprocess(path)?;
+                let (data, _offset) = arr.into_raw_vec_and_offset();
+                batch_data.extend_from_slice(&data);
+            }
+
+            let shape = [n, 3, IMG_SIZE as usize, IMG_SIZE as usize];
+            let onnx_input: Tensor<f32> = Tensor::from_array((shape, batch_data))?;
+            let outputs = self.session.run(ort::inputs![
+                "pixel_values" => onnx_input
+            ])?;
+
+            // `pooler_output` is `[N, 768]` here (vs `[1, 768]` in
+            // encode); slice each image's row and normalise it exactly as
+            // encode does for the single-image case.
+            let value = outputs
+                .get("pooler_output")
+                .or_else(|| outputs.get("image_embeds"))
+                .ok_or("SigLIP-2 image batch: no recognised output name (expected pooler_output)")?;
+            let (out_shape, view) = value.try_extract_tensor::<f32>()?;
+            let hidden = out_shape[out_shape.len() - 1] as usize;
+            let data = view.to_vec();
+            for i in 0..n {
+                all_embeddings.push(normalize(&data[i * hidden..(i + 1) * hidden]));
+            }
+        }
+
+        Ok(all_embeddings)
+    }
+
     fn embedding_dim(&self) -> usize {
         HIDDEN
     }

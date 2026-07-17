@@ -204,6 +204,87 @@ impl ImageEncoder for Dinov2ImageEncoder {
         Ok(normalize(&raw))
     }
 
+    /// Batched image encode. Xenova's DINOv2-Base export declares dynamic
+    /// batch dims, so a single `[N, 3, 224, 224]` inference replaces N
+    /// `[1, 3, 224, 224]` calls (~1.2–2× on CPU-only ORT, not a
+    /// GPU-style collapse — CoreML is disabled).
+    ///
+    /// Failure semantics are byte-identical to the trait default this
+    /// overrides: the default's `collect()` short-circuits on the first
+    /// failing image, so today one bad image already fails the whole
+    /// call and the indexing loop records the entire chunk as failed. We
+    /// reproduce that via `?` on preprocessing rather than dropping
+    /// failures from the tensor, which would change which images end up
+    /// embedded (see the fuller note on the SigLIP-2 override).
+    ///
+    /// The batched output is `last_hidden_state [N, 257, 768]`; the CLS
+    /// token for image `i` is the first sequence row of its slab, i.e.
+    /// offset `i * seq * hidden`, matching the single-image extraction
+    /// (`data[..hidden]`) applied per image. Clean-batch embeddings are
+    /// identical to serial `encode` (cosine ≈ 1.0), pinned by the
+    /// equivalence diagnostic.
+    #[tracing::instrument(name = "dinov2.encode_image_batch", skip(self, image_paths), fields(batch = image_paths.len()))]
+    fn encode_batch(
+        &mut self,
+        image_paths: &[&Path],
+    ) -> Result<Vec<Vec<f32>>, Box<dyn Error>> {
+        if image_paths.is_empty() {
+            return Ok(Vec::new());
+        }
+        // Cap the ONNX batch to bound peak tensor memory even if a caller
+        // passes a large slice (the indexing loop already chunks by 32).
+        const INFER_BATCH: usize = 32;
+        let plane = (CROP * CROP) as usize;
+        let mut all_embeddings = Vec::with_capacity(image_paths.len());
+
+        for chunk in image_paths.chunks(INFER_BATCH) {
+            let n = chunk.len();
+            let mut batch_data: Vec<f32> = Vec::with_capacity(n * 3 * plane);
+            for path in chunk {
+                // `?` short-circuits on the first decode failure, matching
+                // the trait default's collect() exactly.
+                let arr = self.preprocess(path)?;
+                let (data, _offset) = arr.into_raw_vec_and_offset();
+                batch_data.extend_from_slice(&data);
+            }
+
+            let shape = [n, 3, CROP as usize, CROP as usize];
+            let onnx_input: Tensor<f32> = Tensor::from_array((shape, batch_data))?;
+            let outputs = self.session.run(ort::inputs![
+                "pixel_values" => onnx_input
+            ])?;
+
+            if let Some(t) = outputs.get("last_hidden_state") {
+                // [N, seq, hidden]; CLS is the first row of each image's
+                // seq×hidden slab.
+                let (out_shape, view) = t.try_extract_tensor::<f32>()?;
+                let (seq, hidden) = if out_shape.len() == 3 {
+                    (out_shape[1] as usize, out_shape[2] as usize)
+                } else {
+                    (1, HIDDEN)
+                };
+                let data = view.to_vec();
+                for i in 0..n {
+                    let base = i * seq * hidden;
+                    all_embeddings.push(normalize(&data[base..base + hidden]));
+                }
+            } else if let Some(t) = outputs.get("pooler_output") {
+                // Defensive fallback if a future export adds this output:
+                // [N, hidden], one row per image.
+                let (out_shape, view) = t.try_extract_tensor::<f32>()?;
+                let hidden = out_shape[out_shape.len() - 1] as usize;
+                let data = view.to_vec();
+                for i in 0..n {
+                    all_embeddings.push(normalize(&data[i * hidden..(i + 1) * hidden]));
+                }
+            } else {
+                return Err("DINOv2 batch output extraction: no recognised output name".into());
+            }
+        }
+
+        Ok(all_embeddings)
+    }
+
     fn embedding_dim(&self) -> usize {
         // DINOv2-Base = 768-dim. (Small was 384, Large is 1024.)
         HIDDEN

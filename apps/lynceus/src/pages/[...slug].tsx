@@ -10,7 +10,7 @@ import { useTieredSimilarImages } from "../queries/useSimilarImages";
 import { useSemanticSearch } from "../queries/useSemanticSearch";
 import { useDebouncedValue } from "../hooks/useDebouncedValue";
 import { useShuffledFeed, newShuffleSeed } from "../hooks/useShuffledFeed";
-import { useIndexingStatus } from "../hooks/useIndexingStatus";
+import { usePipelineStats, useIsIndexing } from "../hooks/useIndexingStatus";
 import { LibraryDrawer, LibraryMenuButton } from "@/components/library-drawer";
 import { useConfirm } from "@/components/ui/confirm";
 import { getTagCounts } from "@/services/tags";
@@ -131,7 +131,12 @@ export default function Home() {
   // The main feed: stable-key shuffle + thumbnail-gate + any in-session
   // reorder. Search / similar results bypass this and keep their ranking.
   const feed = useShuffledFeed(images.data, shuffleSeed, sessionOrder);
-  const { isIndexing, stats: pipelineStats } = useIndexingStatus();
+  // Narrow consumption: stats drive the drawer/count, `isIndexing` is a coarse
+  // flag that flips on phase transitions only. Neither subscribes to the
+  // per-event `message`, so an indexing run's message churn no longer
+  // re-renders this route (and, via stable handlers, no longer the grid).
+  const pipelineStats = usePipelineStats();
+  const isIndexing = useIsIndexing();
 
   // "All images" count for the library drawer. NOT `images.data.length` —
   // that's the currently-filtered catalogue, which shrinks to the selected
@@ -404,15 +409,22 @@ export default function Home() {
     if (!reorderEnabled) setSessionOrder(null);
   }, [reorderEnabled]);
 
-  const handleReorder = (orderedIds: number[]) => {
+  // Stable across renders so Masonry's `handleItemClick`/reorder/resize
+  // callbacks keep identity and the memo'd tiles hold through an indexing
+  // run's route re-renders (T2-1). `recordAction` is a module import and the
+  // state setter / mutation `.mutate` are referentially stable.
+  const handleReorder = useCallback((orderedIds: number[]) => {
     recordAction("masonry_reorder", { count: orderedIds.length });
     setSessionOrder(orderedIds);
-  };
+  }, []);
 
-  const handleResizeCommit = (itemId: number, colSpan: number | null) => {
-    recordAction("masonry_resize", { id: itemId, colSpan });
-    setManualColSpanMutation.mutate({ imageId: itemId, colSpan });
-  };
+  const handleResizeCommit = useCallback(
+    (itemId: number, colSpan: number | null) => {
+      recordAction("masonry_resize", { id: itemId, colSpan });
+      setManualColSpanMutation.mutate({ imageId: itemId, colSpan });
+    },
+    [setManualColSpanMutation.mutate],
+  );
 
   // Wordmark → back to the main library feed from anywhere: clear any
   // search / tag filter and any selected image, then navigate home. The
@@ -465,24 +477,44 @@ export default function Home() {
     navigate(`/${target.id}/`);
   };
 
-  // Handle clicking on an image in the grid
-  const handleImageClick = (item: ImageItem) => {
-    if (selectedItem && selectedItem.id === item.id) {
-      // Clicking on the already-selected image → open inspect modal
-      recordAction("image_inspect", { id: item.id });
-      setIsInspecting(true);
-    } else {
-      // Clicking on a different image → select it
-      recordAction("image_click", { id: item.id });
-      // Diving deeper into a similarity cascade (already viewing an
-      // image's similar-set, now clicking one of those) → remember the
-      // current image so "back one hop" can return to it.
-      if (selectedItem && !shouldUseSemanticSearch) {
-        setSimTrail((t) => [...t, selectedItem]);
+  // The modal predecodes its arrow-nav neighbours so next/prev is instant.
+  // Same wrap-around walk as handleNavigate, over the same active list.
+  const modalNeighbourUrls = useMemo(() => {
+    if (!selectedItem) return undefined;
+    const navList = displayImages ?? images.data;
+    if (!navList || navList.length === 0) return undefined;
+    const currentIndex = navList.findIndex((i) => i.id === selectedItem.id);
+    if (currentIndex === -1) return undefined;
+    return {
+      prev: navList[currentIndex > 0 ? currentIndex - 1 : navList.length - 1]?.url,
+      next: navList[currentIndex < navList.length - 1 ? currentIndex + 1 : 0]?.url,
+    };
+  }, [selectedItem, displayImages, images.data]);
+
+  // Handle clicking on an image in the grid. Memoised so the grid's tile
+  // memo holds; its identity only changes when the selection context it reads
+  // (selectedItem / shouldUseSemanticSearch) changes — never on an indexing
+  // event — so the render storm can't reach the tiles through it.
+  const handleImageClick = useCallback(
+    (item: ImageItem) => {
+      if (selectedItem && selectedItem.id === item.id) {
+        // Clicking on the already-selected image → open inspect modal
+        recordAction("image_inspect", { id: item.id });
+        setIsInspecting(true);
+      } else {
+        // Clicking on a different image → select it
+        recordAction("image_click", { id: item.id });
+        // Diving deeper into a similarity cascade (already viewing an
+        // image's similar-set, now clicking one of those) → remember the
+        // current image so "back one hop" can return to it.
+        if (selectedItem && !shouldUseSemanticSearch) {
+          setSimTrail((t) => [...t, selectedItem]);
+        }
+        navigate(`/${item.id}/`);
       }
-      navigate(`/${item.id}/`);
-    }
-  };
+    },
+    [selectedItem, shouldUseSemanticSearch, navigate],
+  );
 
   // Back one similarity hop — return to the previous image in the trail.
   const handleBackHop = () => {
@@ -549,6 +581,7 @@ export default function Home() {
           <PinterestModal
             item={selectedItem}
             timerCandidates={tieredSimilarImages.data ?? []}
+            neighbourUrls={modalNeighbourUrls}
             onClose={handleCloseInspect}
             onNavigate={handleNavigate}
             tags={tags.data}

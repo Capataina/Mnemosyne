@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import type { ImageItem } from "../types";
 import { getThumbnail } from "../services/images";
@@ -10,6 +10,16 @@ import { getThumbnail } from "../services/images";
  * width; anything wider than the top bucket uses the original image.
  */
 const THUMBNAIL_BUCKETS = [480, 960, 1440, 2048] as const;
+
+/**
+ * How long a resolved bucket path lingers in the react-query cache after the
+ * last tile using it unmounts. The cached value is a short path string, so
+ * memory is negligible; the cap simply bounds the idle working set to what's
+ * been scrolled through recently. Active (mounted) tiles are never evicted —
+ * `gcTime` only applies to queries with no observers. Five minutes keeps a
+ * scroll-back within a session instant while letting long-gone tiles evict.
+ */
+const THUMBNAIL_GC_MS = 5 * 60 * 1000;
 
 /** The bucket that covers `targetPx`, or `null` for "use the original". */
 function bucketFor(targetPx: number): number | null {
@@ -43,35 +53,32 @@ export function useAdaptiveThumbnail(
   const bucket =
     renderedWidth > 0 ? bucketFor(Math.ceil(renderedWidth * dpr)) : 480;
 
-  const [src, setSrc] = useState<string | undefined>(base);
+  // Only buckets larger than the base 480 (already loaded as `base`) need an
+  // IPC round-trip. `null` (beyond the ladder) and images without a
+  // pre-generated thumbnail resolve without a fetch below.
+  const needsLargerBucket =
+    bucket !== null && bucket > THUMBNAIL_BUCKETS[0] && item.hasThumbnail;
 
-  useEffect(() => {
-    // Beyond the ladder → the backend returns the original anyway, but we
-    // can go straight there without a round-trip.
-    if (bucket === null) {
-      setSrc(item.url);
-      return;
-    }
-    // The base thumbnail already IS the 480 bucket and is loaded — no IPC.
-    if (bucket <= THUMBNAIL_BUCKETS[0] || !item.hasThumbnail) {
-      setSrc(base);
-      return;
-    }
-    // A larger bucket: fetch on demand, keeping the base on screen until
-    // it arrives so there's no blank flash mid-resize.
-    let cancelled = false;
-    setSrc(base);
-    getThumbnail(item.id, bucket)
-      .then((path) => {
-        if (!cancelled) setSrc(convertFileSrc(path));
-      })
-      .catch(() => {
-        if (!cancelled) setSrc(base);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [item.id, item.url, item.hasThumbnail, base, bucket]);
+  // Cache resolution per (id, bucket) across remounts with in-flight dedup.
+  // `staleTime: Infinity` — a bucket file is immutable for a given id until
+  // re-index (which invalidates the `["thumbnail"]` prefix; see WIDND). A
+  // cached result resolves synchronously on mount, so a scrolled-back tile
+  // renders sharp with no base flash.
+  const { data } = useQuery({
+    queryKey: ["thumbnail", item.id, bucket],
+    queryFn: () => getThumbnail(item.id, bucket as number).then(convertFileSrc),
+    enabled: needsLargerBucket,
+    staleTime: Infinity,
+    gcTime: THUMBNAIL_GC_MS,
+  });
 
-  return src;
+  // Beyond the ladder → the original, no round-trip.
+  if (bucket === null) return item.url;
+  // The base thumbnail already IS the 480 bucket (or there's no thumbnail to
+  // sharpen) — show it directly, no IPC.
+  if (!needsLargerBucket) return base;
+  // Larger bucket: base stays on screen until the query resolves (no blank
+  // flash mid-resize); a cached/failed query keeps `base` too (`data`
+  // undefined on error mirrors the old catch→base fallback).
+  return data ?? base;
 }

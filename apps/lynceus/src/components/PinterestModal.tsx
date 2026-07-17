@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { ImageItem, SimilarImageItem, Tag } from "../types";
 import { motion, AnimatePresence } from "framer-motion";
 import { X } from "lucide-react";
@@ -21,6 +21,29 @@ interface PinterestModalProps {
   /** The current image's similar-set (ranked most→least similar), fed to
    *  the gesture-drawing timer mode as its candidate pool. */
   timerCandidates?: SimilarImageItem[];
+  /** Full-res URLs of the arrow-navigation neighbours, so the modal can
+   *  predecode them before the user moves. The host owns the active nav
+   *  list; wiring these lets prev/next land on a warm decode instead of
+   *  popping in a fresh 4000px+ original. Absent → nothing to predecode. */
+  neighbourUrls?: { prev?: string; next?: string };
+}
+
+/**
+ * Warm the browser's decode cache for `url` off-screen so the real <img> hits
+ * a decoded bitmap on navigation. Returns the Image whose reference must be
+ * held for the window (dropping it lets the decoded data be reclaimed). A
+ * rejected decode — AbortError is normal on rapid nav — is swallowed but
+ * logged.
+ */
+function predecodeImage(url: string): HTMLImageElement {
+  const img = new Image();
+  img.src = url;
+  void img.decode().catch((err: unknown) => {
+    if ((err as DOMException | undefined)?.name !== "AbortError") {
+      console.debug("modal predecode failed", url, err);
+    }
+  });
+  return img;
 }
 
 /**
@@ -37,6 +60,17 @@ export function PinterestModal(props: PinterestModalProps) {
   const [comboboxOpen, setComboboxOpen] = useState(false);
   const [selectedTags, setSelectedTags] = useState<number[]>([]);
   const [notesValue, setNotesValue] = useState(props.notes ?? "");
+  // 2-deep predecode window: references to only the current prev+next
+  // Images, replaced (older dropped) whenever the selected image changes.
+  const neighbourDecodeRef = useRef<HTMLImageElement[]>([]);
+
+  const prevUrl = props.neighbourUrls?.prev;
+  const nextUrl = props.neighbourUrls?.next;
+  useEffect(() => {
+    neighbourDecodeRef.current = [prevUrl, nextUrl]
+      .filter((url): url is string => !!url)
+      .map(predecodeImage);
+  }, [prevUrl, nextUrl]);
 
   useEffect(() => {
     if (props.item) {

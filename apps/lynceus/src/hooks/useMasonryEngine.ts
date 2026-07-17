@@ -42,6 +42,35 @@ export interface MasonryEngine {
 }
 
 const VIEWPORT_OVERSCAN_PX = 800;
+/**
+ * Inner guard band, half the overscan. Scroll only re-commits the viewport
+ * (and re-runs the visible-set filter) once the on-screen window drifts to
+ * within this margin of the committed render range. Because the band is
+ * strictly smaller than the overscan, the leading edge always keeps at least
+ * `VIEWPORT_OVERSCAN_PX - VIEWPORT_GUARD_BAND_PX` (400px) of buffer between
+ * refreshes, so an on-screen tile is never culled — only the off-screen
+ * overscan buffer thins.
+ */
+const VIEWPORT_GUARD_BAND_PX = VIEWPORT_OVERSCAN_PX / 2;
+
+/**
+ * True while the current on-screen window (`localTop`..`localBottom`) still
+ * sits inside the committed viewport's guard band, so the existing visible
+ * set stays valid and no refresh is needed. `committed` already carries the
+ * ±overscan margin. Pure so the band correctness is unit-testable without
+ * mounting the hook.
+ */
+export function isWithinGuardBand(
+  committed: { top: number; bottom: number },
+  localTop: number,
+  localBottom: number,
+  guardBand: number,
+): boolean {
+  return (
+    localTop >= committed.top + guardBand &&
+    localBottom <= committed.bottom - guardBand
+  );
+}
 
 /** Nearest scrolling ancestor, falling back to the document scroller. */
 function findScrollContainer(el: HTMLElement | null): HTMLElement | null {
@@ -93,6 +122,9 @@ export function useMasonryEngine(input: MasonryEngineInput): MasonryEngine {
   } = input;
 
   const scrollerRef = useRef<HTMLElement | null>(null);
+  // Holds the pending scroll rAF so at most one viewport update runs per
+  // frame and any in-flight frame can be cancelled on cleanup.
+  const scrollRafRef = useRef<number | null>(null);
 
   const [placements, setPlacements] = useState<MasonryItemPlacement[]>([]);
   const [height, setHeight] = useState(0);
@@ -156,7 +188,9 @@ export function useMasonryEngine(input: MasonryEngineInput): MasonryEngine {
   }, [refreshLayout]);
 
   // --- Viewport tracking for virtualization -------------------------
-  const updateViewport = useCallback(() => {
+  // `force` commits immediately (mount / re-subscribe / layout change);
+  // scroll passes `false` so the guard band can suppress sub-band moves.
+  const updateViewport = useCallback((force = false) => {
     const container = containerRef.current;
     const scroller = scrollerRef.current;
     if (!container) return;
@@ -191,6 +225,14 @@ export function useMasonryEngine(input: MasonryEngineInput): MasonryEngine {
         top: localTop - VIEWPORT_OVERSCAN_PX,
         bottom: localBottom + VIEWPORT_OVERSCAN_PX,
       };
+      // Scroll moves that stay inside the guard band keep the current
+      // visible set; layout/mount (`force`) always re-commits.
+      if (
+        !force &&
+        isWithinGuardBand(prev, localTop, localBottom, VIEWPORT_GUARD_BAND_PX)
+      ) {
+        return prev;
+      }
       if (
         Math.abs(prev.top - next.top) < 1 &&
         Math.abs(prev.bottom - next.bottom) < 1
@@ -205,10 +247,27 @@ export function useMasonryEngine(input: MasonryEngineInput): MasonryEngine {
     const scroller = findScrollContainer(containerRef.current);
     scrollerRef.current = scroller;
     if (!scroller) return;
-    updateViewport();
+    // Immediate commit on (re)subscribe — a layout change (placements /
+    // height) re-runs this effect and must refresh the viewport at once.
+    updateViewport(true);
     const target = scroller === document.documentElement ? window : scroller;
-    target.addEventListener("scroll", updateViewport, { passive: true });
-    return () => target.removeEventListener("scroll", updateViewport);
+    // Coalesce scroll through one rAF: at most one filter pass per frame,
+    // and the guard band drops most of those to roughly one per band-exit.
+    const onScroll = () => {
+      if (scrollRafRef.current !== null) return;
+      scrollRafRef.current = requestAnimationFrame(() => {
+        scrollRafRef.current = null;
+        updateViewport(false);
+      });
+    };
+    target.addEventListener("scroll", onScroll, { passive: true });
+    return () => {
+      target.removeEventListener("scroll", onScroll);
+      if (scrollRafRef.current !== null) {
+        cancelAnimationFrame(scrollRafRef.current);
+        scrollRafRef.current = null;
+      }
+    };
   }, [updateViewport, containerRef, placements.length, height]);
 
   const visiblePlacements = useMemo(() => {

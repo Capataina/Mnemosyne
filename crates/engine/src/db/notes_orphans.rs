@@ -101,6 +101,68 @@ impl ImageDatabase {
         Ok(())
     }
 
+    /// Batched form of `add_image` for the scan pass. Runs one prepared
+    /// `INSERT OR IGNORE` inside a single `BEGIN IMMEDIATE` transaction
+    /// per `BATCH_SIZE` paths instead of one autocommit statement per
+    /// path — a 100k first scan collapses ~100k mutex-taking autocommits
+    /// into ~400 transactions (~250× fewer). Nothing else competes for
+    /// the CPU during scan, so the mutex/statement overhead saved is
+    /// visible even though WAL + `synchronous = NORMAL` mean the old
+    /// autocommits were WAL appends without per-commit fsync.
+    ///
+    /// Semantics are identical to calling `add_image` in a loop:
+    ///
+    /// * A `None` root binds `root_id` to SQL NULL, exactly what
+    ///   `add_image`'s single-column `INSERT OR IGNORE INTO images
+    ///   (path)` produces (the column has no DEFAULT, so it lands NULL
+    ///   either way). One statement covers both cases.
+    /// * `INSERT OR IGNORE` dedup on the path uniqueness constraint is
+    ///   preserved, so a re-scan still never duplicates rows.
+    /// * **Partial-failure fallback is mandatory, not optional.** If a
+    ///   batch transaction fails (a row hits a constraint the prepared
+    ///   statement can't IGNORE), the transaction rolls back and the
+    ///   chunk is retried one row at a time through `add_image`, so a
+    ///   single bad row can never sink its batch-mates — byte-identical
+    ///   to today's per-path loop, including error propagation on the
+    ///   offending row.
+    pub fn add_images_batch(&self, images: &[(String, Option<ID>)]) -> rusqlite::Result<()> {
+        const BATCH_SIZE: usize = 256;
+        for chunk in images.chunks(BATCH_SIZE) {
+            if self.insert_image_chunk(chunk).is_err() {
+                // Fallback: the transaction already rolled back, so no
+                // partial chunk landed. Replay each row individually —
+                // this is exactly the old code path, so per-row success
+                // and per-row error propagation are preserved.
+                for (path, root_id) in chunk {
+                    self.add_image(path.clone(), *root_id)?;
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// One `BEGIN IMMEDIATE` transaction inserting a chunk of paths via a
+    /// single prepared statement. Split out from `add_images_batch` so
+    /// the transaction guard is dropped before the per-row fallback runs
+    /// (both take the connection mutex; nesting them would deadlock).
+    fn insert_image_chunk(&self, chunk: &[(String, Option<ID>)]) -> rusqlite::Result<()> {
+        let mut conn = self.connection.lock().unwrap();
+        // IMMEDIATE, matching upsert_embeddings_batch: take the write
+        // lock at BEGIN rather than letting DEFERRED upgrade on the first
+        // INSERT, which closes the reader-race window under WAL.
+        let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+        {
+            let mut stmt = tx.prepare(
+                "INSERT OR IGNORE INTO images (path, root_id) VALUES (?1, ?2)",
+            )?;
+            for (path, root_id) in chunk {
+                stmt.execute(params![path, root_id])?;
+            }
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
     /// Read the free-text annotation for an image. Returns Ok(None)
     /// when the row exists but the column is NULL (default).
     pub fn get_image_notes(&self, image_id: ID) -> rusqlite::Result<Option<String>> {
@@ -133,6 +195,111 @@ impl ImageDatabase {
 #[cfg(test)]
 mod tests {
     use super::super::test_helpers::fresh_db;
+    use super::super::{ID, ImageDatabase};
+
+    /// Raw (path, root_id) dump straight from the images table, ordered
+    /// by path — the ground-truth row set, independent of any read-path
+    /// filtering (orphaned, root enablement) that `get_all_images` layers
+    /// on top. Used to prove the batch insert lands exactly the same rows
+    /// the per-row loop would.
+    fn dump_paths(db: &ImageDatabase) -> Vec<(String, Option<ID>)> {
+        let conn = db.connection.lock().unwrap();
+        let mut stmt = conn
+            .prepare("SELECT path, root_id FROM images ORDER BY path")
+            .unwrap();
+        stmt.query_map([], |r| {
+            Ok((r.get::<_, String>(0)?, r.get::<_, Option<ID>>(1)?))
+        })
+        .unwrap()
+        .filter_map(|x| x.ok())
+        .collect()
+    }
+
+    // ============================================================
+    //  T2-2: batched scan-phase inserts
+    // ============================================================
+
+    #[test]
+    fn add_images_batch_matches_per_row_inserts() {
+        // Same inputs through the batched path and the old per-row loop
+        // must produce byte-identical row sets. Cross the 256 batch
+        // boundary (300 rows), mix Some/None roots to exercise both the
+        // two-column and NULL-root branches, and include a duplicate path
+        // to prove INSERT OR IGNORE dedup survives batching.
+        let db_batch = fresh_db();
+        let db_row = fresh_db();
+        let rb = db_batch.add_root("/root".into(), None).unwrap();
+        let rr = db_row.add_root("/root".into(), None).unwrap();
+        assert_eq!(rb.id, rr.id, "roots should get the same id in fresh DBs");
+
+        let mut batch: Vec<(String, Option<ID>)> = Vec::new();
+        for i in 0..300 {
+            let root = if i % 2 == 0 { Some(rb.id) } else { None };
+            batch.push((format!("/root/{i}.jpg"), root));
+        }
+        // Duplicate of an earlier path — must be ignored, not duplicated
+        // and not error the batch.
+        batch.push(("/root/0.jpg".into(), Some(rb.id)));
+
+        db_batch.add_images_batch(&batch).unwrap();
+        for (p, root) in &batch {
+            db_row.add_image(p.clone(), *root).unwrap();
+        }
+
+        let batched = dump_paths(&db_batch);
+        let per_row = dump_paths(&db_row);
+        assert_eq!(
+            batched, per_row,
+            "batched inserts must land the same rows as the per-row loop"
+        );
+        assert_eq!(
+            batched.len(),
+            300,
+            "300 unique paths, the duplicate deduped away"
+        );
+    }
+
+    #[test]
+    fn add_images_batch_falls_back_per_row_on_batch_failure() {
+        // A foreign-key violation (root_id with no matching roots row) is
+        // NOT swallowed by INSERT OR IGNORE — it fails the transaction.
+        // The mandatory fallback must then replay the chunk per row so
+        // the rows before the bad one still land (a naive rollback-only
+        // path would lose them), while the error still propagates on the
+        // offending row exactly as today's per-row `add_image(..)?` loop
+        // does — so rows after the failure do NOT land.
+        let db = fresh_db();
+        let r = db.add_root("/root".into(), None).unwrap();
+        const MISSING_ROOT: ID = 9999;
+
+        let batch: Vec<(String, Option<ID>)> = vec![
+            ("/root/a.jpg".into(), Some(r.id)),
+            ("/root/b.jpg".into(), Some(r.id)),
+            ("/root/bad.jpg".into(), Some(MISSING_ROOT)),
+            ("/root/c.jpg".into(), Some(r.id)),
+        ];
+
+        let result = db.add_images_batch(&batch);
+        assert!(
+            result.is_err(),
+            "the FK-violating row must propagate an error, matching add_image"
+        );
+
+        let landed = dump_paths(&db);
+        let paths: Vec<&str> = landed.iter().map(|(p, _)| p.as_str()).collect();
+        assert!(
+            paths.contains(&"/root/a.jpg") && paths.contains(&"/root/b.jpg"),
+            "rows before the failure must survive via the per-row fallback"
+        );
+        assert!(
+            !paths.contains(&"/root/bad.jpg"),
+            "the FK-violating row must not land"
+        );
+        assert!(
+            !paths.contains(&"/root/c.jpg"),
+            "rows after the propagated error must not land, matching the old `?` loop"
+        );
+    }
 
     // ============================================================
     //  Phase 7: orphan detection

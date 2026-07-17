@@ -3,6 +3,7 @@ import {
   type AnimationLevel,
 } from "../../hooks/useUserPreferences";
 import { Section, Field, Slider, SegmentedButtons } from "./controls";
+import { ResetResizesSection } from "./ResetResizesSection";
 
 export function DisplaySection() {
   const { prefs, update } = useUserPreferences();
@@ -53,6 +54,8 @@ export function DisplaySection() {
           }>}
         />
       </Field>
+
+      <ResetResizesSection />
     </Section>
   );
 }

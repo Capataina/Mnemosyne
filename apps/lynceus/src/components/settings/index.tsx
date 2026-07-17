@@ -7,7 +7,6 @@ import { SearchSection } from "./SearchSection";
 import { FoldersSection } from "./FoldersSection";
 import { EncoderSection } from "./EncoderSection";
 import { StatsSection } from "./StatsSection";
-import { ResetResizesSection } from "./ResetResizesSection";
 import { ResetSection } from "./ResetSection";
 
 interface SettingsDrawerProps {
@@ -92,7 +91,6 @@ export function SettingsDrawer({ open, onClose }: SettingsDrawerProps) {
               <EncoderSection />
               <StatsSection />
               <div className="flex flex-col gap-2 pt-6">
-                <ResetResizesSection />
                 <ResetSection />
               </div>
             </div>

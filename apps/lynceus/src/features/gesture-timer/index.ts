@@ -1,6 +1,5 @@
 export { GestureTimer } from "./GestureTimer";
 export { GestureTimerConfigPanel } from "./GestureTimerConfigPanel";
-export { GestureTimerTrigger } from "./GestureTimerTrigger";
 export { GestureTimerView } from "./GestureTimerView";
 export {
   createDefaultGestureTimerConfig,
@@ -17,4 +16,3 @@ export type {
   GestureTimerSessionLength,
   SimilarityRankRange,
 } from "./types";
-

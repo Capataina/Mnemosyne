@@ -66,6 +66,10 @@ interface MasonryItemProps {
   renderedWidth?: number;
   /** Registers the plain wrapper used for imperative gesture transforms. */
   onTileElement?: (id: number, node: HTMLElement | null) => void;
+  /** Rendered inside the selected hero's tile only (the quick-start timer
+   *  pill). The host marks the tile `data-selected-hero`, whose hover /
+   *  focus-within state drives the overlay's CSS reveal. */
+  heroOverlay?: React.ReactNode;
 }
 
 /**
@@ -99,6 +103,9 @@ interface MasonryItemProps {
  *    onTileElement                             → callbacks, stable by reference
  *    once the route (T2-1 step 1) and Masonry useCallback them; a ref change is
  *    a genuine handler swap and correctly re-renders.
+ *  - heroOverlay                               → by reference; the route
+ *    memoises the pill element, so identity only changes when its inputs do
+ *    (and it is undefined for every non-hero tile).
  * A field that affects output but is missing here would hide a real update, so
  * any new render-affecting prop must be added to both the type and this list.
  */
@@ -123,7 +130,8 @@ function propsAreEqual(prev: MasonryItemProps, next: MasonryItemProps): boolean 
     prev.onHover === next.onHover &&
     prev.onDragHandlePointerDown === next.onDragHandlePointerDown &&
     prev.onResizeHandlePointerDown === next.onResizeHandlePointerDown &&
-    prev.onTileElement === next.onTileElement
+    prev.onTileElement === next.onTileElement &&
+    prev.heroOverlay === next.heroOverlay
   );
 }
 
@@ -159,7 +167,16 @@ export const MasonryItem = memo(function MasonryItem(props: MasonryItemProps) {
     <div
       ref={registerTileElement}
       data-masonry-id={itemId}
-      className="w-full"
+      // The hero overlay (quick-start pill) mounts on THIS wrapper, not the
+      // inner tile: the tile is overflow-hidden and would clip the pill's
+      // bottom-edge overhang. data-selected-hero drives the pill's CSS
+      // hover/focus reveal (App.css).
+      data-selected-hero={
+        props.isSelected && props.heroOverlay ? true : undefined
+      }
+      className={
+        props.isSelected && props.heroOverlay ? "relative w-full" : "w-full"
+      }
     >
       <motion.div
         layout={!gestureActive}
@@ -249,6 +266,11 @@ export const MasonryItem = memo(function MasonryItem(props: MasonryItemProps) {
             </div>
           ))}
       </motion.div>
+
+      {/* Quick-start timer pill — hero only, outside the clipped tile so its
+          bottom-edge overhang survives; CSS reveals it on hover/focus-within
+          of this data-selected-hero wrapper. */}
+      {props.isSelected ? props.heroOverlay : null}
     </div>
   );
 }, propsAreEqual);

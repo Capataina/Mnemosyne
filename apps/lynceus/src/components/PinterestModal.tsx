@@ -1,10 +1,11 @@
 import { useEffect, useRef, useState } from "react";
 import { ImageItem, SimilarImageItem, Tag } from "../types";
 import { motion, AnimatePresence } from "framer-motion";
-import { X } from "lucide-react";
+import { ChevronLeft, ChevronRight, X } from "lucide-react";
 import { TagDropdown } from "./TagDropdown";
 import { Badge } from "./ui/badge";
 import { GestureTimer } from "../features/gesture-timer/GestureTimer";
+import type { GestureTimerConfig } from "../features/gesture-timer/types";
 
 interface PinterestModalProps {
   item: ImageItem | null;
@@ -21,6 +22,10 @@ interface PinterestModalProps {
   /** The current image's similar-set (ranked most→least similar), fed to
    *  the gesture-drawing timer mode as its candidate pool. */
   timerCandidates?: SimilarImageItem[];
+  /** Quick-start config from the selected-hero pill: when present, the
+   *  gesture timer starts running with it the moment the inspector opens
+   *  (one auto-start per config object identity). */
+  autoStartTimer?: GestureTimerConfig | null;
   /** Full-res URLs of the arrow-navigation neighbours, so the modal can
    *  predecode them before the user moves. The host owns the active nav
    *  list; wiring these lets prev/next land on a warm decode instead of
@@ -49,12 +54,11 @@ function predecodeImage(url: string): HTMLImageElement {
 /**
  * Fullscreen image inspector.
  *
- * Layout: image fills the left ~60% of the viewport, details drawer on
- * the right with tag editor + notes textarea + dimensions metadata.
+ * Layout: artwork leads on the left; the right inspector is one deliberate
+ * column for tags, notes, and gesture-timer setup.
  *
- * Navigation: left/right arrow keys move through the displayed list.
- * The previous arrow buttons are gone — keyboard nav is enough and the
- * buttons made the modal feel cluttered.
+ * Navigation: left/right arrow keys and the compact panel controls move
+ * through the displayed list.
  */
 export function PinterestModal(props: PinterestModalProps) {
   const [comboboxOpen, setComboboxOpen] = useState(false);
@@ -131,20 +135,11 @@ export function PinterestModal(props: PinterestModalProps) {
           animate={{ scale: 1, opacity: 1 }}
           exit={{ scale: 0.96, opacity: 0 }}
           transition={{ type: "spring", stiffness: 400, damping: 32 }}
-          className="floating-surface relative z-10 grid h-full max-h-[calc(100dvh-40px)] w-full max-w-[calc(100vw-40px)] grid-cols-[minmax(0,1fr)_360px] overflow-hidden rounded-[16px] border max-[760px]:grid-cols-1 max-[760px]:grid-rows-[minmax(0,1fr)_auto]"
+          className="floating-surface relative z-10 grid h-full max-h-[calc(100dvh-40px)] w-full max-w-[calc(100vw-40px)] grid-cols-[minmax(0,1fr)_minmax(380px,420px)] overflow-hidden rounded-[16px] border max-[860px]:grid-cols-1 max-[860px]:grid-rows-[minmax(0,1fr)_auto]"
           onClick={(e) => e.stopPropagation()}
         >
-          {/* Close button */}
-          <button
-            onClick={props.onClose}
-            className="chrome-surface absolute top-4 left-4 z-20 grid size-9 place-items-center rounded-[10px] border text-muted-foreground transition-[color,background-color,transform] hover:bg-surface-raised hover:text-foreground active:scale-95"
-            aria-label="Close"
-          >
-            <X className="h-4 w-4" strokeWidth={1.8} />
-          </button>
-
           {/* Image stage */}
-          <div className="relative flex min-h-0 min-w-0 items-center justify-center overflow-hidden bg-surface-sunken p-5 max-[760px]:p-3">
+          <div className="relative flex min-h-0 min-w-0 items-center justify-center overflow-hidden bg-surface-sunken p-5 max-[860px]:p-3">
             <div className="pointer-events-none absolute inset-0 bg-gradient-to-b from-foreground/[0.025] to-transparent" />
             <img
               src={props.item.url}
@@ -153,104 +148,140 @@ export function PinterestModal(props: PinterestModalProps) {
               loading="eager"
               decoding="async"
             />
-
-            <GestureTimer
-              startingImage={props.item}
-              candidateImages={props.timerCandidates ?? []}
-            />
           </div>
 
           {/* Details panel */}
-          <aside className="flex min-h-0 flex-col overflow-y-auto border-l border-border bg-card/92 max-[760px]:max-h-[42dvh] max-[760px]:border-l-0 max-[760px]:border-t">
-            <div className="border-b border-border px-6 py-5">
-              <p className="mb-1 text-[11px] font-[560] text-muted-foreground">
-                Image details
-              </p>
-              <h2 className="line-clamp-2 text-[17px] font-[620] leading-snug tracking-[-0.025em] text-foreground">
-                {props.item.name}
-              </h2>
-            </div>
+          <aside className="min-h-0 overflow-y-auto border-l border-border bg-card/92 max-[860px]:max-h-[54dvh] max-[860px]:border-l-0 max-[860px]:border-t">
+            <header className="sticky top-0 z-10 flex items-start gap-4 border-b border-border bg-surface-overlay/95 px-5 py-4 backdrop-blur-xl">
+              <div className="min-w-0 flex-1">
+                <h2 className="line-clamp-2 text-[15px] font-[640] leading-snug tracking-[-0.025em] text-foreground">
+                  {props.item.name}
+                </h2>
+                <p className="mt-1 text-[10px] font-[540] tabular-nums text-muted-foreground">
+                  {props.item.width.toLocaleString()} × {props.item.height.toLocaleString()} px
+                </p>
+              </div>
+              <nav className="flex shrink-0 items-center gap-1" aria-label="Image navigation">
+                <button
+                  type="button"
+                  onClick={() => props.onNavigate?.("prev")}
+                  disabled={!props.onNavigate}
+                  className="grid size-8 place-items-center rounded-[9px] text-muted-foreground transition-[color,background-color,transform] hover:bg-accent hover:text-foreground active:scale-[0.96] disabled:opacity-35"
+                  aria-label="Previous image"
+                >
+                  <ChevronLeft className="size-4" strokeWidth={1.8} />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => props.onNavigate?.("next")}
+                  disabled={!props.onNavigate}
+                  className="grid size-8 place-items-center rounded-[9px] text-muted-foreground transition-[color,background-color,transform] hover:bg-accent hover:text-foreground active:scale-[0.96] disabled:opacity-35"
+                  aria-label="Next image"
+                >
+                  <ChevronRight className="size-4" strokeWidth={1.8} />
+                </button>
+                <span aria-hidden="true" className="mx-1 h-4 w-px bg-border" />
+                <button
+                  type="button"
+                  onClick={props.onClose}
+                  className="grid size-8 place-items-center rounded-[9px] text-muted-foreground transition-[color,background-color,transform] hover:bg-accent hover:text-foreground active:scale-[0.96]"
+                  aria-label="Close image inspector"
+                >
+                  <X className="size-4" strokeWidth={1.8} />
+                </button>
+              </nav>
+            </header>
 
-            <div className="flex flex-1 flex-col gap-6 px-6 py-5">
-            {/* Tag dropdown */}
-            <div className="space-y-2">
-              <label className="block text-[11px] font-[560] text-muted-foreground">
-                Tags
-              </label>
-              <TagDropdown
-                tags={props.tags}
-                open={comboboxOpen}
-                setOpen={setComboboxOpen}
-                selected={selectedTags}
-                setSelected={setSelectedTags}
-                placeholder="Add Tags"
-                instruction="Select tags to add"
-                onCreateTag={props.onCreateTag}
-                onDeleteTag={props.onDeleteTag}
-                imageId={props.item.id}
-                onAssignTag={props.onAssignTag}
-                onRemoveTag={props.onRemoveTag}
-              />
-            </div>
-
-            {/* Active tags */}
-            <div className="flex min-h-6 flex-wrap gap-1.5">
-              <AnimatePresence mode="popLayout">
-                {props.item.tags.map((tag) => (
-                  <motion.div
-                    key={tag.id}
-                    layout
-                    initial={{ opacity: 0, scale: 0.8 }}
-                    animate={{ opacity: 1, scale: 1 }}
-                    exit={{ opacity: 0, scale: 0.8 }}
-                    transition={{ type: "spring", stiffness: 500, damping: 30 }}
-                  >
-                    <Badge
-                      className="border-transparent px-2.5 py-1"
-                      style={{
-                        backgroundColor: tag.color,
-                        color: pickContrastingText(tag.color),
-                      }}
+            <section className="border-b border-border px-5 py-4">
+              <div className="mb-3 flex items-baseline justify-between gap-3">
+                <h3 className="text-[12px] font-[620] text-foreground">Tags</h3>
+                <span className="text-[10px] tabular-nums text-muted-foreground">
+                  {props.item.tags.length} assigned
+                </span>
+              </div>
+              <div className="flex min-h-7 flex-wrap items-center gap-1.5">
+                <AnimatePresence mode="popLayout">
+                  {props.item.tags.map((tag) => (
+                    <motion.div
+                      key={tag.id}
+                      layout
+                      initial={{ opacity: 0, scale: 0.8 }}
+                      animate={{ opacity: 1, scale: 1 }}
+                      exit={{ opacity: 0, scale: 0.8 }}
+                      transition={{ type: "spring", stiffness: 500, damping: 30 }}
                     >
-                      {tag.name}
-                      <button
-                        className="ml-1 grid size-4 place-items-center rounded-full transition-colors hover:bg-background/15"
-                        onClick={() =>
-                          props.onRemoveTag(props.item!.id, tag.id)
-                        }
-                        aria-label={`Remove ${tag.name}`}
+                      <Badge
+                        className="border-transparent px-2.5 py-1"
+                        style={{
+                          backgroundColor: tag.color,
+                          color: pickContrastingText(tag.color),
+                        }}
                       >
-                        <X className="h-3 w-3" strokeWidth={2} />
-                      </button>
-                    </Badge>
-                  </motion.div>
-                ))}
-              </AnimatePresence>
-            </div>
+                        {tag.name}
+                        <button
+                          type="button"
+                          className="ml-1 grid size-4 place-items-center rounded-full transition-colors hover:bg-background/15"
+                          onClick={() =>
+                            props.onRemoveTag(props.item!.id, tag.id)
+                          }
+                          aria-label={`Remove ${tag.name}`}
+                        >
+                          <X className="size-3" strokeWidth={2} />
+                        </button>
+                      </Badge>
+                    </motion.div>
+                  ))}
+                </AnimatePresence>
+                {props.item.tags.length === 0 && (
+                  <span className="text-[11px] text-muted-foreground">
+                    No tags assigned
+                  </span>
+                )}
+              </div>
+              <div className="mt-3">
+                <TagDropdown
+                  tags={props.tags}
+                  open={comboboxOpen}
+                  setOpen={setComboboxOpen}
+                  selected={selectedTags}
+                  setSelected={setSelectedTags}
+                  placeholder="Add Tags"
+                  instruction="Select tags to add"
+                  onCreateTag={props.onCreateTag}
+                  onDeleteTag={props.onDeleteTag}
+                  imageId={props.item.id}
+                  onAssignTag={props.onAssignTag}
+                  onRemoveTag={props.onRemoveTag}
+                />
+              </div>
+            </section>
 
-            {/* Notes textarea (Phase 11) */}
             {props.onSaveNotes && (
-              <div className="space-y-2">
-                <label className="block text-[11px] font-[560] text-muted-foreground">
+              <section className="border-b border-border px-5 py-4">
+                <label
+                  htmlFor={`image-notes-${props.item.id}`}
+                  className="mb-2.5 block text-[12px] font-[620] text-foreground"
+                >
                   Notes
                 </label>
                 <textarea
+                  id={`image-notes-${props.item.id}`}
                   value={notesValue}
                   onChange={(e) => setNotesValue(e.target.value)}
                   onBlur={persistNotesSoon}
                   placeholder="Add a note about this image..."
-                  className="min-h-[112px] w-full resize-none rounded-[10px] border border-border bg-surface-sunken/65 px-3.5 py-3 text-[13px] leading-relaxed text-foreground outline-none transition-[border-color,box-shadow,background-color] placeholder:text-muted-foreground focus:border-primary/55 focus:bg-surface-sunken focus:ring-3 focus:ring-primary/10"
+                  className="min-h-[104px] w-full resize-y rounded-[10px] border border-border bg-surface-sunken/65 px-3.5 py-3 text-[12px] leading-relaxed text-foreground outline-none transition-[border-color,box-shadow,background-color] placeholder:text-muted-foreground focus:border-primary/55 focus:bg-surface-sunken focus:ring-3 focus:ring-primary/10"
                 />
-              </div>
+              </section>
             )}
 
-            <div className="flex-1" />
-            </div>
-
-            {/* Image dimensions */}
-            <div className="border-t border-border px-6 py-4 text-[11px] font-[520] tabular-nums text-muted-foreground">
-              {props.item.width.toLocaleString()} × {props.item.height.toLocaleString()} px
-            </div>
+            <section className="px-5 py-5">
+              <GestureTimer
+                startingImage={props.item}
+                candidateImages={props.timerCandidates ?? []}
+                autoStart={props.autoStartTimer ?? null}
+              />
+            </section>
           </aside>
         </motion.div>
       </motion.div>

@@ -33,6 +33,9 @@ interface MasonryProps {
   /** Fired when the pointer enters a tile — used to prefetch its
    *  similar-set so opening it is instant. */
   onItemHover?: (id: number) => void;
+  /** Rendered inside the selected hero tile only (the quick-start timer
+   *  pill). Memoise it in the host — it is compared by reference. */
+  heroOverlay?: React.ReactNode;
 }
 
 /**
@@ -190,6 +193,7 @@ export default function Masonry(props: MasonryProps) {
               activeResizeCorner={id === resizingId ? resizingCorner : null}
               onResizeHandlePointerDown={resize.onResizeHandlePointerDown}
               onTileElement={registerTileElement}
+              heroOverlay={item.isSelected ? props.heroOverlay : undefined}
             />
           </MasonryAnchor>
         );

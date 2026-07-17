@@ -32,6 +32,8 @@ import { pickScanFolder, fetchFusedSimilarImages } from "@/services/images";
 import { useAddRoot, useRoots } from "@/queries/useRoots";
 import { useUserPreferences } from "@/hooks/useUserPreferences";
 import { getImageNotes, setImageNotes } from "@/services/notes";
+import { SelectedImageTimerPill } from "@/components/SelectedImageTimerPill";
+import type { GestureTimerConfig } from "@/features/gesture-timer/types";
 
 /**
  * Synchronous selection seed built from a grid entry (T3-1). The compact
@@ -58,6 +60,10 @@ function seedSelectionItem(entry: FeedItem): ImageItem {
 export default function Home() {
   const [selectedItem, setSelectedItem] = useState<ImageItem | null>(null);
   const [isInspecting, setIsInspecting] = useState(false);
+  // Timer config handed from the hero quick-start pill to the inspector's
+  // GestureTimer (which auto-starts on it). Null = normal inspect open.
+  const [pendingTimerStart, setPendingTimerStart] =
+    useState<GestureTimerConfig | null>(null);
   const [searchTags, setSearchTags] = useState<Tag[]>([]);
   const [searchText, setSearchText] = useState("");
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -504,7 +510,42 @@ export default function Home() {
   const handleCloseInspect = () => {
     recordAction("inspect_close", { id: selectedItem?.id });
     setIsInspecting(false);
+    setPendingTimerStart(null);
   };
+
+  // A selection change orphans any pending quick-start config — clear it so
+  // it can never fire against a different image than the one it was built on.
+  useEffect(() => {
+    setPendingTimerStart(null);
+  }, [selectedItem?.id]);
+
+  // Quick-start from the hero pill: open the inspector with a timer config
+  // that GestureTimer auto-starts (one start per config object identity).
+  // Cleared on inspector close and on selection change so a stale config can
+  // never re-fire against a different image.
+  const handlePillStart = useCallback((config: GestureTimerConfig) => {
+    recordAction("timer_quick_start", { interval: config.intervalSeconds });
+    setPendingTimerStart(config);
+    setIsInspecting(true);
+  }, []);
+
+  // The pill element is memoised so MasonryItem's by-reference comparator
+  // only sees a new overlay when its real inputs change.
+  const heroTimerPill = useMemo(() => {
+    if (!selectedItem) return undefined;
+    return (
+      <SelectedImageTimerPill
+        similarCount={tieredSimilarImages.data?.length ?? 0}
+        disabled={tieredSimilarImages.isLoading}
+        onStart={handlePillStart}
+      />
+    );
+  }, [
+    selectedItem,
+    tieredSimilarImages.data?.length,
+    tieredSimilarImages.isLoading,
+    handlePillStart,
+  ]);
 
   const handleNavigate = (direction: "prev" | "next") => {
     if (!selectedItem) return;
@@ -661,6 +702,7 @@ export default function Home() {
             item={selectedItem}
             timerCandidates={tieredSimilarImages.data ?? []}
             neighbourUrls={modalNeighbourUrls}
+            autoStartTimer={pendingTimerStart}
             onClose={handleCloseInspect}
             onNavigate={handleNavigate}
             tags={tags.data}
@@ -972,6 +1014,7 @@ export default function Home() {
             onReorder={handleReorder}
             onResizeCommit={handleResizeCommit}
             onItemHover={prefetchSimilar}
+            heroOverlay={heroTimerPill}
           />
         </Profiler>
       </div>

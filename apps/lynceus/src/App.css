@@ -232,6 +232,26 @@
   backdrop-filter: blur(28px) saturate(125%);
 }
 
+/* Inert until mounted beneath the selected hero image. The host marks the
+   relative image wrapper with `data-selected-hero`, keeping the pill out of
+   the hero's click target until hover or keyboard focus deliberately reveals
+   its controls. */
+.selected-image-timer-pill {
+  pointer-events: none;
+  opacity: 0;
+  transform: translate(-50%, calc(50% + 4px));
+  transition:
+    opacity 180ms cubic-bezier(0.16, 1, 0.3, 1),
+    transform 180ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+[data-selected-hero]:hover .selected-image-timer-pill,
+[data-selected-hero]:focus-within .selected-image-timer-pill {
+  pointer-events: auto;
+  opacity: 1;
+  transform: translate(-50%, 50%);
+}
+
 ::-webkit-scrollbar {
   width: 8px;
   height: 8px;

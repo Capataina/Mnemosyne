@@ -43,6 +43,12 @@ export type GestureTimerProps = {
    */
   candidateImages: readonly GestureTimerImage[];
   initialConfig?: GestureTimerInitialConfig;
+  /**
+   * Quick-start path (the selected-hero pill): when a config object arrives,
+   * the timer adopts it and starts running immediately — no setup step. Each
+   * distinct object identity triggers at most one auto-start.
+   */
+  autoStart?: GestureTimerConfig | null;
   className?: string;
   disabled?: boolean;
   onOpenChange?: (open: boolean) => void;

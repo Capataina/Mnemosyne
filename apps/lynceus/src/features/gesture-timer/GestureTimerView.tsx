@@ -112,6 +112,21 @@ export function GestureTimerView({
     setImageStatus("loading");
   }, [timer.currentImage.id]);
 
+  // A predecoded (T1-6) reference can be complete the instant the keyed
+  // <img> mounts — WebKit may then never deliver a `load` event React's
+  // listener observes, leaving imageStatus stuck on "loading" and the
+  // image at opacity-0 (the "blank second image" bug). This ref callback
+  // runs at commit and settles the race: if the bitmap is already there,
+  // declare ready without waiting for an event that may not come.
+  const markReadyIfComplete = useCallback(
+    (node: HTMLImageElement | null) => {
+      if (node && node.complete && node.naturalWidth > 0) {
+        setImageStatus("ready");
+      }
+    },
+    [],
+  );
+
   // Predecode the next reference so the keyed hard-swap lands on a warm
   // bitmap instead of pulsing the skeleton while a fresh original decodes.
   useEffect(() => {
@@ -202,6 +217,7 @@ export function GestureTimerView({
         {imageStatus !== "error" && (
           <img
             key={timer.currentImage.id}
+            ref={markReadyIfComplete}
             src={timer.currentImage.url}
             alt={timer.currentImage.name ?? "Timed drawing reference"}
             width={timer.currentImage.width}

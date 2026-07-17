@@ -271,6 +271,62 @@ export function captureGridGeometry(): Record<string, unknown> | null {
   return { count: tiles.length, mismatched, overlaps, tiles };
 }
 
+/**
+ * Watch every visible tile's position across the frames after a reflow and
+ * classify each move as a TELEPORT (jumped almost all of its distance in a
+ * single frame — no transition animated it) or a slide (moved gradually).
+ * This is the frame-level capture the grab/drop snapshots can't give: the
+ * "moving up teleports, down slides" bug becomes a labelled list.
+ */
+export function sampleReflowMotion(reason: string, frames = 24): void {
+  const first = new Map<number, { x: number; y: number }>();
+  const last = new Map<number, { x: number; y: number }>();
+  const prev = new Map<number, { x: number; y: number }>();
+  const maxJump = new Map<number, number>();
+  let f = 0;
+
+  const step = () => {
+    for (const el of document.querySelectorAll<HTMLElement>("[data-masonry-id]")) {
+      const id = Number(el.dataset.masonryId);
+      const r = el.getBoundingClientRect();
+      const pos = { x: Math.round(r.left), y: Math.round(r.top) };
+      if (!first.has(id)) first.set(id, pos);
+      const p = prev.get(id);
+      if (p) {
+        const jump = Math.hypot(pos.x - p.x, pos.y - p.y);
+        maxJump.set(id, Math.max(maxJump.get(id) ?? 0, jump));
+      }
+      prev.set(id, pos);
+      last.set(id, pos);
+    }
+    f += 1;
+    if (f < frames) {
+      requestAnimationFrame(step);
+      return;
+    }
+    const moved: Array<Record<string, unknown>> = [];
+    for (const [id, fp] of first) {
+      const lp = last.get(id);
+      if (!lp) continue;
+      const total = Math.round(Math.hypot(lp.x - fp.x, lp.y - fp.y));
+      if (total <= 8) continue; // didn't meaningfully move
+      const mj = Math.round(maxJump.get(id) ?? 0);
+      moved.push({
+        id,
+        total,
+        maxFrameJump: mj,
+        // Moved ~all its distance in one frame → nothing animated it.
+        verdict: mj > total * 0.8 ? "TELEPORT" : "slide",
+        dir: lp.y < fp.y ? "up" : lp.y > fp.y ? "down" : "sideways",
+      });
+    }
+    moved.sort((a, b) => (b.total as number) - (a.total as number));
+    recordAction("reflow_motion", { reason, frames, moved: moved.slice(0, 30) });
+  };
+
+  requestAnimationFrame(step);
+}
+
 /** First `[data-masonry-id]` tile under a screen point, or EMPTY. */
 export function tileUnderPoint(x: number, y: number): {
   id: number | null;
@@ -404,6 +460,9 @@ export function initTelemetry(queryClient: QueryClient): void {
         grabbed: grabbedId,
         grid: captureGridGeometry(),
       });
+      // A drop triggers a reflow (the reorder commits + the grid re-packs).
+      // Watch the settle to catch the teleport: which tiles jumped vs slid.
+      sampleReflowMotion("after_drop");
       grabbedId = null;
     },
     { capture: true, passive: true },

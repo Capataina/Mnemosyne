@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { QueryClient } from "@tanstack/react-query";
 import {
+  classifyMove,
   describeElement,
   domPathFor,
   serialiseDomOutline,
@@ -9,6 +10,21 @@ import {
   tilesOverlap,
   type TileGeometry,
 } from "./telemetry";
+
+describe("classifyMove", () => {
+  it("calls a one-frame jump a TELEPORT", () => {
+    // moved 240px total, and 240 of it in a single frame
+    expect(classifyMove(240, 240)).toBe("TELEPORT");
+  });
+  it("calls gradual motion a slide", () => {
+    // moved 240px total across many frames, ~10px each
+    expect(classifyMove(240, 12)).toBe("slide");
+  });
+  it("uses the 60% threshold", () => {
+    expect(classifyMove(100, 61)).toBe("TELEPORT");
+    expect(classifyMove(100, 59)).toBe("slide");
+  });
+});
 
 describe("tilesOverlap", () => {
   const tile = (over: Partial<TileGeometry>): TileGeometry => ({

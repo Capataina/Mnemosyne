@@ -260,8 +260,8 @@ export function captureGridGeometry(): Record<string, unknown> | null {
 
   // Overlaps: pairs of tiles whose rendered boxes intersect. On a healthy
   // masonry this is empty (barring the active drag tile) — but a snapshot
-  // taken MID-reflow catches tiles still sliding through each other, so a
-  // settled snapshot (see sampleReflowMotion) is the one that judges bugs.
+  // taken MID-reflow catches tiles still sliding through each other, so the
+  // layout monitor's settled snapshot is the one that judges bugs.
   const overlaps: Array<{ a: number; b: number; area: number }> = [];
   for (let i = 0; i < tiles.length; i++) {
     for (let j = i + 1; j < tiles.length; j++) {
@@ -297,65 +297,187 @@ export function captureGridGeometry(): Record<string, unknown> | null {
 }
 
 /**
- * Watch every visible tile's position across the frames after a reflow and
- * classify each move as a TELEPORT (jumped almost all of its distance in a
- * single frame — no transition animated it) or a slide (moved gradually).
- * This is the frame-level capture the grab/drop snapshots can't give: the
- * "moving up teleports, down slides" bug becomes a labelled list.
+ * Classify a single tile's move given its total displacement and biggest
+ * single-frame jump: TELEPORT when >60% of the distance happened in one frame
+ * (nothing animated it) vs slide when it moved gradually. Pure, so the
+ * threshold is unit-testable.
  */
-export function sampleReflowMotion(reason: string, frames = 24): void {
-  const first = new Map<number, { x: number; y: number }>();
-  const last = new Map<number, { x: number; y: number }>();
-  const prev = new Map<number, { x: number; y: number }>();
-  const maxJump = new Map<number, number>();
-  let f = 0;
+export function classifyMove(total: number, maxFrameJump: number): "TELEPORT" | "slide" {
+  return maxFrameJump > total * 0.6 ? "TELEPORT" : "slide";
+}
 
-  const step = () => {
+/**
+ * Context the layout monitor stamps onto each reflow event: what the user was
+ * doing when the reflow began. Mutated by the pointer handlers, read by the
+ * monitor — so a reflow reads back as "caused by dragging tile 42" or "other"
+ * (an indexing delta, a resize, a filter change).
+ */
+interface MonitorContext {
+  dragging: boolean;
+  grabbedId: number | null;
+  cursor: { x: number; y: number } | null;
+}
+const monitorContext: MonitorContext = {
+  dragging: false,
+  grabbedId: null,
+  cursor: null,
+};
+
+/**
+ * The unified layout monitor — ONE always-on observer that classifies EVERY
+ * masonry reflow, whatever triggered it (drag reorder, indexing delta, resize,
+ * filter change). No hard-coded per-trigger sampler.
+ *
+ * An rAF loop tracks every visible tile frame-to-frame. When motion starts it
+ * captures the current interaction context; while motion continues it
+ * accumulates, per tile, first/last position, largest single-frame jump (and
+ * the anchor's live CSS transition state AT that jump), and mount/unmount; when
+ * motion settles (a few still frames) it emits ONE `reflow` event: per-tile
+ * {total, dx, dy, maxFrameJump, verdict, dir, transProp, transDur}, the mounted
+ * and unmounted ids, the trigger, and the settled geometry (overlaps + gaps).
+ *
+ * That single event answers every reflow question the piecemeal samplers each
+ * needed their own turn for: did a tile teleport or slide, in which direction,
+ * was its transition even live when it jumped, did it appear/vanish, and is the
+ * final layout clean.
+ */
+function startLayoutMonitor(): void {
+  const SETTLE_FRAMES = 5; // still frames that end a reflow
+  const MOVE_EPS = 1; // px; below this a tile is "still" this frame
+  const JUMP_PX = 24; // single-frame move worth reading transition state for
+  const MEANINGFUL = 6; // total px a tile must move to be reported
+
+  type Snap = { x: number; y: number };
+  interface Acc {
+    first: Snap;
+    last: Snap;
+    maxJump: number;
+    jumpTrans: { prop: string; dur: string } | null;
+  }
+
+  const readTiles = (): Map<number, { snap: Snap; el: HTMLElement }> => {
+    const m = new Map<number, { snap: Snap; el: HTMLElement }>();
     for (const el of document.querySelectorAll<HTMLElement>("[data-masonry-id]")) {
       const id = Number(el.dataset.masonryId);
       const r = el.getBoundingClientRect();
-      const pos = { x: Math.round(r.left), y: Math.round(r.top) };
-      if (!first.has(id)) first.set(id, pos);
-      const p = prev.get(id);
-      if (p) {
-        const jump = Math.hypot(pos.x - p.x, pos.y - p.y);
-        maxJump.set(id, Math.max(maxJump.get(id) ?? 0, jump));
-      }
-      prev.set(id, pos);
-      last.set(id, pos);
+      m.set(id, { snap: { x: r.left, y: r.top }, el });
     }
-    f += 1;
-    if (f < frames) {
-      requestAnimationFrame(step);
-      return;
-    }
+    return m;
+  };
+
+  let prev = new Map<number, Snap>();
+  let active = false;
+  let idle = 0;
+  let acc = new Map<number, Acc>();
+  const mounted = new Set<number>();
+  const unmounted = new Set<number>();
+  let ctxAtStart: MonitorContext = { ...monitorContext };
+
+  const reset = () => {
+    acc = new Map();
+    mounted.clear();
+    unmounted.clear();
+  };
+
+  const flush = () => {
     const moved: Array<Record<string, unknown>> = [];
-    for (const [id, fp] of first) {
-      const lp = last.get(id);
-      if (!lp) continue;
-      const total = Math.round(Math.hypot(lp.x - fp.x, lp.y - fp.y));
-      if (total <= 8) continue; // didn't meaningfully move
-      const mj = Math.round(maxJump.get(id) ?? 0);
+    for (const [id, a] of acc) {
+      const dx = a.last.x - a.first.x;
+      const dy = a.last.y - a.first.y;
+      const total = Math.round(Math.hypot(dx, dy));
+      if (total < MEANINGFUL) continue;
       moved.push({
         id,
         total,
-        maxFrameJump: mj,
-        // Moved ~all its distance in one frame → nothing animated it.
-        verdict: mj > total * 0.8 ? "TELEPORT" : "slide",
-        dir: lp.y < fp.y ? "up" : lp.y > fp.y ? "down" : "sideways",
+        dx: Math.round(dx),
+        dy: Math.round(dy),
+        maxFrameJump: Math.round(a.maxJump),
+        verdict: classifyMove(total, a.maxJump),
+        dir:
+          Math.abs(dx) > Math.abs(dy)
+            ? dx < 0
+              ? "left"
+              : "right"
+            : dy < 0
+              ? "up"
+              : "down",
+        transProp: a.jumpTrans?.prop,
+        transDur: a.jumpTrans?.dur,
       });
     }
-    moved.sort((a, b) => (b.total as number) - (a.total as number));
-    // The SETTLED geometry — captured after the animation frames complete, so
-    // its overlaps/gaps reflect the final layout, not tiles mid-slide.
-    recordAction("reflow_motion", {
-      reason,
-      frames,
-      moved: moved.slice(0, 30),
-      settledGrid: captureGridGeometry(),
+    if (moved.length === 0 && mounted.size === 0 && unmounted.size === 0) {
+      reset();
+      return;
+    }
+    moved.sort((x, y) => (y.total as number) - (x.total as number));
+    const teleports = moved.filter((m) => m.verdict === "TELEPORT");
+    recordAction("reflow", {
+      trigger: ctxAtStart.dragging
+        ? { kind: "drag", grabbed: ctxAtStart.grabbedId, cursor: ctxAtStart.cursor }
+        : { kind: "other" },
+      movedCount: moved.length,
+      teleportCount: teleports.length,
+      teleports: teleports.slice(0, 30),
+      moved: moved.slice(0, 40),
+      mounted: [...mounted].slice(0, 40),
+      unmounted: [...unmounted].slice(0, 40),
+      settled: captureGridGeometry(),
     });
+    reset();
   };
 
+  const step = () => {
+    const cur = readTiles();
+    let motion = false;
+
+    for (const [id, { snap: c, el }] of cur) {
+      const p = prev.get(id);
+      if (!p) {
+        if (active) mounted.add(id);
+        continue;
+      }
+      const jump = Math.hypot(c.x - p.x, c.y - p.y);
+      if (jump > MOVE_EPS) {
+        motion = true;
+        if (!active) {
+          active = true;
+          ctxAtStart = { ...monitorContext };
+        }
+        const a = acc.get(id) ?? { first: p, last: c, maxJump: 0, jumpTrans: null };
+        a.last = c;
+        if (jump > a.maxJump) {
+          a.maxJump = jump;
+          if (jump > JUMP_PX) {
+            const cs = getComputedStyle(el.parentElement ?? el);
+            a.jumpTrans = { prop: cs.transitionProperty, dur: cs.transitionDuration };
+          }
+        }
+        acc.set(id, a);
+      }
+    }
+    for (const [id] of prev) {
+      if (!cur.has(id)) {
+        if (active) unmounted.add(id);
+        motion = true;
+      }
+    }
+
+    prev = new Map(Array.from(cur, ([id, v]) => [id, v.snap]));
+
+    if (motion) {
+      idle = 0;
+    } else if (active) {
+      idle += 1;
+      if (idle >= SETTLE_FRAMES) {
+        flush();
+        active = false;
+        idle = 0;
+      }
+    }
+    requestAnimationFrame(step);
+  };
+
+  prev = new Map(Array.from(readTiles(), ([id, v]) => [id, v.snap]));
   requestAnimationFrame(step);
 }
 
@@ -434,75 +556,25 @@ export function initTelemetry(queryClient: QueryClient): void {
     { capture: true, passive: true },
   );
 
-  /* 1b — pointer / drag tracing (the "see what I see" surface) ------- */
-  // Records where the cursor is, what it's over (a tile id or EMPTY),
-  // and whether a button is held — so a drag/reorder session reads back
-  // as a motion trace: grab point, path, what each sample is over, drop.
-  // Grid geometry is snapshotted at grab and at drop so a broken layout
-  // shows its overlaps/gaps before AND after the interaction.
+  /* 1b — pointer / cursor tracing + monitor context ------------------ */
+  // Records where the cursor is, what it's over (a tile id or EMPTY), and
+  // whether a button is held — so an interaction reads back as a motion
+  // trace. It also maintains `monitorContext`, which the layout monitor
+  // stamps onto every reflow, so each reflow event knows whether a drag
+  // caused it and where the cursor was. The reflow classification itself
+  // (teleport/slide, mount/unmount, geometry) is the monitor's job, not
+  // this handler's — one observer for all reflows, not a per-event sampler.
   let pointerDown = false;
-  let grabbedId: number | null = null;
   let lastDragSample = 0;
-
-  // Continuous per-frame motion capture for the LIFE of a drag. The
-  // reorder that teleports happens MID-drag (the grid re-packs live as the
-  // held tile crosses another), not on drop — so a drop-only sampler sees
-  // nothing move. This rAF loop watches every non-dragged tile each frame
-  // and flags a TELEPORT: a tile that jumped a big distance in a single
-  // frame (a CSS slide moves a few px/frame over ~400ms; a jump of >28px in
-  // one frame means nothing animated it). Each tile is reported once per
-  // drag, with direction — so an up-move-teleports / down-move-slides split
-  // reads straight out of the timeline.
-  const JUMP_PX = 28;
-  let dragRaf: number | null = null;
-  const dragPrev = new Map<number, { x: number; y: number }>();
-  const dragTeleported = new Set<number>();
-  let dragTeleports: Array<Record<string, unknown>> = [];
-
-  const dragMotionStep = () => {
-    for (const el of document.querySelectorAll<HTMLElement>("[data-masonry-id]")) {
-      const id = Number(el.dataset.masonryId);
-      if (id === grabbedId) continue; // the held tile follows the cursor
-      const r = el.getBoundingClientRect();
-      const pos = { x: r.left, y: r.top };
-      const p = dragPrev.get(id);
-      if (p) {
-        const dx = pos.x - p.x;
-        const dy = pos.y - p.y;
-        const dist = Math.hypot(dx, dy);
-        if (dist > JUMP_PX && !dragTeleported.has(id)) {
-          dragTeleported.add(id);
-          // Was the anchor's position transition actually ACTIVE at the
-          // instant it jumped? If duration is 0s / property excludes
-          // transform, something disabled it; if it's on (0.4s transform)
-          // yet the tile still jumped a whole column in one frame, the
-          // change bypassed the transition (a re-mount or a paint-skip on
-          // the worker-result swap) — different bug, different fix. This is
-          // the datum that decides which.
-          const anchor = el.parentElement;
-          const cs = anchor ? getComputedStyle(anchor) : null;
-          dragTeleports.push({
-            id,
-            dx: Math.round(dx),
-            dy: Math.round(dy),
-            dist: Math.round(dist),
-            dir: dy < -2 ? "up" : dy > 2 ? "down" : "sideways",
-            transProp: cs?.transitionProperty ?? "?",
-            transDur: cs?.transitionDuration ?? "?",
-          });
-        }
-      }
-      dragPrev.set(id, pos);
-    }
-    dragRaf = requestAnimationFrame(dragMotionStep);
-  };
 
   document.addEventListener(
     "pointerdown",
     (e) => {
       pointerDown = true;
       const under = tileUnderPoint(e.clientX, e.clientY);
-      grabbedId = under.id;
+      monitorContext.dragging = true;
+      monitorContext.grabbedId = under.id;
+      monitorContext.cursor = { x: Math.round(e.clientX), y: Math.round(e.clientY) };
       recordAction("pointer_down", {
         x: Math.round(e.clientX),
         y: Math.round(e.clientY),
@@ -510,11 +582,6 @@ export function initTelemetry(queryClient: QueryClient): void {
         button: e.button,
         grid: captureGridGeometry(),
       });
-      // Arm the per-frame drag-motion capture.
-      dragPrev.clear();
-      dragTeleported.clear();
-      dragTeleports = [];
-      if (dragRaf === null) dragRaf = requestAnimationFrame(dragMotionStep);
     },
     { capture: true, passive: true },
   );
@@ -523,6 +590,7 @@ export function initTelemetry(queryClient: QueryClient): void {
     "pointermove",
     (e) => {
       if (!pointerDown) return; // only trace motion WHILE holding
+      monitorContext.cursor = { x: Math.round(e.clientX), y: Math.round(e.clientY) };
       const now = Date.now();
       if (now - lastDragSample < DRAG_SAMPLE_MS) return;
       lastDragSample = now;
@@ -531,7 +599,7 @@ export function initTelemetry(queryClient: QueryClient): void {
         x: Math.round(e.clientX),
         y: Math.round(e.clientY),
         over: under.label,
-        grabbed: grabbedId,
+        grabbed: monitorContext.grabbedId,
       });
     },
     { capture: true, passive: true },
@@ -543,31 +611,26 @@ export function initTelemetry(queryClient: QueryClient): void {
       if (!pointerDown) return;
       pointerDown = false;
       const under = tileUnderPoint(e.clientX, e.clientY);
-      // Stop the per-frame drag capture and emit what jumped DURING the drag.
-      if (dragRaf !== null) {
-        cancelAnimationFrame(dragRaf);
-        dragRaf = null;
-      }
-      const upJumps = dragTeleports.filter((t) => t.dir === "up").length;
-      const downJumps = dragTeleports.filter((t) => t.dir === "down").length;
       recordAction("pointer_up", {
         x: Math.round(e.clientX),
         y: Math.round(e.clientY),
         over: under.label,
-        grabbed: grabbedId,
+        grabbed: monitorContext.grabbedId,
         grid: captureGridGeometry(),
-        // The mid-drag teleport summary: tiles that jumped in a single frame
-        // while the drag was live, split by direction.
-        dragTeleports,
-        teleportUp: upJumps,
-        teleportDown: downJumps,
       });
-      // A drop also triggers a settle reflow — sample it too (this one slides).
-      sampleReflowMotion("after_drop");
-      grabbedId = null;
+      // The drop-triggered reflow is captured by the layout monitor. Keep
+      // the drag context live for a short window so the monitor attributes
+      // the settle reflow to this drag before clearing it.
+      window.setTimeout(() => {
+        monitorContext.dragging = false;
+        monitorContext.grabbedId = null;
+      }, 600);
     },
     { capture: true, passive: true },
   );
+
+  // The one observer that classifies every reflow.
+  startLayoutMonitor();
 
   document.addEventListener(
     "keydown",

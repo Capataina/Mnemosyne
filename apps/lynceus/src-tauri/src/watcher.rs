@@ -48,14 +48,13 @@ pub type WatcherHandle = Debouncer<notify::RecommendedWatcher>;
 /// must outlive the app — typically held in a Tauri-managed state
 /// struct. Returns None if no roots are enabled or if the underlying
 /// notify backend can't be initialised on the current platform.
-#[tracing::instrument(name = "watcher.start", skip(app, indexing_state, cosine_index, cosine_current_encoder))]
+#[tracing::instrument(name = "watcher.start", skip(app, indexing_state, fusion))]
 pub fn start(
     app: AppHandle,
     paths_to_watch: Vec<PathBuf>,
     db_path: String,
     indexing_state: Arc<indexing::IndexingState>,
-    cosine_index: Arc<std::sync::RwLock<CosineIndex>>,
-    cosine_current_encoder: Arc<std::sync::Mutex<String>>,
+    fusion: Arc<std::sync::RwLock<std::collections::HashMap<String, CosineIndex>>>,
 ) -> Option<WatcherHandle> {
     if paths_to_watch.is_empty() {
         info!("watcher: no enabled roots, skipping watcher init");
@@ -65,8 +64,7 @@ pub fn start(
     let app_for_handler = app.clone();
     let db_path_for_handler = db_path.clone();
     let indexing_state_for_handler = indexing_state.clone();
-    let cosine_index_for_handler = cosine_index.clone();
-    let cosine_current_encoder_for_handler = cosine_current_encoder.clone();
+    let fusion_for_handler = fusion.clone();
 
     let mut debouncer = match new_debouncer(
         Duration::from_secs(5),
@@ -85,8 +83,7 @@ pub fn start(
                         app_for_handler.clone(),
                         indexing_state_for_handler.clone(),
                         db_path_for_handler.clone(),
-                        cosine_index_for_handler.clone(),
-                        cosine_current_encoder_for_handler.clone(),
+                        fusion_for_handler.clone(),
                     );
                 }
                 Err(e) => {

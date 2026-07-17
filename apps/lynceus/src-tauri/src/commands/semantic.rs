@@ -29,12 +29,11 @@ pub const SIGLIP2_TEXT_ENCODER_ID: &str = "siglip2_base";
 ///   - `Some("clip_vit_b_32")` → CLIP English 512-d (default)
 ///   - `None` or anything else → CLIP fallback
 ///
-/// The cosine cache is loaded for the *matching* image-encoder family
-/// (CLIP image embeddings if CLIP text was used; SigLIP-2 image
-/// embeddings if SigLIP-2 text was used). Mixing dimensions would
-/// crash with a dim-mismatch panic in ndarray's dot product — the
-/// `ensure_loaded_for` call below guarantees the right cache is
-/// resident before we touch it.
+/// The query scores against the fusion slot for the *matching* image-
+/// encoder family (CLIP image embeddings if CLIP text was used; SigLIP-2
+/// image embeddings if SigLIP-2 text was used). Mixing dimensions would
+/// otherwise be a cross-encoder mismatch — `with_encoder_index` below
+/// borrows the right per-encoder slot, so the query and cache dims match.
 #[tauri::command]
 #[tracing::instrument(name = "ipc.semantic_search", skip(db, fusion_state, text_encoder_state), fields(query_len = query.len(), top_n, text_encoder_id))]
 pub fn semantic_search(

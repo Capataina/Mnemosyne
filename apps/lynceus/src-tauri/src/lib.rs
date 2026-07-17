@@ -40,117 +40,18 @@ pub mod similarity_and_semantic_search;
 pub mod thumbnail;
 pub mod watcher;
 
-pub struct CosineIndexState {
-    /// Wrapped in Arc<RwLock<...>> so the indexing thread (Pass 5) can
-    /// hold a clone alongside the Tauri-managed state — both point at the
-    /// same in-memory cache — AND so a read-heavy burst of concurrent
-    /// similarity queries (the frontend prefetches every on-screen tile's
-    /// similar-set) can score under shared read locks instead of
-    /// serialising on a `Mutex`. Writes (repopulate on encoder switch,
-    /// startup warm) take the write lock; scoring is `&self` and takes a
-    /// read lock, so the common same-encoder burst never blocks.
-    ///
-    /// The cache holds embeddings from ONE encoder at a time —
-    /// whichever the user's `imageEncoder` setting selects. When the
-    /// setting changes, the cache is wiped + repopulated from the
-    /// embeddings table for the new encoder. Repopulate is fast
-    /// because the embeddings are already on disk; only the new
-    /// encoder's embeddings need DB → memory transfer.
-    pub index: Arc<RwLock<CosineIndex>>,
-    pub db_path: String,
-    /// The encoder_id whose embeddings are currently loaded into
-    /// `index`. Empty string when uninitialised. Read at search-time
-    /// to detect stale cache after a settings change.
-    pub current_encoder_id: Arc<Mutex<String>>,
-}
-
-impl CosineIndexState {
-    /// Ensure `index` holds the cache for `encoder_id`. If it already
-    /// does, returns immediately (no work). Otherwise repopulates
-    /// from `db.get_all_embeddings_for(encoder_id)` — fast because
-    /// the on-disk embeddings are already there from the indexing
-    /// pass; this is just DB→memory transfer.
-    ///
-    /// Returns an error if the DB read fails. Callers should treat
-    /// this as a hard failure for the search command — there's no
-    /// useful "partial cache" state to fall back to.
-    /// Drop the in-memory cache AND the "currently loaded encoder"
-    /// marker so the very next search call repopulates from the DB.
-    ///
-    /// Why both: `ensure_loaded_for` short-circuits when
-    /// `current_encoder_id` matches the requested encoder, and only
-    /// repopulates the cache otherwise. If we cleared the cache but
-    /// left the marker, the next search would short-circuit and run
-    /// against an empty cache (image-image returns 0; semantic search
-    /// only saves itself via a separate empty-cache fallback in
-    /// `commands/semantic.rs`). Worse, the previous code's leftover
-    /// pre-toggle entries kept appearing in results because nothing
-    /// forced a reload — exactly the "disabled folder still shows in
-    /// View Similar" bug. Lock order matches `ensure_loaded_for`
-    /// (current_encoder_id then index) to keep the search path
-    /// deadlock-free.
-    pub fn invalidate(&self) {
-        if let (Ok(mut cur), Ok(mut idx)) =
-            (self.current_encoder_id.lock(), self.index.write())
-        {
-            idx.cached_images.clear();
-            cur.clear();
-        }
-    }
-
-    pub fn ensure_loaded_for(
-        &self,
-        db: &ImageDatabase,
-        encoder_id: &str,
-    ) -> Result<(), String> {
-        // Two-step lock acquisition: check current id first to short-
-        // circuit the common case (encoder hasn't changed). Acquire
-        // the index Mutex only if a reload is actually needed.
-        {
-            let cur = self
-                .current_encoder_id
-                .lock()
-                .map_err(|e| format!("current_encoder_id mutex poisoned: {e}"))?;
-            if *cur == encoder_id {
-                return Ok(());
-            }
-        }
-        // Need to switch — take both locks. The order is consistent
-        // (id first, then index) across all callers; deadlock-safe.
-        let mut cur = self
-            .current_encoder_id
-            .lock()
-            .map_err(|e| format!("current_encoder_id mutex poisoned: {e}"))?;
-        let mut index = self
-            .index
-            .write()
-            .map_err(|e| format!("index rwlock poisoned: {e}"))?;
-        // Re-check under the lock (another thread might've switched).
-        if *cur == encoder_id {
-            return Ok(());
-        }
-        index.populate_from_db_for_encoder(db, encoder_id);
-        *cur = encoder_id.to_string();
-        Ok(())
-    }
-}
-
-/// Phase 5 — per-encoder cosine caches for multi-encoder rank fusion.
+/// Per-encoder cosine caches — the ONLY resident embedding cache in the
+/// app (T3-2/#8). Every search command borrows a slot here: image-image
+/// and text-image fusion score each enabled encoder's slot and RRF the
+/// results, and the single-encoder commands (get_similar / get_tiered /
+/// semantic_search) borrow one slot via `with_encoder_index`. All three
+/// encoders' caches stay resident simultaneously so a fused query never
+/// pays a populate-roundtrip per call.
 ///
-/// The primary `CosineIndexState` holds ONE encoder's cache at a time
-/// (the user's "active" image encoder). Fusion needs all three caches
-/// resident simultaneously so it can score the query image in each
-/// encoder's space without paying a populate-roundtrip per fusion call.
-///
-/// Lazy-populated: each encoder's slot stays empty until the first
-/// fusion call asks for it. Memory cost on a 2000-image library is
-/// roughly 2000 × 768 × 4 bytes per slot ≈ 6 MB per encoder, ~18 MB
-/// total — small enough that holding all three resident is the right
-/// trade vs the alternative ~150 ms cold-populate cost on every
-/// fusion call.
-///
-/// `invalidate_all()` clears every slot (and is wired into the same
-/// root-change paths that already invalidate `CosineIndexState`).
+/// Populated lazily on first use OR mapped zero-copy from the persisted
+/// flat store by `spawn_cache_warm` at launch; refreshed + re-persisted
+/// by the indexing pipeline at Ready (token-gated) so post-index search
+/// is fresh. `invalidate_all()` clears every slot on a root-change IPC.
 pub struct FusionIndexState {
     /// `RwLock` (not `Mutex`) so a burst of concurrent fused queries can
     /// score under shared read locks once the per-encoder caches are
@@ -169,11 +70,11 @@ impl FusionIndexState {
         }
     }
 
-    /// Clear every per-encoder cache. Called from the same root-change
-    /// IPCs that invalidate `CosineIndexState` so a disabled-root toggle
-    /// flushes the fusion caches too. Without this, fusion would
-    /// happily return images from a now-disabled root because its
-    /// cached entries weren't cleared.
+    /// Clear every per-encoder cache. Called from the root-change IPCs so
+    /// a disabled-root toggle flushes the fusion caches; without this,
+    /// search would happily return images from a now-disabled root because
+    /// its cached entries weren't cleared. The indexing pipeline these
+    /// IPCs then re-spawn repopulates the slots fresh at Ready.
     pub fn invalidate_all(&self) {
         if let Ok(mut m) = self.per_encoder.write() {
             m.clear();
@@ -250,7 +151,7 @@ impl FusionIndexState {
     /// `encoder_id`, ensuring the slot is populated first. This is what
     /// lets the legacy/primary single-encoder commands (get_similar,
     /// get_tiered, semantic_search) BORROW the fusion slot instead of
-    /// keeping the duplicate primary `CosineIndexState` warm (T3-2/#8) —
+    /// keeping a duplicate primary cache warm (T3-2/#8) —
     /// the fusion slot already holds exactly the same per-encoder cache.
     ///
     /// Same double-checked shape as `ranked_for_encoder`: the warm case
@@ -335,7 +236,7 @@ pub struct TextEncoderState {
 ///
 /// **Fusion slots only (T3-2/#8).** Every search command now borrows the
 /// per-encoder `FusionIndexState` slot (via `with_encoder_index` /
-/// `ranked_for_encoder`), so warming the primary `CosineIndexState` here
+/// `ranked_for_encoder`), so warming a separate primary cache here
 /// too would be the ~205 MB duplicate the flat-store work exists to
 /// remove — the primary is left to the indexing pipeline, which populates
 /// and persists it as a side effect. For each enabled encoder we prefer
@@ -411,14 +312,6 @@ pub fn run(db: ImageDatabase, db_path: String) {
         remove_tag_from_image,
     };
 
-    let cosine_index = Arc::new(RwLock::new(CosineIndex::new()));
-    let current_encoder_id = Arc::new(Mutex::new(String::new()));
-    let cosine_state = CosineIndexState {
-        index: cosine_index.clone(),
-        db_path: db_path.clone(),
-        current_encoder_id: current_encoder_id.clone(),
-    };
-
     // Text encoder state (lazy-loaded on first semantic search).
     // Phase 4 — both encoders coexist so the picker can switch
     // dispatch instantly without paying the model-load cost twice.
@@ -427,18 +320,20 @@ pub fn run(db: ImageDatabase, db_path: String) {
         siglip2_encoder: Mutex::new(None),
     };
 
-    // Phase 5 — per-encoder fusion caches. Empty until the first
-    // get_fused_similar_images call asks for an encoder; lazy-populated
-    // from the same DB rows the primary CosineIndexState reads.
+    // Per-encoder fusion caches — the ONLY resident embedding cache now
+    // (T3-2/#8): every search command borrows these slots, and the
+    // indexing pipeline refreshes + persists them at Ready. The old
+    // duplicate primary cache is gone entirely. Clone the
+    // slot Arc for the warm thread + the pipeline/watcher wiring below,
+    // before `fusion_state` is moved into `.manage()`.
     let fusion_state = FusionIndexState::new();
+    let fusion_slots = fusion_state.per_encoder.clone();
 
     // Pre-warm the per-encoder fusion slots in the background right at
     // launch (mapping the persisted flat stores), so the first similarity
     // click — and the frontend's prefetch burst across every on-screen
-    // tile — is instant on a cold session. Fusion-slots-only now (T3-2/#8):
-    // every search command borrows these slots, so the old duplicate warm
-    // of the primary CosineIndexState is gone.
-    spawn_cache_warm(db_path.clone(), fusion_state.per_encoder.clone());
+    // tile — is instant on a cold session.
+    spawn_cache_warm(db_path.clone(), fusion_slots.clone());
 
     // Single-flight guard for the indexing pipeline. Wrapped in Arc so
     // the .setup() callback (and later set_scan_root commands) can both
@@ -456,14 +351,13 @@ pub fn run(db: ImageDatabase, db_path: String) {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .manage(db)
-        .manage(cosine_state)
         .manage(text_encoder_state)
         .manage(fusion_state)
         .manage(indexing_state.clone())
         .manage(watcher_state.clone())
         .setup({
             let db_path = db_path.clone();
-            let cosine_index = cosine_index.clone();
+            let fusion_slots = fusion_slots.clone();
             let indexing_state = indexing_state.clone();
             let watcher_state = watcher_state.clone();
             move |app| {
@@ -607,8 +501,7 @@ pub fn run(db: ImageDatabase, db_path: String) {
                     app_handle.clone(),
                     indexing_state.clone(),
                     db_path.clone(),
-                    cosine_index.clone(),
-                    current_encoder_id.clone(),
+                    fusion_slots.clone(),
                 ) {
                     error!("could not spawn indexing pipeline: {e}");
                 }
@@ -670,8 +563,7 @@ pub fn run(db: ImageDatabase, db_path: String) {
                         watch_paths,
                         db_path,
                         indexing_state,
-                        cosine_index,
-                        current_encoder_id.clone(),
+                        fusion_slots,
                     );
                     if let Ok(mut slot) = watcher_state.lock() {
                         *slot = handle;

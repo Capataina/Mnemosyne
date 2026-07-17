@@ -86,8 +86,8 @@ impl FlatStore {
     }
 
     /// Drop every row and unmap any backing file. Restores the empty
-    /// state so the next populate rebuilds from scratch. Used by
-    /// `CosineIndexState::invalidate` on a root toggle.
+    /// state so the next populate rebuilds from scratch. Reached via
+    /// `FusionIndexState::invalidate_all` on a root toggle.
     pub fn clear(&mut self) {
         self.dim = 0;
         self.ids.clear();

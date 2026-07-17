@@ -46,6 +46,12 @@ use crate::similarity_and_semantic_search::encoder_text::ClipTextEncoder;
 use crate::thumbnail::ThumbnailGenerator;
 use crate::TextEncoderState;
 
+/// The per-encoder fusion caches (`FusionIndexState.per_encoder`). The
+/// pipeline refreshes these at Ready so post-index search — which borrows
+/// the fusion slots (T3-2/#8) — reflects the newly-encoded images, and
+/// persists each encoder's flat store as it does so.
+type FusionSlots = Arc<std::sync::RwLock<std::collections::HashMap<String, CosineIndex>>>;
+
 /// The single-flight guard. Wrap in Arc and stash in a Tauri state
 /// struct so commands and the setup callback can both reach it.
 #[derive(Default)]
@@ -169,8 +175,7 @@ pub fn try_spawn_pipeline(
     app: AppHandle,
     state: Arc<IndexingState>,
     db_path: String,
-    cosine_index: Arc<std::sync::RwLock<CosineIndex>>,
-    cosine_current_encoder: Arc<std::sync::Mutex<String>>,
+    fusion: FusionSlots,
 ) -> Result<(), IndexingError> {
     // Acquire the single-flight slot atomically.
     if state
@@ -192,7 +197,7 @@ pub fn try_spawn_pipeline(
         }
         let _guard = RunningGuard(state.clone());
 
-        if let Err(e) = run_pipeline_inner(&app, &db_path, &cosine_index, &cosine_current_encoder) {
+        if let Err(e) = run_pipeline_inner(&app, &db_path, &fusion) {
             error!("pipeline error: {e}");
             emit(
                 &app,
@@ -210,33 +215,18 @@ pub fn try_spawn_pipeline(
 /// The actual pipeline body. Errors propagate up and become a
 /// `Phase::Error` event in the spawning closure.
 ///
-/// `cosine_current_encoder` is the same Arc<Mutex<String>> held by
-/// `CosineIndexState.current_encoder_id` — the pipeline writes into
-/// it after the priority encoder's phase finishes, so the in-memory
-/// cache and the "what's loaded" marker stay in sync without the next
-/// search command needing to repopulate.
-#[tracing::instrument(name = "pipeline.run", skip(app, cosine_index, cosine_current_encoder))]
+/// `fusion` is `FusionIndexState.per_encoder` — the pipeline refreshes
+/// the per-encoder slots at Ready (step 7) so post-index search reflects
+/// the images this run encoded, and persists each flat store. There is no
+/// longer a primary `CosineIndexState` to keep in sync: every search
+/// command borrows the fusion slots (T3-2/#8), so the fusion caches are
+/// the single source of truth the pipeline maintains.
+#[tracing::instrument(name = "pipeline.run", skip(app, fusion))]
 fn run_pipeline_inner(
     app: &AppHandle,
     db_path: &str,
-    cosine_index: &Arc<std::sync::RwLock<CosineIndex>>,
-    cosine_current_encoder: &Arc<std::sync::Mutex<String>>,
+    fusion: &FusionSlots,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    // 0. Try the on-disk cosine cache before doing anything else. On a
-    //    typical second-launch with no new images, the cache is fresh
-    //    and similarity / semantic search become available essentially
-    //    immediately — the user can act on the catalog while the rest
-    //    of the pipeline (rescan, model verification) finishes in the
-    //    background. The cache is invalidated automatically if the DB
-    //    file is newer than it.
-    {
-        let db_path_buf = std::path::PathBuf::from(db_path);
-        if let Ok(mut idx) = cosine_index.write() {
-            if idx.cached_images.is_empty() {
-                idx.load_from_disk_if_fresh(&db_path_buf);
-            }
-        }
-    }
 
     // 1. Make sure the model files are on disk. The download function
     //    now reports progress via callback so the UI's status pill can
@@ -669,13 +659,7 @@ fn run_pipeline_inner(
     //    dynamically based on how many encoders are enabled, so the
     //    total ORT thread count stays at 4 regardless of N.
     if image_model_path.exists() {
-        if let Err(e) = run_encoder_phase(
-            app,
-            db_path,
-            &image_model_path,
-            cosine_index,
-            cosine_current_encoder,
-        ) {
+        if let Err(e) = run_encoder_phase(app, db_path, &image_model_path) {
             warn!("encoder phase failed: {e}");
         }
     } else {
@@ -685,42 +669,31 @@ fn run_pipeline_inner(
         );
     }
 
-    // 7. Final safety-net cosine populate.
+    // 7. Refresh + persist the per-encoder fusion caches.
     //
-    //    The per-encoder hot-populate inside run_encoder_phase already
-    //    loaded the priority encoder's cache as soon as that encoder's
-    //    phase finished — so by the time we get here, the cache is
-    //    almost always already correct. This block is a safety net for
-    //    two cases:
-    //      (a) priority encoder didn't get a chance to run (e.g. its
-    //          model file was missing — we fall back to CLIP);
-    //      (b) the cache held stale state from a previous session and
-    //          the priority encoder happened to be one we don't run.
+    //    Every search command borrows the fusion slots (T3-2/#8), so THIS
+    //    is where post-index freshness is established: for each enabled
+    //    encoder, if its slot's generation token no longer matches the DB
+    //    (i.e. this run encoded new embeddings for it), repopulate the
+    //    slot from the DB and re-persist its flat store so the next launch
+    //    maps a current file. `refresh_if_stale` is token-gated, so an
+    //    encoder this run didn't change is skipped for the cost of one
+    //    cheap SQL aggregate — a no-op rescan does no repopulates.
     //
-    //    Either way we resolve the priority + populate for it. This is
-    //    the canonical "what's loaded matches the user's pick" point
-    //    and the only place that triggers `save_to_disk`, so the next
-    //    launch starts hot.
-    let priority = crate::settings::Settings::load()
-        .priority_image_encoder
-        .filter(|s| !s.is_empty())
-        .unwrap_or_else(|| "clip_vit_b_32".to_string());
-    let _cosine_phase = tracing::info_span!("pipeline.cosine_repopulate", encoder = %priority).entered();
-    // Lock order: current_encoder_id first, then index — must match
-    // CosineIndexState::ensure_loaded_for to keep the search path
-    // deadlock-free.
-    if let (Ok(mut cur), Ok(mut idx)) =
-        (cosine_current_encoder.lock(), cosine_index.write())
-    {
-        // Skip the DB read if the per-encoder hot-populate inside
-        // run_encoder_phase already loaded this same encoder — a
-        // common case for the priority encoder.
-        let already_loaded = *cur == priority && !idx.cached_images.is_empty();
-        if !already_loaded {
-            idx.populate_from_db_for_encoder(&database, &priority);
-            *cur = priority.clone();
+    //    This replaces the old primary `CosineIndexState` populate +
+    //    save_to_disk: that primary cache had no readers after the search
+    //    reroute (its ~205 MB owned block was pure waste), and refreshing
+    //    it left the fusion slots — the caches searches actually read —
+    //    stale after an index. One write lock per encoder (not one held
+    //    across all) so a concurrent fused query can slip in between.
+    let _cosine_phase = tracing::info_span!("pipeline.fusion_refresh").entered();
+    for enc in crate::settings::Settings::load().resolved_enabled_encoders() {
+        if let Ok(mut map) = fusion.write() {
+            let entry = map.entry(enc.clone()).or_insert_with(CosineIndex::new);
+            if entry.refresh_if_stale(&database, &enc) && !entry.cached_images.is_empty() {
+                entry.save_store_for(&enc);
+            }
         }
-        idx.save_to_disk();
     }
     drop(_cosine_phase);
 
@@ -828,8 +801,6 @@ fn run_encoder_phase(
     app: &AppHandle,
     db_path: &str,
     image_model_path: &Path,
-    cosine_index: &Arc<std::sync::RwLock<CosineIndex>>,
-    cosine_current_encoder: &Arc<std::sync::Mutex<String>>,
 ) -> Result<(), String> {
     // Phase 11c + 11e — encode through every USER-ENABLED image
     // encoder, in parallel.
@@ -1052,17 +1023,11 @@ fn run_encoder_phase(
         return Err(e);
     }
 
-    // The primary CosineIndexState's cache hot-populate that used to
-    // run here (per priority encoder) is gone — fusion uses
-    // FusionIndexState's lazy per-encoder caches instead. We
-    // intentionally keep `cosine_index` + `cosine_current_encoder` as
-    // function parameters because the legacy single-encoder path
-    // (semantic_search when the user picks a single text encoder, or
-    // get_similar_images when fusion isn't engaged) still reads from
-    // them. Touching them here would race with foreground search
-    // calls; better to let `ensure_loaded_for` lazy-populate on first
-    // search.
-    let _ = (cosine_index, cosine_current_encoder);
+    // No cache work here: the fusion slots (the caches every search reads)
+    // are refreshed + persisted once at the end of run_pipeline_inner
+    // (step 7), which is token-gated so it only touches encoders this run
+    // actually changed. Doing it here per-encoder would race with
+    // concurrent foreground search calls on the same slot.
     Ok(())
 }
 

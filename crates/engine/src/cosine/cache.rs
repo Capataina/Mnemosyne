@@ -157,15 +157,6 @@ impl CosineIndex {
         }
     }
 
-    /// Legacy adapter kept for the indexing pipeline (`indexing.rs:194`,
-    /// off-limits this wave). The flat store is loaded encoder-explicitly
-    /// by `spawn_cache_warm` (which alone knows the active encoder from
-    /// app settings — the engine crate cannot see them), so this is now a
-    /// documented no-op: the pipeline's own `populate_from_db_for_encoder`
-    /// is the fallback, and the hot start comes from `spawn_cache_warm`.
-    pub fn load_from_disk_if_fresh(&mut self, _db_path: &Path) -> bool {
-        false
-    }
 }
 
 /// Parsed loader shared by `load_store_if_valid` and the format tests.

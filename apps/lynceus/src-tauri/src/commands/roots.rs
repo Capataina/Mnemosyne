@@ -9,7 +9,7 @@ use crate::indexing::{self, IndexingState};
 use crate::paths;
 use crate::root_struct::Root;
 use crate::settings;
-use crate::{CosineIndexState, FusionIndexState};
+use crate::FusionIndexState;
 
 /// Read the currently-configured scan root from settings.json, if any.
 /// Returns Ok(None) when no root has been picked yet (first-launch state).
@@ -30,7 +30,6 @@ pub fn get_scan_root() -> Result<Option<String>, ApiError> {
 pub fn set_scan_root(
     app: AppHandle,
     db: State<'_, ImageDatabase>,
-    cosine_state: State<'_, CosineIndexState>,
     fusion_state: State<'_, FusionIndexState>,
     indexing_state: State<'_, Arc<IndexingState>>,
     path: String,
@@ -65,18 +64,16 @@ pub fn set_scan_root(
     let bookmark: Option<Vec<u8>> = None;
     db.add_root(path.clone(), bookmark)?;
 
-    cosine_state.invalidate();
-    // Phase 5 — fusion caches contain entries from the now-removed
-    // root; clear so the next fusion call rebuilds against the new
-    // image set.
+    // Fusion caches hold entries from the now-removed roots; clear so a
+    // search during the re-index rebuilds against the new image set, and
+    // the re-spawned pipeline refreshes + persists them at Ready.
     fusion_state.invalidate_all();
 
     indexing::try_spawn_pipeline(
         app.clone(),
         indexing_state.inner().clone(),
-        cosine_state.db_path.clone(),
-        cosine_state.index.clone(),
-        cosine_state.current_encoder_id.clone(),
+        paths::database_path().to_string_lossy().into_owned(),
+        fusion_state.per_encoder.clone(),
     )
     .map_err(|e| ApiError::Internal(e.to_string()))?;
 
@@ -98,7 +95,7 @@ pub fn list_roots(db: State<'_, ImageDatabase>) -> Result<Vec<Root>, ApiError> {
 pub fn add_root(
     app: AppHandle,
     db: State<'_, ImageDatabase>,
-    cosine_state: State<'_, CosineIndexState>,
+    fusion_state: State<'_, FusionIndexState>,
     indexing_state: State<'_, Arc<IndexingState>>,
     path: String,
 ) -> Result<Root, ApiError> {
@@ -114,12 +111,15 @@ pub fn add_root(
     let bookmark: Option<Vec<u8>> = None;
     let root = db.add_root(path, bookmark)?;
 
+    // The re-spawned pipeline refreshes + persists the fusion slots at
+    // Ready once the new root's images are encoded (token-gated), so no
+    // explicit invalidate is needed here — the new images aren't scored
+    // until they're encoded regardless.
     indexing::try_spawn_pipeline(
         app.clone(),
         indexing_state.inner().clone(),
-        cosine_state.db_path.clone(),
-        cosine_state.index.clone(),
-        cosine_state.current_encoder_id.clone(),
+        paths::database_path().to_string_lossy().into_owned(),
+        fusion_state.per_encoder.clone(),
     )
     .map_err(|e| ApiError::Internal(e.to_string()))?;
 
@@ -134,7 +134,6 @@ pub fn add_root(
 #[tauri::command]
 pub fn remove_root(
     db: State<'_, ImageDatabase>,
-    cosine_state: State<'_, CosineIndexState>,
     fusion_state: State<'_, FusionIndexState>,
     id: i64,
 ) -> Result<(), ApiError> {
@@ -166,10 +165,8 @@ pub fn remove_root(
             info!("removed thumbnail dir {}", thumbnail_dir.display());
         }
     }
-    // Cosine cache contains entries from the removed root; cheapest
-    // way to clean is to drop the whole cache and let next-query
-    // populate from the remaining DB rows.
-    cosine_state.invalidate();
+    // Fusion caches contain entries from the removed root; drop them all
+    // and let the next query cold-populate from the remaining DB rows.
     fusion_state.invalidate_all();
     info!("remove_root removed root id {}", id);
     Ok(())
@@ -180,15 +177,14 @@ pub fn remove_root(
 #[tauri::command]
 pub fn set_root_enabled(
     db: State<'_, ImageDatabase>,
-    cosine_state: State<'_, CosineIndexState>,
     fusion_state: State<'_, FusionIndexState>,
     id: i64,
     enabled: bool,
 ) -> Result<(), ApiError> {
     db.set_root_enabled(id, enabled)?;
-    // Cosine cache may include images from the toggled root; clear so
-    // the next similarity query rebuilds with the right active set.
-    cosine_state.invalidate();
+    // Fusion caches may include images from the toggled root; clear so the
+    // next similarity query rebuilds with the right active (enabled) set —
+    // the filtered populate query respects the new enabled flag.
     fusion_state.invalidate_all();
     Ok(())
 }

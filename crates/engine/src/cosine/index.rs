@@ -192,6 +192,28 @@ impl CosineIndex {
         );
     }
 
+    /// Repopulate this slot from the DB IF its cached population no longer
+    /// matches the DB — the generation-token check (T3-2/#20). Returns
+    /// `true` when it actually repopulated, `false` when the slot was
+    /// already fresh and left untouched.
+    ///
+    /// The indexing pipeline calls this at Ready for every enabled encoder
+    /// so post-index search reflects the newly-encoded images. This is the
+    /// refresh the fusion slots otherwise never got (they invalidate only
+    /// on a root toggle); without it the id-native search commands — which
+    /// now borrow the fusion slots (T3-2/#8) — would serve rankings missing
+    /// anything indexed since the slot was warmed. Disk persistence is a
+    /// separate step (`save_store_for`) the caller composes on top, so this
+    /// stays a pure in-memory operation and side-effect-free to test.
+    pub fn refresh_if_stale(&mut self, db: &db::ImageDatabase, encoder_id: &str) -> bool {
+        let current = db.embedding_generation_token(encoder_id).unwrap_or(0);
+        if self.gen_token == current {
+            return false;
+        }
+        self.populate_from_db_for_encoder(db, encoder_id);
+        true
+    }
+
     /// Cosine similarity between two embeddings. Thin delegate to
     /// `super::math::cosine_similarity` so the existing
     /// `CosineIndex::cosine_similarity(&a, &b)` call path stays valid
@@ -232,8 +254,8 @@ impl CosineIndex {
         };
         if q.len() != dim {
             // Cross-encoder dim mismatch — should be prevented by the
-            // dispatch layer (ensure_loaded_for). Return no results
-            // rather than a list of meaningless zero scores.
+            // dispatch layer (each fusion slot holds one encoder's dim).
+            // Return no results rather than a list of meaningless zeros.
             warn!(
                 "score_all dim mismatch: query={} cache={}; returning empty",
                 q.len(),
@@ -562,6 +584,46 @@ mod tests {
                 "id {id}: cached-norm score {score} != direct cosine {direct}"
             );
         }
+    }
+
+    #[test]
+    fn refresh_if_stale_repopulates_only_on_population_change() {
+        // T3-2/#20 post-index refresh: the fusion slot must pick up newly
+        // encoded embeddings (the staleness the reroute would otherwise
+        // leave), and skip work when nothing changed.
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("t.db");
+        let db = crate::db::ImageDatabase::new(db_path.to_str().unwrap()).unwrap();
+        db.initialize().unwrap();
+        db.add_image("/a.jpg".into(), None).unwrap();
+        db.add_image("/b.jpg".into(), None).unwrap();
+        let id_a = db.get_image_id_by_path("/a.jpg").unwrap();
+        let id_b = db.get_image_id_by_path("/b.jpg").unwrap();
+        let enc = "clip_vit_b_32";
+        db.upsert_embedding(id_a, enc, &[1.0, 0.0, 0.0]).unwrap();
+        db.upsert_embedding(id_b, enc, &[0.0, 1.0, 0.0]).unwrap();
+
+        let mut idx = CosineIndex::new();
+        // First refresh: empty slot (token 0) ≠ DB token → repopulates.
+        assert!(idx.refresh_if_stale(&db, enc), "cold slot must repopulate");
+        assert_eq!(idx.cached_images.len(), 2);
+
+        // Second refresh, DB unchanged: token matches → no-op.
+        assert!(
+            !idx.refresh_if_stale(&db, enc),
+            "unchanged population must be skipped (token-gated)"
+        );
+        assert_eq!(idx.cached_images.len(), 2);
+
+        // Encode a new image → population (and token) change → repopulate.
+        db.add_image("/c.jpg".into(), None).unwrap();
+        let id_c = db.get_image_id_by_path("/c.jpg").unwrap();
+        db.upsert_embedding(id_c, enc, &[0.0, 0.0, 1.0]).unwrap();
+        assert!(
+            idx.refresh_if_stale(&db, enc),
+            "new embedding must trigger a repopulate"
+        );
+        assert_eq!(idx.cached_images.len(), 3, "slot must now see the new image");
     }
 
     #[test]

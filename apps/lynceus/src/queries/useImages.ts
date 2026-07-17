@@ -7,6 +7,7 @@ import {
 import { FeedItem, ImageItem, Tag } from "../types";
 import {
   assignTagToImage,
+  clearAllManualSpans,
   fetchFeedManifest,
   fetchImageDetails,
   removeTagFromImage,
@@ -216,6 +217,51 @@ export function useSetManualColSpan() {
           context.prevDetail,
         );
       }
+    },
+  });
+}
+
+/** Clear every image's manual column span at once (the settings
+ *  "reset all resizes" control). Optimistically strips `manualColSpan`
+ *  from every cached manifest entry so the grid re-packs to default
+ *  widths immediately, mirroring the single-image `useSetManualColSpan`
+ *  path; the settle-time invalidation reconciles against the DB. */
+export function useClearAllManualSpans() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: () => clearAllManualSpans(),
+
+    onMutate: async () => {
+      await queryClient.cancelQueries({ queryKey: ["feed-manifest"] });
+      const prevManifests = queryClient.getQueriesData<FeedItem[]>({
+        queryKey: ["feed-manifest"],
+      });
+
+      queryClient.setQueriesData<FeedItem[]>(
+        { queryKey: ["feed-manifest"], exact: false },
+        (old = []) =>
+          old.map((item) =>
+            item.manualColSpan == null
+              ? item
+              : { ...item, manualColSpan: null },
+          ),
+      );
+
+      return { prevManifests };
+    },
+
+    onError: (_err, _vars, context) => {
+      for (const [key, data] of context?.prevManifests ?? []) {
+        queryClient.setQueryData(key, data);
+      }
+    },
+
+    // Reconcile the manifest (and any hydrated entities) against the DB
+    // once the bulk clear round-trips.
+    onSettled: () => {
+      queryClient.invalidateQueries({ queryKey: ["feed-manifest"] });
+      queryClient.invalidateQueries({ queryKey: ["image-detail"] });
     },
   });
 }

@@ -163,7 +163,14 @@ export function TagDropdown(props: TagDropdownProps) {
                           // stopPropagation so the row's onSelect (toggle)
                           // doesn't fire when the user clicks the trash icon
                           e.stopPropagation();
-                          props.setOpen(false);
+                          // Resolve the confirm BEFORE closing the dropdown.
+                          // Closing this modal popover in the same tick as the
+                          // modal confirm dialog opens raced two Radix layers:
+                          // the popover's teardown dispatched a focus/pointer
+                          // event the dialog read as an outside-dismiss, so it
+                          // auto-cancelled and the delete never fired. The
+                          // dialog stacks above the still-open popover; close
+                          // once the choice is in.
                           const confirmed = await confirm({
                             title: `Delete tag "${tag.name}"?`,
                             description:
@@ -171,6 +178,7 @@ export function TagDropdown(props: TagDropdownProps) {
                             confirmLabel: "Delete tag",
                             destructive: true,
                           });
+                          props.setOpen(false);
                           if (confirmed) {
                             props.onDeleteTag!(tag.id);
                           }

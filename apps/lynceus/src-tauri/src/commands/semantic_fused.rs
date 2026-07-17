@@ -42,6 +42,9 @@ use crate::commands::semantic::{CLIP_TEXT_ENCODER_ID, SIGLIP2_TEXT_ENCODER_ID};
 use crate::commands::{hydrate_search_results, ApiError, ImageSearchResult};
 use crate::db::ImageDatabase;
 use crate::paths;
+use crate::similarity_and_semantic_search::cosine::name_match::{
+    rank_filenames, NameQuery, DEFAULT_NAME_MATCH_THRESHOLD,
+};
 use crate::similarity_and_semantic_search::cosine::rrf::{
     reciprocal_rank_fusion, RankedList, DEFAULT_K_RRF,
 };
@@ -56,6 +59,11 @@ use crate::{perf, FusionIndexState, TextEncoderState};
 /// enabled-encoder list down to those that can actually run a text
 /// query. DINOv2 is image-only and therefore not eligible.
 const TEXT_CAPABLE_ENCODERS: &[&str] = &[CLIP_TEXT_ENCODER_ID, SIGLIP2_TEXT_ENCODER_ID];
+
+/// Ranked-list id for the fuzzy-filename signal — the 4th list fused
+/// alongside the encoders. Not an encoder id: it maps to no model and no
+/// cosine cache, it scores basenames directly (see `cosine::name_match`).
+const FILENAME_SIGNAL_ID: &str = "filename";
 
 /// Text-image rank-fusion search across every enabled text-capable
 /// encoder.
@@ -95,23 +103,85 @@ pub fn get_fused_semantic_search(
         .filter(|tc| enabled.iter().any(|e| e == tc))
         .collect();
 
-    if text_encoders.is_empty() {
-        // User disabled every text-capable encoder. Image-image fusion
-        // can still work (DINOv2 is image-only) but text-image cannot.
-        warn!(
-            "get_fused_semantic_search: no enabled text-capable encoders \
-             (enabled = {enabled:?}); returning empty"
-        );
-        return Ok(Vec::new());
-    }
+    // No early return when text_encoders is empty anymore: the filename
+    // signal below needs no encoder, so a query still resolves by name
+    // even with every text encoder disabled. Only when NOTHING (name or
+    // encoder) produces a list do we return empty (the check further down).
 
     info!(
         "get_fused_semantic_search query='{query}' top_n={top_n} \
          text_encoders={text_encoders:?}"
     );
 
-    let mut ranked_lists: Vec<RankedList> = Vec::with_capacity(text_encoders.len());
+    // +1 slot for the filename list fused alongside the encoders.
+    let mut ranked_lists: Vec<RankedList> = Vec::with_capacity(text_encoders.len() + 1);
     let mut per_encoder_diag: Vec<serde_json::Value> = Vec::new();
+
+    // Signal 4 — fuzzy filename match. Built BEFORE the encoder loop but
+    // fed into the SAME RRF fusion, so it weighs in as a peer of the
+    // encoders rather than a separate path. Two properties matter:
+    //   - It needs no embedding, so it can surface an image no encoder
+    //     has embedded yet (fresh index mid-encode, re-enabled encoder).
+    //   - When it matches nothing the list is empty and never pushed, so
+    //     an encoder-only fusion is byte-identical to the pre-signal
+    //     behaviour (the equivalence the task requires; RRF adds
+    //     contributions only for images a list actually ranks).
+    // Order in `ranked_lists` does not affect fused scores (RRF sums
+    // per-image contributions regardless of list order); it only sets the
+    // per-encoder evidence order, which is diagnostic.
+    let mut filename_matched = 0usize;
+    if let Some(name_query) = NameQuery::new(query) {
+        let name_started = std::time::Instant::now();
+        // A DB hiccup here degrades the filename signal to "no match"
+        // rather than failing the whole search — the encoders can still
+        // answer. unwrap_or_default is the deliberate soft-fail.
+        let names = match db.get_image_names_for_search() {
+            Ok(v) => v,
+            Err(e) => {
+                warn!("filename signal: name query failed ({e}); skipping name match");
+                Vec::new()
+            }
+        };
+        let scanned = names.len();
+        let name_ranked = rank_filenames(
+            &name_query,
+            &names,
+            DEFAULT_NAME_MATCH_THRESHOLD,
+            per_encoder_top_k,
+        );
+        filename_matched = name_ranked.len();
+        let top5: Vec<serde_json::Value> = name_ranked
+            .iter()
+            .take(5)
+            .map(|(id, s)| serde_json::json!({ "image_id": id, "score": *s }))
+            .collect();
+        if !name_ranked.is_empty() {
+            ranked_lists.push(RankedList {
+                encoder_id: FILENAME_SIGNAL_ID.to_string(),
+                items: name_ranked,
+            });
+        }
+        per_encoder_diag.push(serde_json::json!({
+            "encoder_id": FILENAME_SIGNAL_ID,
+            "status": if filename_matched > 0 { "ok" } else { "no_match" },
+            "scanned": scanned,
+            "matched": filename_matched,
+            "threshold": DEFAULT_NAME_MATCH_THRESHOLD,
+            "top5_ids": top5,
+            "elapsed_ms": name_started.elapsed().as_millis() as u64,
+        }));
+    }
+
+    if text_encoders.is_empty() {
+        // Every text-capable encoder is disabled — text-image fusion
+        // cannot contribute (image-image fusion still works via
+        // get_fused_similar_images / DINOv2). The filename signal above
+        // may still have produced a list.
+        warn!(
+            "get_fused_semantic_search: no enabled text-capable encoders \
+             (enabled = {enabled:?}); relying on the filename signal only"
+        );
+    }
 
     for &enc in &text_encoders {
         let enc_started = std::time::Instant::now();
@@ -189,7 +259,12 @@ pub fn get_fused_semantic_search(
                 .iter()
                 .map(|r| r.encoder_id.clone())
                 .collect::<Vec<_>>(),
-            "encoders_skipped": text_encoders.len() - ranked_lists.len(),
+            // Encoder lists only — exclude the filename list, which is not
+            // an encoder, so the skipped count stays "text encoders that
+            // produced nothing" and can never underflow.
+            "encoders_skipped": text_encoders
+                .len()
+                .saturating_sub(ranked_lists.len() - usize::from(filename_matched > 0)),
             "fused_result_count": fused.len(),
             "resolved_count": results.len(),
             "thumbnail_misses": thumb_misses,

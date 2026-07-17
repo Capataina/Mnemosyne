@@ -33,6 +33,7 @@ import { useAddRoot, useRoots } from "@/queries/useRoots";
 import { useUserPreferences } from "@/hooks/useUserPreferences";
 import { getImageNotes, setImageNotes } from "@/services/notes";
 import { SelectedImageTimerPill } from "@/components/SelectedImageTimerPill";
+import { HeroExpandButton } from "@/components/HeroExpandButton";
 import type { GestureTimerConfig } from "@/features/gesture-timer/types";
 
 /**
@@ -529,22 +530,35 @@ export default function Home() {
     setIsInspecting(true);
   }, []);
 
-  // The pill element is memoised so MasonryItem's by-reference comparator
-  // only sees a new overlay when its real inputs change.
-  const heroTimerPill = useMemo(() => {
+  // Direct expand from the hero's top-middle button — open the inspector
+  // for the current selection without the second click-through-similarity.
+  const handleExpandHero = useCallback(() => {
+    recordAction("image_inspect", { via: "hero_expand" });
+    setIsInspecting(true);
+  }, []);
+
+  // The overlay element is memoised so MasonryItem's by-reference comparator
+  // only sees a new overlay when its real inputs change. It carries the
+  // expand button (top) and the timer pill (bottom); both are inert until
+  // the hero is hovered/focused (App.css), so neither steals the hero click.
+  const heroOverlay = useMemo(() => {
     if (!selectedItem) return undefined;
     return (
-      <SelectedImageTimerPill
-        similarCount={tieredSimilarImages.data?.length ?? 0}
-        disabled={tieredSimilarImages.isLoading}
-        onStart={handlePillStart}
-      />
+      <>
+        <HeroExpandButton onExpand={handleExpandHero} />
+        <SelectedImageTimerPill
+          similarCount={tieredSimilarImages.data?.length ?? 0}
+          disabled={tieredSimilarImages.isLoading}
+          onStart={handlePillStart}
+        />
+      </>
     );
   }, [
     selectedItem,
     tieredSimilarImages.data?.length,
     tieredSimilarImages.isLoading,
     handlePillStart,
+    handleExpandHero,
   ]);
 
   const handleNavigate = (direction: "prev" | "next") => {
@@ -1014,7 +1028,7 @@ export default function Home() {
             onReorder={handleReorder}
             onResizeCommit={handleResizeCommit}
             onItemHover={prefetchSimilar}
-            heroOverlay={heroTimerPill}
+            heroOverlay={heroOverlay}
           />
         </Profiler>
       </div>

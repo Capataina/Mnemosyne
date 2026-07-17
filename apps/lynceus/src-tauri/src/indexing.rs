@@ -608,47 +608,13 @@ fn run_pipeline_inner(
         emit_feed_delta(app, remaining);
     }
     emit(app, Phase::Thumbnail, total_thumbs, total_thumbs, None);
-
-    // Second thumbnail pass: eagerly pre-generate the larger buckets
-    // (960/1440/2048) for every image just thumbnailed, so the masonry
-    // smooth-resize is instant from the very first stretch instead of
-    // paying an on-demand decode+resize mid-gesture (the visible
-    // delay + blur→sharp the user reported).
-    //
-    // Why a SECOND pass rather than folding the buckets into the base
-    // loop above:
-    //   - Pop-in must not regress. The base 480 has to be written and the
-    //     row marked thumbnailed FIRST (the grid pop-in keys off
-    //     `thumbnail_path` landing), and it must stay a cheap ~480 decode.
-    //     Decoding once at 2048 to serve base + buckets together would
-    //     make the base itself wait on a heavier decode — a direct per-
-    //     tile pop-in regression. Splitting keeps pass 1 untouched.
-    //   - Ordering. This pass runs only after every base has landed, so
-    //     all tiles are already in the grid before any high-res work
-    //     starts.
-    // Cost shape: one high-res decode per image (never re-decoded per
-    // bucket — `generate_buckets` downscales all applicable buckets from
-    // that single buffer), each bucket capped at the source width (a
-    // bucket ≥ source width is skipped; the original is served there).
-    // Sub-960px sources write nothing and pay only a cheap decode. Still
-    // CPU-exclusive here (before the encoder phase) so it doesn't contend
-    // with ORT threads. get_thumbnail remains the on-demand fallback for
-    // anything not pre-generated (legacy rows, re-enabled encoders).
-    if total_thumbs > 0 {
-        let _bucket_span = tracing::info_span!("pipeline.eager_bucket_pass").entered();
-        let eager_buckets = &crate::commands::images::THUMBNAIL_BUCKETS[1..];
-        needs_thumbs.par_iter().for_each(|image| {
-            let root_id = path_to_root.get(&image.path).copied().flatten();
-            if let Err(e) = thumbnail_generator.generate_buckets(
-                Path::new(&image.path),
-                image.id,
-                root_id,
-                eager_buckets,
-            ) {
-                warn!("eager bucket generation failed for {}: {e}", image.path);
-            }
-        });
-    }
+    // The thumbnail span closes with the base pass. The eager high-res
+    // preview pass (the wider 960/1440/2048 buckets) used to run HERE,
+    // silently, between base thumbnails and encoding — which both hid its
+    // progress and gated the encoder phase behind minutes of bucket work.
+    // It has moved to step 7b below: after encoding and the fusion
+    // refresh, with visible progress and a bounded-memory pool. See there
+    // for the full rationale.
     drop(_thumb_phase);
 
     // 6. Encoder phase (Phase 12b: now strictly after thumbnails). The
@@ -696,6 +662,131 @@ fn run_pipeline_inner(
         }
     }
     drop(_cosine_phase);
+
+    // 7b. Eager high-res preview pass (formerly the silent "second
+    //     thumbnail pass" between base thumbnails and encoding). It
+    //     pre-generates the wider buckets (960/1440/2048) for every
+    //     base-thumbnailed image so the masonry smooth-resize is instant
+    //     from the first stretch instead of paying an on-demand
+    //     decode+resize mid-gesture. Three things changed from the old
+    //     inline pass, each fixing a confirmed live-telemetry problem:
+    //
+    //   (a) VISIBILITY. It emits real per-image progress under
+    //       Phase::Thumbnail with a "Generating high-res previews"
+    //       message, instead of running silently. The pill previously sat
+    //       frozen at "thumbnails 100%" for minutes; now it shows a
+    //       climbing bar. A dedicated Phase::Previews variant would label
+    //       cleaner, but the frontend's phase map is a closed set — an
+    //       unknown phase would blank the pill label and (not being in
+    //       ACTIVE_PHASES) hide the pill entirely. Reusing Thumbnail is
+    //       the honest zero-frontend-change option; the message carries
+    //       the real label into the pill's tooltip.
+    //   (b) ORDERING. It runs AFTER the encoder phase (step 6) AND the
+    //       fusion refresh (step 7), not before them. Encoding is core
+    //       functionality and search readiness is established at step 7;
+    //       high-res buckets are a resize nicety and get_thumbnail is the
+    //       on-demand fallback for any bucket not yet generated. So a
+    //       fresh index now does base → encode → search-ready → previews,
+    //       which directly fixes the "stuck at thumbnails 100%, encoding
+    //       not starting" report: the eager pass no longer gates
+    //       encoding. The invariant the old pass protected still holds
+    //       (base thumbnails land before any bucket), and the
+    //       CPU-exclusivity intent is naturally satisfied — ORT is done
+    //       by the time this runs, so buckets never fight encoder threads.
+    //   (c) MEMORY. It runs on a bounded rayon pool so only a few
+    //       full-resolution decodes are resident at once, capping the
+    //       peak the unbounded all-cores par_iter caused (telemetry: RSS
+    //       924 → 5,575 MiB at 2122 images).
+    //
+    //     Cost shape is otherwise unchanged: one decode per image at the
+    //     largest bucket width (generate_buckets downscales every bucket
+    //     from that single buffer), each bucket capped at the source
+    //     width, sub-960 sources writing nothing. A fully-cached image
+    //     (re-index) costs only stat calls and no decode.
+    if total_thumbs > 0 {
+        let _preview_span = tracing::info_span!("pipeline.eager_preview_pass").entered();
+        let eager_buckets = &crate::commands::images::THUMBNAIL_BUCKETS[1..];
+
+        // Bound peak memory: cap concurrent full-res decodes. Each preview
+        // decode targets up to 2048px, versus the base pass's ~480px
+        // (~1 MiB) — which is exactly why only THIS pass needs a cap and
+        // the base pass does not. A large source's decode buffer plus its
+        // resize scratch runs tens of MiB; at all-cores that footprint
+        // scaled with core count and in-flight count, the 5.5 GiB spike.
+        // Half the cores (min 2, max 4) keeps most of the throughput —
+        // bucket work is decode/resize-bound, not perfectly core-scaling —
+        // while bounding resident full-res decodes to ≤4, i.e. a few
+        // hundred MiB of transient peak rather than multi-GiB. Not
+        // serialised to 1 thread: that would roughly quarter throughput on
+        // the M2 for no extra safety past the ≤4 bound.
+        let preview_threads = std::thread::available_parallelism()
+            .map(|n| (n.get() / 2).clamp(2, 4))
+            .unwrap_or(2);
+        info!(
+            "eager preview pass: {} threads over {} images",
+            preview_threads, total_thumbs
+        );
+
+        let completed = AtomicUsize::new(0);
+        // High-water mark guarding monotonic emits — same discipline as the
+        // base thumbnail and encode phases (emit while the lock is held so
+        // concurrent workers report strictly increasing values).
+        let last_emit = std::sync::Mutex::new(0usize);
+        let emit_every = (total_thumbs / 4000).max(1);
+        // Prime the pill with a coherent 0/total under the honest message.
+        emit(
+            app,
+            Phase::Thumbnail,
+            0,
+            total_thumbs,
+            Some("Generating high-res previews".into()),
+        );
+
+        let run_preview = || {
+            needs_thumbs.par_iter().for_each(|image| {
+                let root_id = path_to_root.get(&image.path).copied().flatten();
+                if let Err(e) = thumbnail_generator.generate_buckets(
+                    Path::new(&image.path),
+                    image.id,
+                    root_id,
+                    eager_buckets,
+                ) {
+                    warn!("eager bucket generation failed for {}: {e}", image.path);
+                }
+
+                let done = completed.fetch_add(1, Ordering::Relaxed) + 1;
+                if done.is_multiple_of(emit_every) || done == total_thumbs {
+                    let mut last = last_emit.lock().unwrap();
+                    if done > *last {
+                        *last = done;
+                        emit(
+                            app,
+                            Phase::Thumbnail,
+                            done,
+                            total_thumbs,
+                            Some("Generating high-res previews".into()),
+                        );
+                    }
+                }
+            });
+        };
+
+        // Run on a dedicated bounded pool so the memory cap actually holds
+        // (the global rayon pool is core-wide). If the pool fails to build
+        // — unexpected — fall back to the global pool rather than skipping
+        // previews, which would only cost the on-demand fallback later.
+        match rayon::ThreadPoolBuilder::new()
+            .num_threads(preview_threads)
+            .thread_name(|i| format!("preview-{i}"))
+            .build()
+        {
+            Ok(pool) => pool.install(run_preview),
+            Err(e) => {
+                warn!("preview thread pool build failed ({e}); using the global pool");
+                run_preview();
+            }
+        }
+    }
 
     // 8. Done — total image count is what the user sees in the grid.
     let final_count = database.get_all_images().map(|v| v.len()).unwrap_or(0);

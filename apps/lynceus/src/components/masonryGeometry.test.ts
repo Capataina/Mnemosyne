@@ -218,6 +218,95 @@ describe("prefix pack — suffix-independence (first-paint seamless swap)", () =
   });
 });
 
+describe("drag preview keeps a multi-span tile's footprint", () => {
+  // A tile is dragged; the shell feeds its committed span back through
+  // `spanOverrides` so the preview pack keeps the tile's footprint even if the
+  // active feed slice no longer carries its `manualColSpan` (the similar/search
+  // feeds drop it). This is the explicit carry behind the "2×2 tile renders as
+  // 1×1 while dragging" fix.
+  const params = {
+    containerWidth: 1200,
+    minItemWidth: 236,
+    columnGap: 16,
+    verticalGap: 16,
+    columnCountOverride: 4, // forced, so the column count is deterministic
+  };
+  const items: FeedItem[] = [
+    feedTile(1, 400, 400),
+    feedTile(2, 400, 400),
+    // The dragged tile — note manualColSpan is NULL, as it would be on a feed
+    // slice that dropped the persisted span. Only the override rescues it.
+    feedTile(5, 400, 400, null),
+    feedTile(3, 400, 400),
+  ];
+
+  it("collapses to span 1 without the override (the bug it guards)", () => {
+    const geo = computeMasonryGeometry(buildPackInput(items, null, params));
+    const idx = items.findIndex((it) => it.id === 5);
+    expect(geo.spans[idx]).toBe(1);
+    expect(geo.widths[idx]).toBe(geo.columnWidth);
+  });
+
+  it("holds the committed span when the drag override pins it", () => {
+    const geo = computeMasonryGeometry(
+      buildPackInput(items, null, { ...params, spanOverrides: { 5: 3 } }),
+    );
+    const idx = items.findIndex((it) => it.id === 5);
+    expect(geo.spans[idx]).toBe(3);
+    // 3 columns wide: 3 column widths + 2 inner gaps.
+    expect(geo.widths[idx]).toBeCloseTo(
+      geo.columnWidth * 3 + params.columnGap * 2,
+      6,
+    );
+  });
+});
+
+describe("resize re-anchor keeps a widening tile in place (no row-wrap)", () => {
+  // Four columns; three tall tiles fill columns 0-2, a short tile sits alone
+  // in the rightmost column 3. Growing that right-edge tile to span 2 must
+  // shift its start column left just enough to fit (cols 2-3) instead of the
+  // packer relocating it to the globally-shortest window on the far left.
+  const params = {
+    containerWidth: 1200,
+    columnGap: 16,
+    verticalGap: 16,
+    minItemWidth: 100,
+    columnCountOverride: 4,
+  };
+  const items: FeedItem[] = [
+    feedTile(10, 400, 1200), // col 0, tall
+    feedTile(11, 400, 1200), // col 1, tall
+    feedTile(12, 400, 1200), // col 2, tall
+    feedTile(13, 400, 200), //  col 3, short — the right-edge tile
+  ];
+  const anchorIdx = items.findIndex((it) => it.id === 13);
+
+  it("without the anchor, the grown tile jumps to the far-left window", () => {
+    const geo = computeMasonryGeometry(
+      buildPackInput(items, null, { ...params, spanOverrides: { 13: 2 } }),
+    );
+    // Every span-2 window contains a tall column, so the shortest-window
+    // search picks start 0 — the tile leaves the right edge entirely.
+    const startCol = Math.round(geo.xs[anchorIdx] / (geo.columnWidth + 16));
+    expect(startCol).toBe(0);
+  });
+
+  it("with the anchor, it stays at the right edge, shifted left to fit", () => {
+    const geo = computeMasonryGeometry(
+      buildPackInput(items, null, {
+        ...params,
+        spanOverrides: { 13: 2 },
+        resizeAnchor: { id: 13, startCol: 3 },
+      }),
+    );
+    const startCol = Math.round(geo.xs[anchorIdx] / (geo.columnWidth + 16));
+    // Pinned to its column, clamped so span 2 fits: start 3 → 2, right edge
+    // stays flush against column 4.
+    expect(startCol).toBe(2);
+    expect(startCol + geo.spans[anchorIdx]).toBe(geo.columnCount);
+  });
+});
+
 describe("isCurrentGeneration — stale-result discard", () => {
   it("accepts only the current generation", () => {
     expect(isCurrentGeneration(5, 5)).toBe(true);

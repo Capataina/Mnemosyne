@@ -109,6 +109,15 @@ export interface MasonryPackInput {
   selectedIndex: number;
   selectedWidth: number;
   selectedHeight: number;
+  /**
+   * Resize re-anchor. The feed index of the tile under an active resize is
+   * placed at `resizeAnchorStartCol` (clamped so its span fits the grid)
+   * instead of the shortest-column search, so a widening tile stays in
+   * place — shifting its start column left as needed to fit — rather than
+   * wrapping to a fresh row. `-1` when no resize is active.
+   */
+  resizeAnchorIndex: number;
+  resizeAnchorStartCol: number;
 }
 
 export interface MasonryHeroGeometry {
@@ -170,6 +179,8 @@ export function computeMasonryGeometry(
     selectedIndex,
     selectedWidth,
     selectedHeight,
+    resizeAnchorIndex,
+    resizeAnchorStartCol,
   } = input;
 
   const n = widths.length;
@@ -238,16 +249,32 @@ export function computeMasonryGeometry(
     const requestedSpan = spans[i];
     const span = Math.max(1, Math.min(requestedSpan, colCount));
 
-    let bestStart = 0;
-    let bestMax = Infinity;
-    for (let start = 0; start <= colCount - span; start++) {
-      let windowMax = colHeights[start];
-      for (let k = start + 1; k < start + span; k++) {
-        windowMax = Math.max(windowMax, colHeights[k]);
+    let bestStart: number;
+    let bestMax: number;
+    if (i === resizeAnchorIndex) {
+      // The tile under an active resize keeps its column anchor rather than
+      // jumping to the shortest window: pin it to its start column, shifted
+      // left only as far as needed to fit its (grown) span. That makes a
+      // widening right-edge tile displace its neighbours and grow in place
+      // instead of wrapping onto a new row. It still sits flush below the
+      // tallest column in its pinned window, so nothing overlaps above it.
+      bestStart = Math.max(0, Math.min(resizeAnchorStartCol, colCount - span));
+      bestMax = colHeights[bestStart];
+      for (let k = bestStart + 1; k < bestStart + span; k++) {
+        bestMax = Math.max(bestMax, colHeights[k]);
       }
-      if (windowMax < bestMax) {
-        bestMax = windowMax;
-        bestStart = start;
+    } else {
+      bestStart = 0;
+      bestMax = Infinity;
+      for (let start = 0; start <= colCount - span; start++) {
+        let windowMax = colHeights[start];
+        for (let k = start + 1; k < start + span; k++) {
+          windowMax = Math.max(windowMax, colHeights[k]);
+        }
+        if (windowMax < bestMax) {
+          bestMax = windowMax;
+          bestStart = start;
+        }
       }
     }
 
@@ -290,6 +317,10 @@ export interface MasonryPackParams {
   columnCountOverride?: number;
   tileScale?: number;
   spanOverrides?: Record<number, number>;
+  /** The tile under an active resize, pinned to `startCol` (see
+   *  `MasonryPackInput.resizeAnchorIndex`) so it grows in place instead of
+   *  wrapping to a new row. Absent when nothing is being resized. */
+  resizeAnchor?: { id: number; startCol: number };
 }
 
 /** Flatten a feed slice into the numeric pack input. Resolves each item's
@@ -307,7 +338,9 @@ export function buildPackInput(
   const spans = new Int32Array(n);
   const overrides = params.spanOverrides;
   const selectedId = selectedItem ? selectedItem.id : -1;
+  const anchorId = params.resizeAnchor?.id ?? -1;
   let selectedIndex = -1;
+  let resizeAnchorIndex = -1;
 
   for (let i = 0; i < n; i++) {
     const item = items[i];
@@ -315,6 +348,7 @@ export function buildPackInput(
     heights[i] = item.height;
     spans[i] = overrides?.[item.id] ?? item.manualColSpan ?? 1;
     if (selectedItem && item.id === selectedId) selectedIndex = i;
+    if (item.id === anchorId) resizeAnchorIndex = i;
   }
 
   return {
@@ -331,6 +365,8 @@ export function buildPackInput(
     selectedIndex,
     selectedWidth: selectedItem ? selectedItem.width : 0,
     selectedHeight: selectedItem ? selectedItem.height : 0,
+    resizeAnchorIndex,
+    resizeAnchorStartCol: params.resizeAnchor?.startCol ?? 0,
   };
 }
 

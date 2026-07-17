@@ -129,4 +129,43 @@ describe("useUserPreferences", () => {
     expect(result.current.prefs.columnCount).toBe(4);
     expect(result.current.prefs.tileScale).toBe(1.5);
   });
+
+  it("propagates an update from one consumer to a separate consumer without a remount", () => {
+    // The bug this hook was rewritten to fix: two independent
+    // useUserPreferences() instances (the settings drawer and the grid
+    // route each call it separately) used to hold their own useState copy,
+    // so an update through one never reached the other until an app
+    // restart. With the shared store, both must re-render off one update.
+    const drawer = renderHook(() => useUserPreferences());
+    const route = renderHook(() => useUserPreferences());
+
+    expect(route.result.current.prefs.columnCount).toBe(
+      PREF_DEFAULTS.columnCount,
+    );
+
+    act(() => {
+      drawer.result.current.update("columnCount", 6);
+    });
+
+    // The OTHER consumer re-rendered with the new value, no remount.
+    expect(route.result.current.prefs.columnCount).toBe(6);
+    expect(drawer.result.current.prefs.columnCount).toBe(6);
+  });
+
+  it("propagates resetAll from one consumer to every other consumer", () => {
+    const drawer = renderHook(() => useUserPreferences());
+    const route = renderHook(() => useUserPreferences());
+
+    act(() => {
+      drawer.result.current.update("tileScale", 2);
+    });
+    expect(route.result.current.prefs.tileScale).toBe(2);
+
+    act(() => {
+      drawer.result.current.resetAll();
+    });
+
+    expect(route.result.current.prefs).toEqual(PREF_DEFAULTS);
+    expect(drawer.result.current.prefs).toEqual(PREF_DEFAULTS);
+  });
 });

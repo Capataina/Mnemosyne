@@ -1,10 +1,10 @@
-import { useEffect, useState, useCallback } from "react";
+import { useSyncExternalStore } from "react";
 
 /**
  * User-facing UI preferences that don't need to round-trip through
  * the Rust backend. Stored in localStorage so they survive across
- * app launches; mirrored as React state so components re-render
- * when one changes.
+ * app launches; backed by a shared module store so every component
+ * re-renders the instant one changes.
  *
  * The schema is deliberately kept loose with serde-friendly defaults
  * — when we add a new field in a future version, older saved JSON
@@ -125,52 +125,122 @@ function applyThemeToDom(theme: ThemeMode) {
   else root.classList.remove("dark");
 }
 
+/* ---------------------------------------------------------------------------
+ * Module singleton: one shared preferences store for the whole app.
+ *
+ * Preferences used to be a per-component `useState(loadFromStorage)`, so every
+ * caller of `useUserPreferences()` held its OWN independent copy. The settings
+ * drawer's `update()` wrote localStorage and re-rendered the drawer, but the
+ * route (and every other consumer) kept its stale copy until a fresh launch
+ * re-ran `loadFromStorage` — which is exactly why every control "only took
+ * effect after restarting the app". Now a single module-level object backs
+ * every consumer through `useSyncExternalStore`: one `update()` notifies all
+ * subscribers, so the grid re-renders the instant a control changes. Mirrors
+ * the singleton-store pattern already used in useIndexingStatus.ts.
+ * ------------------------------------------------------------------------- */
+
+let store: UserPreferences = loadFromStorage();
+const subscribers = new Set<() => void>();
+let watchersStarted = false;
+
+function notify() {
+  for (const cb of subscribers) cb();
+}
+
 /**
- * React hook for the preferences object. Returns the current values
- * plus a setter.
+ * Re-read localStorage into the store. Runs when the store (re)connects to the
+ * UI (first subscriber) and on cross-window `storage` events, so an external
+ * change to the saved prefs is reflected without a reload — the equivalent of
+ * the old per-mount `loadFromStorage`. In-app `update`/`resetAll` always write
+ * localStorage before notifying, so localStorage is never staler than the
+ * store and a rehydrate can't clobber a fresher value.
+ */
+function hydrateFromStorage() {
+  store = loadFromStorage();
+}
+
+/**
+ * Register the app-lifetime theme watchers exactly once (mirrors the
+ * listener-started pattern in useIndexingStatus.ts). The OS colour-scheme
+ * listener re-applies the theme on system dark/light flips, but only while the
+ * preference is "system"; the storage listener keeps other windows in sync.
+ * Both are kept for the app lifetime — no teardown, since the prefs consumers
+ * in the shell are effectively always mounted.
+ */
+function ensureWatchers() {
+  if (watchersStarted) return;
+  watchersStarted = true;
+
+  const mq = window.matchMedia("(prefers-color-scheme: dark)");
+  mq.addEventListener("change", () => {
+    if (store.theme === "system") applyThemeToDom("system");
+  });
+
+  window.addEventListener("storage", (event) => {
+    // Only react to our own keys (null key = storage.clear()).
+    if (event.key !== null && event.key !== STORAGE_KEY && event.key !== THEME_KEY) {
+      return;
+    }
+    hydrateFromStorage();
+    applyThemeToDom(store.theme);
+    notify();
+  });
+}
+
+/** Stable subscribe fn for `useSyncExternalStore`. On the first subscriber the
+ *  store (re)connects to the UI: sync from localStorage and apply the current
+ *  theme, matching the old per-mount `loadFromStorage` + theme effect. */
+function subscribe(cb: () => void): () => void {
+  const firstSubscriber = subscribers.size === 0;
+  subscribers.add(cb);
+  ensureWatchers();
+  if (firstSubscriber) {
+    hydrateFromStorage();
+    applyThemeToDom(store.theme);
+  }
+  return () => {
+    subscribers.delete(cb);
+  };
+}
+
+const getSnapshot = () => store;
+
+/**
+ * Update one preference: replace the shared store with a new object (so React's
+ * Object.is check re-renders), persist, apply the theme side effect when the
+ * theme changed, and notify every subscriber so all consumers re-render at once.
+ */
+function updatePreference<K extends keyof UserPreferences>(
+  key: K,
+  value: UserPreferences[K],
+) {
+  store = { ...store, [key]: value };
+  saveToStorage(store);
+  if (key === "theme") applyThemeToDom(store.theme);
+  notify();
+}
+
+/** Reset every preference to its default, persist, apply the theme, and notify. */
+function resetAllPreferences() {
+  store = { ...DEFAULTS };
+  saveToStorage(store);
+  applyThemeToDom(store.theme);
+  notify();
+}
+
+/**
+ * React hook for the shared preferences store. Every consumer reads the same
+ * underlying object, so an `update()` from any one of them (e.g. the settings
+ * drawer) re-renders all of them immediately — no app restart required.
  *
- * Theme application is reactive: changing prefs.theme flips the
- * `.dark` class on <html> immediately, which Tailwind's dark variants
- * pick up and the whole UI re-themes without a re-render of any
- * component.
- *
- * Listens to OS-level color-scheme changes when theme is "system" so
- * macOS auto-dark-mode flips the app theme along with everything else.
+ * Theme application is a side effect of `update("theme", …)` and of the store
+ * (re)connecting; changing the theme flips the `.dark` class on <html>, which
+ * Tailwind's dark variants pick up with no component re-render needed. When the
+ * theme is "system", an OS-level colour-scheme change re-applies it.
  */
 export function useUserPreferences() {
-  const [prefs, setPrefs] = useState<UserPreferences>(loadFromStorage);
-
-  // Apply theme on every prefs change.
-  useEffect(() => {
-    applyThemeToDom(prefs.theme);
-  }, [prefs.theme]);
-
-  // Listen to OS-level theme changes when in "system" mode.
-  useEffect(() => {
-    if (prefs.theme !== "system") return;
-    const mq = window.matchMedia("(prefers-color-scheme: dark)");
-    const handler = () => applyThemeToDom("system");
-    mq.addEventListener("change", handler);
-    return () => mq.removeEventListener("change", handler);
-  }, [prefs.theme]);
-
-  const update = useCallback(
-    <K extends keyof UserPreferences>(key: K, value: UserPreferences[K]) => {
-      setPrefs((prev) => {
-        const next = { ...prev, [key]: value };
-        saveToStorage(next);
-        return next;
-      });
-    },
-    [],
-  );
-
-  const resetAll = useCallback(() => {
-    saveToStorage(DEFAULTS);
-    setPrefs({ ...DEFAULTS });
-  }, []);
-
-  return { prefs, update, resetAll };
+  const prefs = useSyncExternalStore(subscribe, getSnapshot);
+  return { prefs, update: updatePreference, resetAll: resetAllPreferences };
 }
 
 export const PREF_DEFAULTS = DEFAULTS;

@@ -230,6 +230,21 @@ export async function setManualColSpan(
 }
 
 /**
+ * Clear every image's manual column span in one call, resetting all tile
+ * resizes back to the default single-column width. The per-image
+ * `set_manual_col_span` clears one at a time; this is its bulk counterpart
+ * so the settings "reset all resizes" control is a single round-trip rather
+ * than N mutations across the visible set.
+ */
+export async function clearAllManualSpans(): Promise<void> {
+  try {
+    await invoke("clear_all_manual_spans");
+  } catch (error) {
+    throw new Error(formatApiError(error));
+  }
+}
+
+/**
  * Map a backend ImageSearchResult into the frontend's SimilarImageItem
  * shape. All three search commands (semantic, similar, tiered) now
  * return the same struct (audit consolidation), so this single helper

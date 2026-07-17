@@ -210,3 +210,13 @@ pub fn set_manual_col_span(
 ) -> Result<(), ApiError> {
     Ok(db.set_manual_col_span(id, col_span)?)
 }
+
+/// Clear every image's drag-resize span in one shot — the "reset all
+/// resizes" bulk action. Returns the number of spans actually cleared so
+/// the caller can surface "reset N tiles". The single-row counterpart is
+/// `set_manual_col_span(id, None)`.
+#[tauri::command]
+#[tracing::instrument(name = "ipc.clear_all_manual_spans", skip(db))]
+pub fn clear_all_manual_spans(db: State<'_, ImageDatabase>) -> Result<usize, ApiError> {
+    Ok(db.clear_all_manual_col_spans()?)
+}

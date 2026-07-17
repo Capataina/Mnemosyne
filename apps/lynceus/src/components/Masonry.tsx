@@ -6,8 +6,20 @@ import type { MasonryItemPlacement } from "./masonryPacking";
 import { useMasonryEngine } from "../hooks/useMasonryEngine";
 import { useTileDrag } from "../hooks/useTileDrag";
 import { useTileResize } from "../hooks/useTileResize";
+import { useIsIndexing } from "../hooks/useIndexingStatus";
 
 export type MasonryItemData = MasonryItemPlacement;
+
+/**
+ * How many of the visible tiles the settle-time effect pre-warms. The prefetch
+ * fans one tile into a 3-encoder fused-similar search plus a detail hydrate, so
+ * firing it for every visible tile turned a settled viewport into 20-30
+ * concurrent searches (telemetry logged 133 in one indexing session, ~1.3s each
+ * under CPU contention — a click-freeze cause). Capping the auto-prewarm to the
+ * few most-likely-next-click tiles keeps opening them instant; genuine
+ * pointer-hover still warms any other tile on intent.
+ */
+const PREFETCH_PREWARM_CAP = 6;
 
 interface MasonryProps {
   items?: FeedItem[];
@@ -98,11 +110,29 @@ export default function Masonry(props: MasonryProps) {
   // The packer's resize input is deliberately keyed only by the rounded
   // footprint. Pixel motion lives in useTileResize's imperative rAF path, so
   // dozens of pointer events within one column keep this object's identity
-  // stable and cannot retrigger an O(n) pack.
+  // stable and cannot retrigger an O(n) pack. A live resize contributes its
+  // preview span; a live drag pins the dragged tile's committed span so a
+  // multi-span tile keeps its footprint the whole drag rather than collapsing
+  // to 1×1 in the preview pack.
+  const dragId = drag.dragItemId;
+  const dragSpan = drag.dragItemSpan;
   const spanOverrides = useMemo(() => {
+    const overrides: Record<number, number> = {};
+    if (rs && rs.previewSpan !== rs.baseSpan) overrides[rs.id] = rs.previewSpan;
+    if (dragId != null && dragSpan > 1) overrides[dragId] = dragSpan;
+    return Object.keys(overrides).length > 0 ? overrides : undefined;
+  }, [rs?.id, rs?.previewSpan, rs?.baseSpan, dragId, dragSpan]);
+
+  // The tile under an active resize is pinned to this column so it grows in
+  // place instead of the packer relocating it (a right-edge tile grown wider
+  // used to wrap onto a new row). Stable between column crossings because it
+  // only changes when the resize state's span/anchor does.
+  const resizeAnchor = useMemo(() => {
     if (!rs || rs.previewSpan === rs.baseSpan) return undefined;
-    return { [rs.id]: rs.previewSpan };
-  }, [rs?.id, rs?.previewSpan, rs?.baseSpan]);
+    return { id: rs.id, startCol: rs.anchorStartCol };
+  }, [rs?.id, rs?.previewSpan, rs?.baseSpan, rs?.anchorStartCol]);
+
+  const gestureActive = dragId != null || rs != null;
 
   const { visiblePlacements, height } = useMasonryEngine({
     items: effectiveItems,
@@ -113,7 +143,9 @@ export default function Masonry(props: MasonryProps) {
     columnCountOverride: props.columnCountOverride,
     tileScale: props.tileScale,
     spanOverrides,
+    resizeAnchor,
     dragItemId: drag.dragItemId,
+    gestureActive,
     containerRef,
     placementsRef,
     placementByIdRef,
@@ -142,21 +174,38 @@ export default function Masonry(props: MasonryProps) {
     [props.onItemClick],
   );
 
-  // Prefetch the similar-set of every on-screen tile once the view
-  // settles, so opening any visible image is instant — the cascade you
-  // described: launch → click → instant → click → instant. react-query
-  // dedupes, so each image is computed at most once per session; the
-  // 200ms debounce coalesces scroll churn so a fast scroll doesn't fire a
-  // query per intermediate frame. This scales because it's always ~the
-  // visible ~20-30 tiles, never the whole library.
+  // A live indexing run is encoding the corpus, so a similar-set computed
+  // now is against half-encoded vectors — wrong until encoding finishes, and
+  // expensive under the indexing CPU load. Suppress all similar-prefetch
+  // (settle-time and hover) while indexing; the click's own query still fires
+  // in the route, so selecting an image stays responsive.
+  const isIndexing = useIsIndexing();
+
+  // Gate genuine pointer-hover prefetch through the same indexing guard.
+  const onItemHover = props.onItemHover;
+  const gatedHover = useCallback(
+    (id: number) => {
+      if (isIndexing) return;
+      onItemHover?.(id);
+    },
+    [isIndexing, onItemHover],
+  );
+
+  // Pre-warm the similar-set of the first few visible tiles once the view
+  // settles, so opening the most-likely next click is instant. react-query
+  // dedupes, so each image is computed at most once per session; the 200ms
+  // debounce coalesces scroll churn. Capped at PREFETCH_PREWARM_CAP so a
+  // settled viewport never fires a burst of concurrent fused searches, and
+  // skipped entirely during indexing (wrong results, and the storm was a
+  // documented freeze contributor). Hover covers any tile past the cap.
   useEffect(() => {
-    const prefetch = props.onItemHover;
-    if (!prefetch) return;
+    if (!onItemHover || isIndexing) return;
     const t = setTimeout(() => {
-      for (const p of visiblePlacements) prefetch(p.itemData.id);
+      const cap = Math.min(visiblePlacements.length, PREFETCH_PREWARM_CAP);
+      for (let i = 0; i < cap; i++) onItemHover(visiblePlacements[i].itemData.id);
     }, 200);
     return () => clearTimeout(t);
-  }, [visiblePlacements, props.onItemHover]);
+  }, [visiblePlacements, onItemHover, isIndexing]);
 
   const resizingId = rs?.id ?? null;
   const resizingCorner = rs?.corner ?? null;
@@ -184,7 +233,7 @@ export default function Masonry(props: MasonryProps) {
               item={item.itemData}
               isSelected={item.isSelected}
               onClick={handleItemClick}
-              onHover={props.onItemHover}
+              onHover={gatedHover}
               renderedWidth={item.width}
               animationLevel={props.animationLevel}
               reorderEnabled={props.reorderEnabled}

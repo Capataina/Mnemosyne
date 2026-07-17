@@ -45,6 +45,20 @@ impl ImageDatabase {
         )?;
         Ok(())
     }
+
+    /// Clear EVERY image's manual column span in one statement — the bulk
+    /// "reset all resizes" action. Returns the number of rows whose span
+    /// was actually cleared (already-NULL rows are excluded by the WHERE,
+    /// so the count reflects real resizes undone, not the whole table).
+    /// This is the whole-catalogue counterpart to `set_manual_col_span`,
+    /// which clears one row.
+    pub fn clear_all_manual_col_spans(&self) -> rusqlite::Result<usize> {
+        let conn = self.connection.lock().unwrap();
+        conn.execute(
+            "UPDATE images SET manual_col_span = NULL WHERE manual_col_span IS NOT NULL",
+            [],
+        )
+    }
 }
 
 #[cfg(test)]
@@ -91,6 +105,38 @@ mod tests {
             .get_images_with_thumbnails(vec![], "".into(), false, vec![])
             .unwrap();
         assert_eq!(imgs.iter().find(|i| i.id == id).unwrap().manual_col_span, None);
+    }
+
+    #[test]
+    fn clear_all_manual_col_spans_resets_every_row_and_counts_real_clears() {
+        let db = fresh_db();
+        db.add_image("/a.jpg".into(), None).unwrap();
+        db.add_image("/b.jpg".into(), None).unwrap();
+        db.add_image("/c.jpg".into(), None).unwrap();
+        let imgs = db.get_all_images().unwrap();
+        let (a, b, c) = (imgs[0].id, imgs[1].id, imgs[2].id);
+
+        // Two rows carry a span; one stays NULL.
+        db.set_manual_col_span(a, Some(2)).unwrap();
+        db.set_manual_col_span(b, Some(3)).unwrap();
+
+        // Only the two non-NULL rows are counted as cleared.
+        let cleared = db.clear_all_manual_col_spans().unwrap();
+        assert_eq!(cleared, 2, "count reflects real resizes undone, not table size");
+
+        let after = db
+            .get_images_with_thumbnails(vec![], "".into(), false, vec![])
+            .unwrap();
+        for id in [a, b, c] {
+            assert_eq!(
+                after.iter().find(|i| i.id == id).unwrap().manual_col_span,
+                None,
+                "every span must be NULL after a bulk clear"
+            );
+        }
+
+        // Idempotent: a second clear finds nothing to do.
+        assert_eq!(db.clear_all_manual_col_spans().unwrap(), 0);
     }
 
     #[test]

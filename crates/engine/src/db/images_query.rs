@@ -881,6 +881,38 @@ impl ImageDatabase {
         rows.collect()
     }
 
+    /// Every visible image's `(id, basename)`, for the fuzzy-filename
+    /// search signal (`cosine::name_match`). Applies the SAME orphan /
+    /// disabled-root visibility predicate as `get_feed_manifest`'s
+    /// `root_filter`, so the name signal ranks over exactly the catalogue
+    /// the user can see — no more, no less.
+    ///
+    /// Deliberately carries NO tag filter: search spans the whole visible
+    /// library (the frontend applies its own view filtering on top of the
+    /// results, per the coherence pass), and it joins nothing — one plain
+    /// SELECT of two columns, id-ascending. Crucially it reads `path`, not
+    /// any embedding, so it also covers images that have never been
+    /// encoded — the filename signal surfaces them where the encoders
+    /// cannot.
+    pub fn get_image_names_for_search(&self) -> rusqlite::Result<Vec<(ID, String)>> {
+        let conn = self.read_lock();
+        let mut stmt = conn.prepare(
+            "SELECT images.id, images.path
+             FROM images
+             WHERE images.orphaned = 0
+               AND (
+                   images.root_id IS NULL
+                   OR images.root_id IN (SELECT id FROM roots WHERE enabled = 1)
+               )
+             ORDER BY images.id;",
+        )?;
+        let rows = stmt.query_map([], |row| {
+            let path: String = row.get(1)?;
+            Ok((row.get::<_, ID>(0)?, basename_of(&path)))
+        })?;
+        rows.collect()
+    }
+
     /// Full detail records (tags aggregated, all columns) for an explicit
     /// id batch — the hydration half of the manifest/detail split. Used
     /// by the `get_image_details` command for the selected image and its

@@ -7,6 +7,7 @@ import { SearchSection } from "./SearchSection";
 import { FoldersSection } from "./FoldersSection";
 import { EncoderSection } from "./EncoderSection";
 import { StatsSection } from "./StatsSection";
+import { ResetResizesSection } from "./ResetResizesSection";
 import { ResetSection } from "./ResetSection";
 
 interface SettingsDrawerProps {
@@ -25,7 +26,7 @@ interface SettingsDrawerProps {
  * 2. Display (column count, tile scale, animation level)
  * 3. Search (similar / semantic result counts, tag filter mode)
  * 4. Folders (add / remove / toggle / list)
- * 5. Reset
+ * 5. Reset (all image resizes, then all preferences)
  *
  * The shell here owns purely structural concerns: enter/exit animation,
  * backdrop click-to-dismiss, the Escape-key handler, header chrome, and
@@ -90,7 +91,8 @@ export function SettingsDrawer({ open, onClose }: SettingsDrawerProps) {
               <FoldersSection />
               <EncoderSection />
               <StatsSection />
-              <div className="pt-6">
+              <div className="flex flex-col gap-2 pt-6">
+                <ResetResizesSection />
                 <ResetSection />
               </div>
             </div>

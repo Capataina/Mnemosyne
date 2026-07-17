@@ -14,6 +14,23 @@ function signForCorner(c: ResizeCorner): 1 | -1 {
   return isLeftCorner(c) ? -1 : 1;
 }
 
+/**
+ * The column the packer should pin the tile's left edge to for a given
+ * span, given the corner grabbed and the footprint at grab. A right-corner
+ * drag keeps the original left edge (`startCol`) and grows rightward; a
+ * left-corner drag keeps the original right edge (`startCol + baseSpan`) so
+ * the left edge walks leftward as the tile grows. The packer clamps the
+ * result into `[0, colCount - span]`.
+ */
+export function anchorStartColFor(
+  corner: ResizeCorner,
+  startCol: number,
+  baseSpan: number,
+  span: number,
+): number {
+  return isLeftCorner(corner) ? startCol + baseSpan - span : startCol;
+}
+
 export interface ResizeState {
   id: number;
   corner: ResizeCorner;
@@ -22,6 +39,14 @@ export interface ResizeState {
   /** Rounded span - the footprint the packer reflows the grid around. */
   previewSpan: number;
   leftAnchored: boolean;
+  /**
+   * Column the packer should pin the tile's left edge to for the current
+   * `previewSpan`, so a widening tile grows in place instead of wrapping to
+   * a new row. Right-corner drags hold the tile's original start column;
+   * left-corner drags hold its right edge, so the start walks left as it
+   * grows. The packer clamps this into range.
+   */
+  anchorStartCol: number;
 }
 
 interface UseTileResizeInput {
@@ -72,6 +97,10 @@ export function useTileResize(input: UseTileResizeInput) {
     corner: ResizeCorner;
     startX: number;
     basePx: number;
+    /** The tile's start column at grab, derived from its packed x. */
+    startCol: number;
+    /** The tile's span at grab — the right-edge reference for left grips. */
+    baseSpan: number;
   } | null>(null);
   const liveRef = useRef<LiveResize | null>(null);
   const pendingClientXRef = useRef<number | null>(null);
@@ -129,10 +158,20 @@ export function useTileResize(input: UseTileResizeInput) {
       writeTileVisual(base.id, previewPx);
 
       // This is the sole React update in the move path. It happens only at a
-      // rounded column boundary, not for every physical pointer pixel.
+      // rounded column boundary, not for every physical pointer pixel. The
+      // re-anchor column is recomputed here so the reflow pins the grown
+      // tile in place rather than letting the packer relocate it.
       if (previewSpan !== previousSpan) {
+        const anchorStartCol = anchorStartColFor(
+          base.corner,
+          base.startCol,
+          base.baseSpan,
+          previewSpan,
+        );
         setResizeState((previous) =>
-          previous ? { ...previous, previewSpan } : previous,
+          previous
+            ? { ...previous, previewSpan, anchorStartCol }
+            : previous,
         );
       }
     },
@@ -191,7 +230,14 @@ export function useTileResize(input: UseTileResizeInput) {
         placementsRef.current.find((candidate) => candidate.itemData.id === id);
       const basePx = placement?.width ?? columnWidthRef.current ?? 1;
       const baseSpan = placement?.colSpan ?? 1;
-      baseRef.current = { id, corner, startX: e.clientX, basePx };
+      // Recover the tile's start column from its packed x. The stride is one
+      // column plus the gap; rounding absorbs sub-pixel drift.
+      const colStride = (columnWidthRef.current ?? 0) + columnGap;
+      const startCol =
+        colStride > 0 && placement
+          ? Math.round(placement.x / colStride)
+          : 0;
+      baseRef.current = { id, corner, startX: e.clientX, basePx, startCol, baseSpan };
       liveRef.current = { id, previewPx: basePx, previewSpan: baseSpan };
 
       const node = tileElementsRef.current.get(id);
@@ -203,9 +249,10 @@ export function useTileResize(input: UseTileResizeInput) {
         baseSpan,
         previewSpan: baseSpan,
         leftAnchored: isLeftCorner(corner),
+        anchorStartCol: startCol,
       });
     },
-    [columnWidthRef, placementByIdRef, placementsRef, tileElementsRef],
+    [columnGap, columnWidthRef, placementByIdRef, placementsRef, tileElementsRef],
   );
 
   const resizingId = resizeState?.id ?? null;

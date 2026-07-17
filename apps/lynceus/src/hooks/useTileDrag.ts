@@ -40,6 +40,12 @@ export function useTileDrag(input: UseTileDragInput) {
   } = input;
 
   const [dragItemId, setDragItemId] = useState<number | null>(null);
+  // The dragged tile's committed column span, captured at grab. Fed back
+  // into the preview pack as an explicit span override so a multi-span tile
+  // keeps its footprint for the whole drag — independent of whether the
+  // active feed slice still carries the tile's `manualColSpan` (the
+  // similar/search feeds drop it; only reorder's gating hides that today).
+  const [dragItemSpan, setDragItemSpan] = useState(1);
   const [workingOrder, setWorkingOrder] = useState<FeedItem[] | null>(null);
 
   const dragStartPosRef = useRef<{ x: number; y: number } | null>(null);
@@ -197,6 +203,7 @@ export function useTileDrag(input: UseTileDragInput) {
       workingOrderRef.current = null;
       idToIndexRef.current = null;
       indexMapBaseRef.current = null;
+      setDragItemSpan(placement?.colSpan ?? 1);
       setDragItemId(id);
     },
     [enabled, placementByIdRef, placementsRef],
@@ -278,6 +285,7 @@ export function useTileDrag(input: UseTileDragInput) {
 
   return {
     dragItemId,
+    dragItemSpan,
     workingOrder,
     onDragHandlePointerDown,
     syncVisual,

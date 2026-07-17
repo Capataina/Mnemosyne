@@ -291,8 +291,8 @@ pub fn run(db: ImageDatabase, db_path: String) {
         get_enabled_encoders, list_available_encoders, set_enabled_encoders,
     };
     use commands::images::{
-        get_feed_manifest, get_image_details, get_images, get_pipeline_stats, get_thumbnail,
-        set_manual_col_span, set_manual_order,
+        clear_all_manual_spans, get_feed_manifest, get_image_details, get_images,
+        get_pipeline_stats, get_thumbnail, set_manual_col_span, set_manual_order,
     };
     use commands::notes::{get_image_notes, set_image_notes};
     use commands::profiling::{
@@ -580,6 +580,7 @@ pub fn run(db: ImageDatabase, db_path: String) {
             get_thumbnail,
             set_manual_order,
             set_manual_col_span,
+            clear_all_manual_spans,
             list_available_encoders,
             get_enabled_encoders,
             set_enabled_encoders,

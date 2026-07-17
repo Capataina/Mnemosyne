@@ -25,6 +25,7 @@ mod cache;
 pub mod diagnostics;
 pub mod index;
 pub(crate) mod math;
+pub mod name_match;
 pub mod rrf;
 pub mod store;
 

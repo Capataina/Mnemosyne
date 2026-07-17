@@ -32,8 +32,15 @@ interface MasonryEngineInput {
   tileScale?: number;
   /** id → rounded span, for the resize footprint. */
   spanOverrides?: Record<number, number>;
+  /** The tile under an active resize, pinned to its column so it grows in
+   *  place instead of wrapping to a new row. */
+  resizeAnchor?: { id: number; startCol: number };
   /** The tile currently being drag-reordered — never culled. */
   dragItemId: number | null;
+  /** True while any tile gesture (drag or resize) is live. Freezes the
+   *  visible set so a mid-gesture reflow can't cull tiles out from under the
+   *  pointer and flicker them back on the next pack. */
+  gestureActive: boolean;
   // Shell-owned refs the engine populates so the interaction hooks can
   // read live layout data without re-subscribing on every pointer move.
   containerRef: RefObject<HTMLDivElement | null>;
@@ -178,7 +185,9 @@ export function useMasonryEngine(input: MasonryEngineInput): MasonryEngine {
     columnCountOverride,
     tileScale,
     spanOverrides,
+    resizeAnchor,
     dragItemId,
+    gestureActive,
     containerRef,
     placementsRef,
     placementByIdRef,
@@ -190,6 +199,11 @@ export function useMasonryEngine(input: MasonryEngineInput): MasonryEngine {
   // Holds the pending scroll rAF so at most one viewport update runs per
   // frame and any in-flight frame can be cancelled on cleanup.
   const scrollRafRef = useRef<number | null>(null);
+  // The last non-gesture visible set, keyed by id (the committed `byId` map is
+  // reused as-is — only its keys are read here). During an active gesture
+  // these ids stay mounted even if a reflow pushes them past the overscan
+  // band, so the grid can't cull-then-remount tiles and flicker mid-drag.
+  const prevVisibleIdsRef = useRef<Map<number, MasonryItemPlacement>>(new Map());
 
   // Async pack plumbing. The packer lives in the mount effect (StrictMode
   // safe); `packerRef` lets the pack path reach it between renders.
@@ -250,6 +264,7 @@ export function useMasonryEngine(input: MasonryEngineInput): MasonryEngine {
       columnCountOverride,
       tileScale,
       spanOverrides,
+      resizeAnchor,
     };
     const sel = selectedItem ?? null;
     const gen = ++genRef.current;
@@ -289,6 +304,7 @@ export function useMasonryEngine(input: MasonryEngineInput): MasonryEngine {
     columnCountOverride,
     tileScale,
     spanOverrides,
+    resizeAnchor,
     containerRef,
     commit,
   ]);
@@ -457,13 +473,18 @@ export function useMasonryEngine(input: MasonryEngineInput): MasonryEngine {
     const { ys, heights, selectedIndex } = geometry;
     const top = viewport.top;
     const bottom = viewport.bottom;
+    // While a gesture is live, every tile that was on-screen when it began
+    // stays mounted through the reflow (see prevVisibleIdsRef), so a repack
+    // that moves a tile past the overscan band can't unmount and re-mount it.
+    const keepMounted = gestureActive ? prevVisibleIdsRef.current : null;
     const n = Math.min(geometry.count, layoutItems.length);
     for (let i = 0; i < n; i++) {
       if (i === selectedIndex) continue;
       const id = layoutItems[i].id;
       // The actively-dragged tile always renders so it never flickers out
-      // from under the pointer, even when scrolled past the overscan.
-      const forced = id === dragItemId;
+      // from under the pointer, even when scrolled past the overscan; the
+      // gesture keep-set does the same for its neighbours.
+      const forced = id === dragItemId || (keepMounted?.has(id) ?? false);
       if (!forced) {
         const tileTop = ys[i];
         const tileBottom = tileTop + heights[i];
@@ -478,12 +499,19 @@ export function useMasonryEngine(input: MasonryEngineInput): MasonryEngine {
     placementByIdRef.current = byId;
     columnWidthRef.current = geometry.columnWidth;
     columnCountRef.current = geometry.columnCount;
+    // Snapshot the visible set only between gestures, so a gesture freezes
+    // exactly the tiles that were on-screen when it started (never a set that
+    // grows as it drags across the grid).
+    if (!gestureActive) {
+      prevVisibleIdsRef.current = byId;
+    }
     return out;
   }, [
     layout,
     viewport.top,
     viewport.bottom,
     dragItemId,
+    gestureActive,
     placementsRef,
     placementByIdRef,
     columnWidthRef,

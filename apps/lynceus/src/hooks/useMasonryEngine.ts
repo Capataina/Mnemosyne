@@ -199,11 +199,23 @@ export function useMasonryEngine(input: MasonryEngineInput): MasonryEngine {
   // Holds the pending scroll rAF so at most one viewport update runs per
   // frame and any in-flight frame can be cancelled on cleanup.
   const scrollRafRef = useRef<number | null>(null);
-  // The last non-gesture visible set, keyed by id (the committed `byId` map is
-  // reused as-is — only its keys are read here). During an active gesture
-  // these ids stay mounted even if a reflow pushes them past the overscan
-  // band, so the grid can't cull-then-remount tiles and flicker mid-drag.
+  // The visible set as of the last SCROLL-driven viewport commit, keyed by id
+  // (the committed `byId` map is reused as-is — only its keys are read here).
+  // These ids stay mounted across any reflow that ISN'T a scroll — a gesture,
+  // a delta-merge repack during indexing, a reorder shift — so a repack that
+  // moves a tile past the overscan band can't unmount it. That prevents both
+  // the "tiles disappear during indexing" cull (the tile stays mounted) and
+  // the "moving up teleports" jump (a mounted tile animates its translate
+  // instead of re-mounting fresh with no transition). Refreshed only when the
+  // viewport genuinely scrolls, so the set stays bounded to ~one viewport.
   const prevVisibleIdsRef = useRef<Map<number, MasonryItemPlacement>>(new Map());
+  // The viewport the visible set was last culled against, to tell a scroll
+  // (viewport moved → cull scrolled-away tiles, refresh the keep-set) apart
+  // from a repack-only change (layout moved, viewport same → keep mounted).
+  const prevViewportRef = useRef<{ top: number; bottom: number }>({
+    top: 0,
+    bottom: 99999,
+  });
 
   // Async pack plumbing. The packer lives in the mount effect (StrictMode
   // safe); `packerRef` lets the pack path reach it between renders.
@@ -473,10 +485,16 @@ export function useMasonryEngine(input: MasonryEngineInput): MasonryEngine {
     const { ys, heights, selectedIndex } = geometry;
     const top = viewport.top;
     const bottom = viewport.bottom;
-    // While a gesture is live, every tile that was on-screen when it began
-    // stays mounted through the reflow (see prevVisibleIdsRef), so a repack
-    // that moves a tile past the overscan band can't unmount and re-mount it.
-    const keepMounted = gestureActive ? prevVisibleIdsRef.current : null;
+    // A scroll moves the viewport; a repack (delta merge, reorder) moves the
+    // layout under a still viewport. Only a scroll should release tiles the
+    // user scrolled away from — a repack must keep the on-screen set mounted
+    // so tiles neither vanish (cull) nor teleport (fresh mount) as the grid
+    // reflows during indexing.
+    const viewportScrolled =
+      viewport.top !== prevViewportRef.current.top ||
+      viewport.bottom !== prevViewportRef.current.bottom;
+    const keepMounted =
+      gestureActive || !viewportScrolled ? prevVisibleIdsRef.current : null;
     const n = Math.min(geometry.count, layoutItems.length);
     for (let i = 0; i < n; i++) {
       if (i === selectedIndex) continue;
@@ -499,12 +517,15 @@ export function useMasonryEngine(input: MasonryEngineInput): MasonryEngine {
     placementByIdRef.current = byId;
     columnWidthRef.current = geometry.columnWidth;
     columnCountRef.current = geometry.columnCount;
-    // Snapshot the visible set only between gestures, so a gesture freezes
-    // exactly the tiles that were on-screen when it started (never a set that
-    // grows as it drags across the grid).
-    if (!gestureActive) {
+    // Refresh the keep-set only on a genuine scroll (and never mid-gesture),
+    // so it always reflects the tiles on screen at the current scroll
+    // position — never a set that grows as repacks reflow the grid or as a
+    // drag crosses it. Between scrolls the frozen set is what keeps a repack
+    // from culling or teleporting a visible tile.
+    if (!gestureActive && viewportScrolled) {
       prevVisibleIdsRef.current = byId;
     }
+    prevViewportRef.current = { top, bottom };
     return out;
   }, [
     layout,

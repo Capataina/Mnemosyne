@@ -126,8 +126,22 @@ export function useTileResize(input: UseTileResizeInput) {
       const offsetX = isLeftCorner(base.corner)
         ? placement.width - previewPx
         : 0;
+      // Upward-growth illusion for the two TOP corners. Height is
+      // aspect-derived from width, so widening the tile makes it taller —
+      // by default the top edge stays pinned and the tile grows DOWNWARD,
+      // which feels wrong when you grabbed a top corner. Translating up by
+      // the height delta pins the BOTTOM edge instead, so the grabbed top
+      // corner appears to rise: a top-corner drag now resizes from that
+      // corner like any window/image handle. This is a gesture-time visual
+      // only — masonry is top-down packed, so on release the tile settles to
+      // its real packed row (the framer layout spring smooths the drop). The
+      // horizontal axis stays real (offsetX + the committed re-anchor).
+      const isTopCorner = base.corner === "tl" || base.corner === "tr";
+      const aspect =
+        placement.width > 0 ? placement.height / placement.width : 0;
+      const offsetY = isTopCorner ? -(previewPx - placement.width) * aspect : 0;
       node.style.width = `${previewPx}px`;
-      node.style.transform = `translate3d(${offsetX}px, 0, 0)`;
+      node.style.transform = `translate3d(${offsetX}px, ${offsetY}px, 0)`;
     },
     [placementByIdRef, tileElementsRef],
   );

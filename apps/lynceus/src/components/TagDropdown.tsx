@@ -9,7 +9,6 @@ import {
 
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
-import { useConfirm } from "@/components/ui/confirm";
 import {
   Command,
   CommandEmpty,
@@ -44,11 +43,19 @@ interface TagDropdownProps {
 
 export function TagDropdown(props: TagDropdownProps) {
   const [input, setInput] = useState("");
-  const confirm = useConfirm();
+  // Two-click inline delete arming, keyed by tag id. A modal confirm Dialog
+  // cannot be used here: this dropdown is a `modal` Radix Popover, and a
+  // modal popover blocks pointer events to anything outside its own content
+  // — including the App-level confirm Dialog — so the confirm button's click
+  // was silently swallowed (the "delete does nothing" bug). An inline
+  // arm-then-confirm (same pattern as the settings reset controls) has no
+  // second modal layer to race, so it always fires.
+  const [armedDeleteId, setArmedDeleteId] = useState<number | null>(null);
 
   useEffect(() => {
     if (props.open === false) {
       setInput("");
+      setArmedDeleteId(null);
     }
   }, [props.open]);
 
@@ -153,40 +160,45 @@ export function TagDropdown(props: TagDropdownProps) {
                       )}
                     />
                     <span className="flex-1 truncate">{tag.name}</span>
-                    {props.onDeleteTag && (
-                      <button
-                        type="button"
-                        title={`Delete tag "${tag.name}" from catalog`}
-                        aria-label={`Delete tag ${tag.name}`}
-                        className="ml-2 grid size-7 shrink-0 place-items-center rounded-lg text-muted-foreground opacity-0 transition-[opacity,color,background-color] group-hover:opacity-65 hover:bg-destructive/10 hover:text-destructive hover:opacity-100"
-                        onClick={async (e) => {
-                          // stopPropagation so the row's onSelect (toggle)
-                          // doesn't fire when the user clicks the trash icon
-                          e.stopPropagation();
-                          // Resolve the confirm BEFORE closing the dropdown.
-                          // Closing this modal popover in the same tick as the
-                          // modal confirm dialog opens raced two Radix layers:
-                          // the popover's teardown dispatched a focus/pointer
-                          // event the dialog read as an outside-dismiss, so it
-                          // auto-cancelled and the delete never fired. The
-                          // dialog stacks above the still-open popover; close
-                          // once the choice is in.
-                          const confirmed = await confirm({
-                            title: `Delete tag "${tag.name}"?`,
-                            description:
-                              "This removes the tag from every image that has it.",
-                            confirmLabel: "Delete tag",
-                            destructive: true,
-                          });
-                          props.setOpen(false);
-                          if (confirmed) {
+                    {props.onDeleteTag &&
+                      (armedDeleteId === tag.id ? (
+                        <button
+                          type="button"
+                          title={`Confirm delete "${tag.name}" from every image`}
+                          aria-label={`Confirm delete tag ${tag.name}`}
+                          className="ml-2 grid h-7 shrink-0 place-items-center rounded-lg border border-destructive/55 bg-destructive/10 px-2 text-[10px] font-[650] uppercase tracking-wide text-destructive"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            // Second click confirms. Delete first (before the
+                            // popover unmounts this row), then close.
                             props.onDeleteTag!(tag.id);
-                          }
-                        }}
-                      >
-                        <Trash2Icon className="h-3.5 w-3.5" strokeWidth={1.8} />
-                      </button>
-                    )}
+                            setArmedDeleteId(null);
+                            props.setOpen(false);
+                          }}
+                          onMouseLeave={() => setArmedDeleteId(null)}
+                        >
+                          Delete?
+                        </button>
+                      ) : (
+                        <button
+                          type="button"
+                          title={`Delete tag "${tag.name}" from every image`}
+                          aria-label={`Delete tag ${tag.name}`}
+                          className="ml-2 grid size-7 shrink-0 place-items-center rounded-lg text-muted-foreground opacity-0 transition-[opacity,color,background-color] group-hover:opacity-65 hover:bg-destructive/10 hover:text-destructive hover:opacity-100"
+                          onClick={(e) => {
+                            // stopPropagation so the row's onSelect (toggle)
+                            // doesn't fire when the trash icon is clicked. First
+                            // click arms; a second click on the armed control
+                            // confirms. No modal confirm Dialog — this dropdown
+                            // is a modal Popover and would swallow the dialog's
+                            // click (see armedDeleteId note above).
+                            e.stopPropagation();
+                            setArmedDeleteId(tag.id);
+                          }}
+                        >
+                          <Trash2Icon className="h-3.5 w-3.5" strokeWidth={1.8} />
+                        </button>
+                      ))}
                   </CommandItem>
                 ))}
               </CommandGroup>

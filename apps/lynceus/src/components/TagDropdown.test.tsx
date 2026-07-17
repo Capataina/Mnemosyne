@@ -1,51 +1,26 @@
 import { beforeEach, expect, it, vi } from "vitest";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 
 /**
- * Regression test for the tag-delete ordering bug.
+ * Regression test for the tag-delete bug.
  *
- * The trash button used to call `setOpen(false)` BEFORE awaiting the
- * confirm dialog. Closing the modal popover in the same tick as the modal
- * confirm dialog opened raced two Radix layers: the popover's teardown
- * dispatched an event the dialog read as an outside-dismiss, so the confirm
- * auto-cancelled and `onDeleteTag` never fired.
- *
- * The fix awaits the confirm FIRST, then closes. We guard the invariant by
- * recording call order across the confirm, setOpen, and onDeleteTag spies:
- * confirm must resolve before the dropdown closes, and the delete must fire
- * after a confirmed choice. The pre-fix code would order setOpen before
- * confirm and (in the real app) never reach the delete.
+ * The trash button first used a modal confirm Dialog. That never worked:
+ * this dropdown is a `modal` Radix Popover, and a modal popover blocks
+ * pointer events to everything outside its own content — including the
+ * App-level confirm Dialog — so the confirm button's click was swallowed and
+ * `onDeleteTag` never fired (two rounds of "delete does nothing"). The fix
+ * removes the second modal layer entirely: an inline two-click arm-then-
+ * confirm on the trash button (the app's reset-control pattern). First click
+ * arms; a second click on the armed "Delete?" control deletes. This guards
+ * that the first click does NOT delete and the second one does.
  */
 
-const order: string[] = [];
-let confirmResult = true;
-
-const confirmSpy = vi.fn(async () => {
-  order.push("confirm");
-  return confirmResult;
+beforeEach(() => {
+  vi.clearAllMocks();
 });
 
-vi.mock("@/components/ui/confirm", () => ({
-  useConfirm: () => confirmSpy,
-}));
-
-import { TagDropdown } from "./TagDropdown";
-
-function renderDropdown(overrides?: {
-  setOpen?: (open: boolean) => void;
-  onDeleteTag?: (id: number) => void;
-}) {
-  const setOpen =
-    overrides?.setOpen ??
-    vi.fn(() => {
-      order.push("setOpen");
-    });
-  const onDeleteTag =
-    overrides?.onDeleteTag ??
-    vi.fn(() => {
-      order.push("delete");
-    });
-
+function renderDropdown(onDeleteTag: (id: number) => void) {
+  const setOpen = vi.fn();
   render(
     <TagDropdown
       tags={[{ id: 7, name: "landscape", color: "#3B82F6" }]}
@@ -62,42 +37,37 @@ function renderDropdown(overrides?: {
       onRemoveTag={vi.fn()}
     />,
   );
-
-  return { setOpen, onDeleteTag };
+  return { setOpen };
 }
 
-beforeEach(() => {
-  order.length = 0;
-  confirmResult = true;
-  confirmSpy.mockClear();
-});
+import { TagDropdown } from "./TagDropdown";
 
-it("confirms before closing the dropdown, then deletes", async () => {
-  const { setOpen, onDeleteTag } = renderDropdown();
+it("arms on the first trash click and does not delete yet", () => {
+  const onDeleteTag = vi.fn();
+  renderDropdown(onDeleteTag);
 
   fireEvent.click(
-    screen.getByRole("button", { name: /delete tag landscape/i }),
+    screen.getByRole("button", { name: /^delete tag landscape/i }),
   );
 
-  await waitFor(() => expect(onDeleteTag).toHaveBeenCalledWith(7));
-
-  expect(confirmSpy).toHaveBeenCalledTimes(1);
-  expect(setOpen).toHaveBeenCalledWith(false);
-  // The invariant the fix restores: confirm resolves first, then the
-  // dropdown closes, then the delete fires.
-  expect(order).toEqual(["confirm", "setOpen", "delete"]);
-});
-
-it("does not delete when the confirm is cancelled", async () => {
-  confirmResult = false;
-  const { setOpen, onDeleteTag } = renderDropdown();
-
-  fireEvent.click(
-    screen.getByRole("button", { name: /delete tag landscape/i }),
-  );
-
-  await waitFor(() => expect(setOpen).toHaveBeenCalledWith(false));
-
-  expect(confirmSpy).toHaveBeenCalledTimes(1);
+  // Armed, not deleted — the confirm control is now present.
   expect(onDeleteTag).not.toHaveBeenCalled();
+  expect(
+    screen.getByRole("button", { name: /confirm delete tag landscape/i }),
+  ).toBeTruthy();
+});
+
+it("deletes on the second click of the armed control", () => {
+  const onDeleteTag = vi.fn();
+  const { setOpen } = renderDropdown(onDeleteTag);
+
+  fireEvent.click(
+    screen.getByRole("button", { name: /^delete tag landscape/i }),
+  );
+  fireEvent.click(
+    screen.getByRole("button", { name: /confirm delete tag landscape/i }),
+  );
+
+  expect(onDeleteTag).toHaveBeenCalledWith(7);
+  expect(setOpen).toHaveBeenCalledWith(false);
 });

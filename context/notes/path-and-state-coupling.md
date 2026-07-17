@@ -30,7 +30,7 @@ The cleanest fix is to normalise paths at insert time. Concretely:
 Until that work is done:
 
 - **Don't add another normalisation closure or path-stripping site.** The single `paths::strip_windows_extended_prefix` helper is the source of truth.
-- **The cosine module no longer needs the `db_path: String` field on `CosineIndexState`** — it's only kept for the indexing pipeline's separate-thread `ImageDatabase::new`. A future cleanup could route that through a different mechanism and drop the field.
+- ~~The cosine module no longer needs the `db_path: String` field on `CosineIndexState`~~ — moot: the 100k performance round removed `CosineIndexState` (the primary cosine index) entirely, field and all (`1514a90`). Every search command now borrows the fusion slots; see `notes/performance-decisions.md` and `notes/fusion-architecture.md`.
 
 ## What Was Tried
 

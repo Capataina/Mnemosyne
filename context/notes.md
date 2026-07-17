@@ -4,25 +4,48 @@ Project-level rationale, conventions, and durable lessons. One bullet per note f
 
 ## Active work areas
 
-**Latest perf bundle landed 2026-04-26 (commits `f5706ed` → `1ca42d2`):** Tier 1 + Tier 2 (chain-breaking the 22 s `ipc.get_images` freeze + thumbnail/encoder speedups), Phase 4 (SigLIP-2 text dispatch), Phase 5 (multi-encoder RRF for image-image), Phase 6 (code-health bundle + clippy gate restored), Phase 7 (1 Hz RSS/CPU sampler + stall analysis), Phase 11 (per-encoder enable/disable toggles + parallel encoders + text-image RRF), Phase 12 (perf bundle from perf-1777226449: dynamic intra_threads, sequence-thumb-then-encode, SigLIP-2 text pre-warm, fast_image_resize for encoder preprocess, empty-state regression fix). Pipeline version = 4. Build green: 125/125 cargo lib · 62/62 vitest · clippy clean.
+Version is **0.5.0**. Two large rounds landed back to back: the **v2 UI overhaul** (shuffle
+feed, masonry split into headless hooks + a Web Worker, one progress source of truth,
+adaptive-resolution thumbnails, the v2 design-token visual layer, the library drawer, the
+gesture-drawing timer — bumped to 0.4.0) and the **100k performance round** (compact feed
+manifest + delta protocol, ID-native search over a flat mmap-persisted embedding store, the
+primary cosine index removed entirely in favour of fusion-only state, the masonry pack moved
+off-thread — bumped to 0.5.0). `notes/performance-decisions.md` is the durable record of the
+perf round: its commit ledger, every rejected idea with the evidence that killed it, and the
+full deferred/residual list with reopen triggers. Read it before proposing perf work — most
+"obvious" wins were already evaluated against the code and rejected for cause.
 
-The encoder pipeline overhaul context: CLIP image + text on separate-graph OpenCLIP LAION-2B (MIT) exports (HF `tokenizers` BPE) — swapped from the non-commercial OpenAI CLIP weights as part of the commercialisation refactor (weights-only swap: same tokenizer, preprocessing, and 512-d output; no encoder or consumer code changed), DINOv2-Base (768-d) with canonical preprocessing, SigLIP-2 Base 256 with Gemma SentencePiece. All three encoders run concurrently during indexing, with intra_threads tuned to share the M2 P-cluster (4 threads total across N enabled encoders). Multi-encoder RRF fusion is the primary search path for both image-image and text-image; per-encoder toggles control which encoders contribute.
+Open follow-ups carried out of that round, each with its trigger:
 
-Future-work items that haven't shipped yet, ordered by likely next-pickup:
+- **Post-index write-lock window** — a changed encoder's fusion-slot refresh at `Phase::Ready`
+  holds that slot's write lock ~0.5-1s/encoder (a 3-encoder import blocks searches ~3s).
+  *Trigger:* the pause is felt in real use. Build-outside-lock-then-swap is the shape.
+- **Search cancellation** — no end-to-end abort protocol yet; the 300ms debounce absorbs the
+  common case. *Trigger:* search feels laggy during deliberate multi-word typing at real scale.
+- **Per-column range index for the scroll virtualiser** — deferred; rAF coalescing + the 400px
+  guard band already made the O(N) visible-filter rare rather than fast. *Trigger:* profiling
+  still shows filter cost in scroll traces after the worker-pack work.
+- **CLIP batched inference** — blocked on weights provenance: the OpenCLIP `visual/model.onnx`
+  export has a fixed batch dim of 1, so batching it needs a re-export, which touches the
+  pre-sale tokenizer-provenance question in `notes/clip-preprocessing-decisions.md`.
+  SigLIP-2/DINOv2 already batch (`ebe4006`).
+- **`indexing.rs` phase-module split** — hygiene item, pre-dates the perf round; the code-health
+  audit recommends a 4-file split into pipeline/encoder_phase/etc. Schedule for a
+  hygiene-focused session.
+- **`[...slug].tsx` route extraction** — same hygiene category; pulls route-state hooks out of
+  the route component (grew further with the v2 feed/masonry rewiring).
+- **Watcher rebuild on root mutations** — `add_root` / `remove_root` after launch don't
+  reconfigure the watcher until next restart. Documented in `systems/watcher.md`.
+- **Path normalisation at insert time** — closes the second half of
+  `notes/path-and-state-coupling.md`; the 3-strategy path→id fallback it motivated is now
+  moot for search (search went ID-native this round) but still guards the remaining
+  path-keyed call sites.
 
-- **Code-health audit findings** — 28 findings landed at `plans/code-health-audit/` (highest-impact: legacy single-encoder commands D-SIM-1/D-SEM-1/D-FE-1 are dead post-Phase-11d and ~600 Rust + ~80 TS lines could be deleted; `Settings::priority_image_encoder` is doc-deprecated but still read in `indexing.rs`; `db::get_embedding` skips the read-only secondary connection — a 2-line fix that closes the last R2 gap).
-- **R5 FP16 ONNX weights** — Xenova/onnx-community publish FP16 variants of all three encoders; ~1.5-2× CPU speedup, half the disk size. Deferred because the FP16 exports use `float16` I/O (not just FP16 weights), requiring `half::f16` boundary conversion AND a labelled retrieval-quality test set. Without that golden set, swapping risks silent retrieval-quality regression.
-- **R10 foreground/background encoder split** — was originally to make one encoder finish fast for early interactivity. Phase 5 RRF + Phase 12c parallel encoders mostly obviate this; still valid for fresh-folder UX but lower priority.
-- **R11 decode-once fan-out** — JPEG currently decoded 2-4× per image (thumbnail + each encoder). Sharing the decoded buffer would save ~50-150 ms/image. Bigger refactor; worth a focused session.
-- **R12 `with_disable_per_session_threads`** — needs verification that the `ort 2.0-rc.10` Rust binding exposes it.
-- **R13 `deadpool-sqlite` connection pool** — cleaner than the current manual writer/reader split. Probably unneeded post-R2 unless concurrent-read requirements grow.
-- **Profiling diagnostics expansion** — Phase 4 + 5 shipped; Phase 1 (causal trace substrate with `span_id`/`parent_id`), Phase 2 (deeper DB decomposition beyond the `get_images` subspans), Phase 3 (frontend invalidation tracing), Phase 6 (perfdump/perfdiff CLIs + scenario runner) remain proposed. Lower urgency post Tier-1+2+11+12.
-- **Tier 4 research bets** — INT8 quantisation (R14), MobileCLIP-S2 evaluation (R15), one last CoreML attempt with `MLProgram + RequireStaticInputShapes` (R16). All require benchmarking commitment before shipping.
-- **Smart per-query encoder routing** — open architectural concern in `notes/preprocessing-spatial-coverage.md`. Mostly obviated for image-image by RRF; text-side dispatch is still single-fusion-pass per query.
-- **Indexing.rs phase-module split** — pure-movement extraction; code-health audit recommends a 4-file split into pipeline/encoder_phase/etc. Schedule for a hygiene-focused session.
-- **`[...slug].tsx` route extraction** — same hygiene category. Pulls route-state hooks out of the 516-line component.
-- **Watcher rebuild on root mutations** — `add_root` / `remove_root` after launch don't reconfigure the watcher until next restart. Documented in `systems/watcher.md`.
-- **Path normalisation at insert time** — closes the second half of `notes/path-and-state-coupling.md`.
+Lower-priority threads tracked in their own notes rather than duplicated here: the CLIP
+tokenizer-provenance pre-sale flag and FP16/INT8/MobileCLIP research bets
+(`notes/clip-preprocessing-decisions.md`, `references/m2-perf-options-2026-04.md`), the 4th-encoder
+decision rule (`notes/encoder-additions-considered.md`), and smart per-query encoder routing
+(`notes/preprocessing-spatial-coverage.md`).
 
 ## Index
 
@@ -31,8 +54,9 @@ Future-work items that haven't shipped yet, ordered by likely next-pickup:
 - [preprocessing-spatial-coverage](notes/preprocessing-spatial-coverage.md) — open architectural concern: CLIP/DINOv2 center-crop drops edge content (problematic for splash arts / scenery / color queries); SigLIP-2 sees the full image; possible direction is smart per-query encoder routing.
 - [conventions](notes/conventions.md) — tracing instrumentation prefixes, Mutex acquire-then-execute, `?`-via-From-impls for ApiError, optimistic mutation pattern, `paths::*_dir()` as the single disk-path source, submodule layout, RAII guards for atomics, defensive `lock_result.is_ok()` in setup, naming, `record_diagnostic` pattern.
 - [path-and-state-coupling](notes/path-and-state-coupling.md) — the audit closed the cosine-DB-coupling half (now `&ImageDatabase`) and extracted `paths::strip_windows_extended_prefix`; normalise-at-insert is still the deeper fix.
-- [random-shuffle-as-feature](notes/random-shuffle-as-feature.md) — Phase 9 made stable-by-default the new behaviour; in-cosine diversity sampling and tiered within-tier randomness remain intentional.
-- [dead-code-inventory](notes/dead-code-inventory.md) — Phase 2 sweep + Phase 6 wiring + audit extractions closed the bulk of the previous list; residual is small (3 backend, 1 frontend, 3 deps).
-- [mutex-poisoning](notes/mutex-poisoning.md) — five long-lived sync primitives now (DB, cosine Arc, text encoder, watcher slot, indexing AtomicBool); typed-error migration surfaces poisoning as `ApiError::Cosine` instead of opaque strings; `parking_lot::Mutex` is still the strict-upgrade if it bites.
-- [fusion-architecture](notes/fusion-architecture.md) — end-to-end model of the multi-encoder fusion system: the indexing-vs-search loops, why per-encoder enable/disable replaced the picker, why RRF over score-fusion, where settings.json::enabled_encoders lives, lifecycle table, performance shape.
+- [random-shuffle-as-feature](notes/random-shuffle-as-feature.md) — the stable per-image `hash(id, seed)` key is now the feed's only ordering mechanism (v2's single shuffle feed replaced the four sort modes); in-cosine diversity sampling and tiered within-tier randomness remain intentional.
+- [dead-code-inventory](notes/dead-code-inventory.md) — the perf round's removals (primary `CosineIndexState`, `zustand`/`atropos`, the `setIsInspecting` verification) closed most of the previous residual; new orphans are `cosine_cache_path`/`save_to_disk`, left in place post-flat-store. Residual: 4 backend, 0 frontend, 1 dependency.
+- [mutex-poisoning](notes/mutex-poisoning.md) — fusion state collapsed to one `RwLock` (the primary cosine index and its separate lock are gone); typed-error migration surfaces poisoning as `ApiError::Cosine` instead of opaque strings.
+- [fusion-architecture](notes/fusion-architecture.md) — end-to-end model of the now fusion-only search state (the primary index was removed this round): the flat mmap `FlatStore` per encoder, indexing-vs-search loops, why RRF over score-fusion, lifecycle table, performance shape.
 - [encoder-additions-considered](notes/encoder-additions-considered.md) — research-grade inventory of candidate 4th-encoder additions (OpenCLIP-LAION, EVA-CLIP, MobileCLIP, perceptual hashes); decision rule + threshold for when to add one.
+- [performance-decisions](notes/performance-decisions.md) — durable record of the 100k performance round: commit ledger, rejected ideas with refuting evidence, deferred items with reopen triggers, standing constraints (ranking-equivalence gates, versioned cache headers, never paginate the grid, cached-not-assumed norms).

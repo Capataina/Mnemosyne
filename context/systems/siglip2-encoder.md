@@ -1,6 +1,6 @@
 # siglip2-encoder
 
-*Maturity: working*
+*Maturity: working · Stability: stable core, image branch gained a batched `encode_batch` override this round (T2-3, `ebe4006`) — verified equivalent to serial encode, not a behaviour change*
 
 ## Scope / Purpose
 
@@ -10,12 +10,14 @@ Both halves ship in one Rust file because they're trained together and only mean
 
 The user-facing pitch in `commands/encoders.rs` is: "Recommended for the 'Semantic Search' text query feature. Image branch is also strong; pick this if you want one encoder for both directions."
 
+The image branch's embeddings feed `systems/multi-encoder-fusion.md`'s RRF fusion across all three encoders; both branches are produced/consumed by the `Phase::Encode` sequence in `systems/indexing.md`.
+
 ## Boundaries / Ownership
 
 - **Owns:** image preprocessing (exact-square 256×256 bilinear, NO crop, mean=std=0.5 → [-1, 1]), text preprocessing (Gemma SentencePiece via `tokenizers` crate, pad to exactly 64 with id 0, NO attention_mask in the ONNX call), both ONNX session lifecycles (CPU only — neither branch is CoreML-tested), `pooler_output` extraction (MAP head — NOT CLS), L2-normalize at output, the encoder URL + filename + ID constants.
 - **Does not own:** writing embeddings to disk (delegates to `db.upsert_embedding(..., encoder_id="siglip2_base", ...)`), the cosine cache (delegates to `cosine-similarity`), the model files on disk (delegates to `paths::models_dir()` + `SIGLIP2_*_FILENAME`).
 - **Public API:**
-  - `Siglip2ImageEncoder::new(model_path)` plus `ImageEncoder` trait impl
+  - `Siglip2ImageEncoder::new(model_path)` plus `ImageEncoder` trait impl, with an **overridden `encode_batch`** (T2-3, commit `ebe4006`) — see Current Implemented Reality below
   - `Siglip2TextEncoder::new(model_path, tokenizer_path)` plus `TextEncoder` trait impl, with `tokenizer_for_diagnostic()` and `max_seq_length()` accessors mirroring `ClipTextEncoder`
   - Constants: `SIGLIP2_IMAGE_MODEL_URL`, `SIGLIP2_IMAGE_MODEL_FILENAME`, `SIGLIP2_TEXT_MODEL_URL`, `SIGLIP2_TEXT_MODEL_FILENAME`, `SIGLIP2_TOKENIZER_URL`, `SIGLIP2_TOKENIZER_FILENAME`, `SIGLIP2_ENCODER_ID`
 
@@ -95,6 +97,29 @@ Output: pooler_output, shape [1, 768]   (same head shape as the image branch)
 L2-normalize → return Vec<f32> length 768
 ```
 
+### Batch inference override (T2-3, commit `ebe4006`) — one `[N,3,256,256]` session call per chunk
+
+The vision export declares **dynamic** batch dims (verified during the quantisation work), so `Siglip2ImageEncoder::encode_batch` overrides the `ImageEncoder` trait's per-image default (the trait lives in `similarity_and_semantic_search/encoders.rs`) instead of falling through to it:
+
+```text
+encode_batch(paths):
+    for chunk in paths.chunks(32):                 // INFER_BATCH — bounds peak tensor memory
+        for path in chunk:
+            arr = preprocess(path)?                // `?` short-circuits on first decode error
+            batch_data.extend(arr.into_raw_vec())
+        onnx_input = Tensor::from_array(([n, 3, 256, 256], batch_data))
+        outputs = session.run(pixel_values: onnx_input)   // ONE call for the whole chunk
+        pooler_output  shape [n, 768]
+        for i in 0..n:
+            all_embeddings.push(normalize(&data[i*768 .. (i+1)*768]))
+```
+
+Preprocessing (resize + normalise) is unchanged per-image — only the ONNX call itself is batched, replacing N single-image `[1,3,256,256]` calls with one `[N,3,256,256]` call per 32-chunk. On CPU-only ORT (CoreML disabled) this is a **1.2–2× win on the inference portion**, not a GPU-style "32 calls → 1" collapse — the preprocessing cost (decode + resize + normalise) is untouched and dominates at this scale.
+
+**Failure semantics are preserved exactly, not relaxed.** The trait default this overrides is `image_paths.iter().map(|p| self.encode(p)).collect()` — `collect()`'s `Result` short-circuits on the *first* failing image, so today one bad image already fails the whole chunk (the indexing loop then records the entire 32-image chunk as failed, not just the bad image). The override reproduces this bit-for-bit: preprocessing short-circuits via `?` on the first decode error, so which images end up embedded is unchanged. The override deliberately does **not** isolate a bad image's failure to itself — smuggling in per-image isolation would be a behaviour change, not a preservation, and the wave-1 commit body explicitly flagged and corrected an earlier (false) claim that the trait default already isolated failures per-image.
+
+**Equivalence, verified against real models** (`tests/batched_encode_equivalence_diagnostic.rs`, `#[ignore]`, needs real downloaded weights): batched vs. serial `encode` per image at **cosine ≥ 0.9999996** (not exactly 1.0 — float accumulation order differs slightly between a batch-of-N matmul and N separate batch-of-1 matmuls). The committed test asserts a looser `cosine > 0.999` gate; the ≥0.9999996 figure is the actual measured result reported in the `ebe4006` commit body.
+
 ### Three preprocessing differences vs CLIP / DINOv2
 
 | Aspect | CLIP | DINOv2 | SigLIP-2 |
@@ -124,7 +149,7 @@ indexing.rs::run_trait_encoder("siglip2_base", make_encoder=Siglip2ImageEncoder:
     if siglip_path.exists():
         needs = db.get_images_without_embedding_for("siglip2_base")
         for chunk in needs.chunks(32):
-            embeddings = encoder.encode_batch(chunk_paths)
+            embeddings = encoder.encode_batch(chunk_paths)   // ONE [N,3,256,256] session call — see above
             for ((id, _path), embedding) in chunk.zip(embeddings):
                 db.upsert_embedding(id, "siglip2_base", embedding)
             emit Phase::Encode(processed, total)
@@ -132,6 +157,8 @@ indexing.rs::run_trait_encoder("siglip2_base", make_encoder=Siglip2ImageEncoder:
     else:
         warn "SigLIP-2 image model missing"
 ```
+
+Two chunk boundaries stack here: `indexing.rs` hands the encoder a slice of ≤32 image paths (`needs.chunks(32)`), and `encode_batch` itself re-chunks by its own `INFER_BATCH = 32` — redundant at today's chunk size but a defensive cap if a future caller ever passes a larger slice directly. See `systems/indexing.md` for the full Phase::Encode sequencing across all three encoder families.
 
 ### Text branch (semantic search path)
 
@@ -168,6 +195,7 @@ The SigLIP-2 text encoder is also pre-warmed during indexing (Phase 12d) — `in
 | Text model is 1.13 GB — large download + slow load | First launch on a fresh install | Most of the size is Gemma's 256k vocab embedding matrix. Acceptable trade-off for the cross-lingual capability. |
 | EP fallback is silent | Future CUDA attempt failing | CPU-only today; no EP probing. Forward-looking risk. |
 | The MAP head's `pooler_output` is the joint-space vector — not `last_hidden_state[:, 0, :]` | Future swap to a different export that adds a CLS token | Trying to extract CLS would produce wrong-space embeddings. The verification pass confirmed `pooler_output` is the right output by reading HF's `SiglipModel.get_text_features` source. |
+| Batched `encode_batch` preserves the trait default's whole-chunk failure semantics (T2-3) | A single corrupted image inside a 32-image chunk | The `?`-short-circuit on preprocessing fails the ENTIRE chunk of up to 32 images, same as before batching — a bad image's neighbours in the same chunk get recorded as failed too, not just the bad image itself. This is a preserved behaviour, not a new one, but worth knowing if failure counts look surprising. |
 
 ## Partial / In Progress
 
@@ -186,6 +214,7 @@ The SigLIP-2 text encoder is also pre-warmed during indexing (Phase 12d) — `in
 - **Pad token is id 0 (`<pad>`), not the EOS that CLIP uses.** Gemma's SentencePiece has distinct pad/eos/bos/unk tokens, unlike CLIP's "EOS doubles as pad" quirk.
 - **Resize is implemented via the shared `similarity_and_semantic_search/preprocess.rs` helper** (introduced Phase 12e), used identically by all three image encoders rather than each encoder inlining its own resize call.
 - **No prompt prefix needed.** Some SigLIP variants benefit from "This is a photo of {X}." framing, but SigLIP-2's released processor does no templating, the tokenizer config has no prompt template, and HF's `AutoProcessor` example calls `processor(text=labels, …)` with raw labels. Confirmed by the verification pass.
+- **Batching the ONNX call (not just preprocessing) was a deliberate T2-3 choice, contingent on the export's dynamic batch dim.** This only works because the vision export declares a symbolic (dynamic) batch dimension — the same choice made for CLIP's separate `visual/model.onnx` export would crash (see `clip-image-encoder.md` Durable Notes: CLIP's export has a FIXED batch dim of 1). The override preserves the trait default's whole-chunk failure semantics rather than adding per-image isolation, which the wave-1 commit explicitly called out as a correction to an earlier (incorrect) assumption.
 - **The 256×256 input size is a SigLIP-2 specific** — SigLIP v1 used 224. The `-256-ONNX` suffix in the HF repo name is significant; the non-suffixed variant returned 401 in the prior verification pass.
 - **Image preprocessing is exact-square stretch** because SigLIP-2 was trained that way. Aspect-preserving + crop (CLIP/DINOv2 style) would deviate from training-time geometry. The user-visible upside: every pixel of the original image contributes to the embedding (see `notes/preprocessing-spatial-coverage.md`).
 

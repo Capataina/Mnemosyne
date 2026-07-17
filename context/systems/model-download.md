@@ -2,6 +2,8 @@
 
 *Maturity: working*
 
+> **Verified 2026-07 (100k perf round):** `model_download.rs`'s +15/-9 delta since the previous upkeep baseline (`f29f202`) is confirmed via `git diff f29f202 HEAD -- apps/lynceus/src-tauri/src/model_download.rs` to be a **rustdoc-only correction**, not a behaviour change: the module doc and the `CLIP_VISION_URL` doc comment previously described the OpenCLIP `visual/model.onnx` export's ONNX I/O node names as `pixel_values`/`image_embeds` (carried over from the old OpenAI/Xenova export this one replaced) and the `textual/model.onnx` export as taking `input_ids` + a separate `attention_mask`; both were corrected after verifying directly against the downloaded model (`onnx.load(...).graph.input`) to the immich-app export's actual names — `image`/`embedding` for vision, `text`-only (no separate mask; it's baked into the graph from pad-token positions) for text. No URL, filename, download logic, or progress-callback behaviour changed. This context doc does not mirror ONNX I/O node names at that granularity (that level of detail lives in the source rustdoc and in `notes/clip-preprocessing-decisions.md`), so nothing below needed a corresponding edit — confirmed accurate as written, no touch.
+
 ## Scope / Purpose
 
 First-launch download manager for the seven ONNX / tokenizer files across three encoder families (CLIP, DINOv2, SigLIP-2). Pulls each file from its corresponding HuggingFace URL and writes them into `paths::models_dir()`. Skips files that already exist on disk. Supports a per-byte progress callback so the indexing pipeline's status pill can render a determinate bar across the ~2.5 GB of total downloads instead of a "Checking models..." flash followed by a multi-minute silent stretch.

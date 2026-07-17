@@ -1,11 +1,11 @@
 # window	hash	date	THEME	subject
 # Replace each 'TODO' in the THEME column with a theme key from lineage.themes[].key (in data.js). The script tallies lineage.buckets[].counts from this column on the next orchestrate run; do not hand-edit the counts.
-0	9b416de	2025-11-19	TODO	init
-0	3684b2b	2025-11-19	TODO	Revise README for Local Image Browser project
-0	f09600c	2025-11-19	TODO	Refactor README for clarity and formatting
+0	9b416de	2025-11-19	foundation	init
+0	3684b2b	2025-11-19	foundation	Revise README for Local Image Browser project
+0	f09600c	2025-11-19	foundation	Refactor README for clarity and formatting
 0	4ce9d9b	2025-11-19	foundation	added recursive image finder
-0	1a4569a	2025-11-19	TODO	Merge branch 'master' of https://github.com/Capataina/PinterestStyleImageBrowser
-0	11222e6	2025-11-19	TODO	Update README to reflect completed backend tasks
+0	1a4569a	2025-11-19	foundation	Merge branch 'master' of https://github.com/Capataina/PinterestStyleImageBrowser
+0	11222e6	2025-11-19	foundation	Update README to reflect completed backend tasks
 0	651aa4c	2025-11-20	foundation	added simple sqlite db
 0	2cfadd2	2025-11-21	foundation	added image struct
 0	8defc9a	2025-11-21	foundation	made simple db creation possible
@@ -16,15 +16,15 @@
 0	875f770	2025-11-24	foundation	combo box
 0	27e5b07	2025-11-24	foundation	animations
 0	d76c04e	2025-11-24	foundation	better selection animation
-0	3b7e554	2025-11-24	TODO	small fix
+0	3b7e554	2025-11-24	foundation	small fix
 0	01a4247	2025-11-24	foundation	focus
-0	2c8798c	2025-11-24	TODO	adding next image
-0	bae85e4	2025-11-24	TODO	idk
+0	2c8798c	2025-11-24	foundation	adding next image
+0	bae85e4	2025-11-24	foundation	idk
 0	5a43a27	2025-11-24	foundation	Merge pull request #2 from Capataina/feature/tags-and-frontend
 0	121b8c1	2025-11-24	retrieval	Add ONNX model and semantic search encoder
 0	14d0cb5	2025-11-24	foundation	Track empty models directory with .gitkeep
 0	41715af	2025-11-24	retrieval	Update encoder.rs
-0	491dbb3	2025-11-24	TODO	Update README.md
+0	491dbb3	2025-11-24	foundation	Update README.md
 0	08298df	2025-11-25	retrieval	Merge pull request #3 from Capataina/similarity-search
 0	16cf7d3	2025-11-25	retrieval	Add cosine similarity index and batch encoder
 0	90ff324	2025-11-25	retrieval	Add CUDA support and runtime checks to Encoder
@@ -48,32 +48,32 @@
 0	4cb04a7	2025-12-08	perf	Merge pull request #6 from Capataina/db-integration-and-performance-tweaks
 0	40e740f	2025-12-08	foundation	Add images.db to .gitignore
 0	1cabd82	2025-12-08	retrieval	Refactor encode_batch to use batch_preprocess_image function
-0	068a64b	2025-12-08	TODO	Merge pull request #7 from Capataina/claude/fix-todo-mixffzzxailpuvkt-01GKUAfAGd17JnhtCeh8XFyB
+0	068a64b	2025-12-08	foundation	Merge pull request #7 from Capataina/claude/fix-todo-mixffzzxailpuvkt-01GKUAfAGd17JnhtCeh8XFyB
 1	9bcefae	2025-12-09	retrieval	Add similar images API and batch encoding fix
 1	0b22e3d	2025-12-11	retrieval	Add robust embedding handling and debug logging
 1	759c7d4	2025-12-12	retrieval	Improve image path matching in get_similar_images
 1	20c4386	2025-12-12	retrieval	Merge pull request #8 from Capataina/show-similar-images-on-frontend
 1	0e33b1e	2025-12-13	retrieval	Add Pinterest-style tiered similar images and modal
-1	0650fd6	2025-12-13	TODO	Merge pull request #9 from Capataina/pinterest-layout
+1	0650fd6	2025-12-13	feedui	Merge pull request #9 from Capataina/pinterest-layout
 1	be7c6da	2025-12-13	pipeline	Add thumbnail support and migration to image DB
-1	d1f71b3	2025-12-13	TODO	Merge pull request #10 from Capataina/optimisations
-1	ff3ae34	2025-12-15	TODO	Mark completed milestones and tasks in README
+1	d1f71b3	2025-12-13	perf	Merge pull request #10 from Capataina/optimisations
+1	ff3ae34	2025-12-15	foundation	Mark completed milestones and tasks in README
 1	9286365	2025-12-17	pipeline	Randomize image order and update model path references
 1	444fdc7	2025-12-17	foundation	Add tag creation to SearchBar and TagDropdown, enhance MasonryItem
 1	1c54073	2025-12-17	retrieval	Add semantic search hook and update image handling
 1	ae000a9	2025-12-17	retrieval	Improve semantic search and tokenizer case handling
 5	50a7a6b	2026-03-04	retrieval	Merge pull request #11 from Capataina/semantic-text-search
-5	1b5ac35	2026-03-04	TODO	Revise README for clarity and update milestones
-7	063a39b	2026-04-25	TODO	Establish context/ memory layer; remove stale memory-bank
-7	12d9b07	2026-04-25	TODO	Remove paid test_images dataset and broken hardcoded-path tests
+5	1b5ac35	2026-03-04	foundation	Revise README for clarity and update milestones
+7	063a39b	2026-04-25	modular	Establish context/ memory layer; remove stale memory-bank
+7	12d9b07	2026-04-25	modular	Remove paid test_images dataset and broken hardcoded-path tests
 7	86df34e	2026-04-25	modular	Pass 2: scaffold and dead-code sweep + tag deletion + small fixes
 7	3b9ccd5	2026-04-25	pipeline	Pass 3: relocate user state to platform-correct app_data_dir
 7	47435f9	2026-04-25	retrieval	Pass 4a: native folder picker + scan root persistence
 7	f85c600	2026-04-25	retrieval	Pass 4b: first-launch CLIP model download from Hugging Face
 7	48a202c	2026-04-25	pipeline	Pass 5: async indexing pipeline + live progress UI
 7	7918e39	2026-04-25	retrieval	Pass 6: CLIP quality fixes + tracing migration + real error surfacing
-7	5b23bcf	2026-04-25	TODO	Add scripts/download_lol_splashes.py — recommended test corpus
-7	9181dca	2026-04-25	TODO	scripts: treat 403 the same as 404 in splash downloader
+7	5b23bcf	2026-04-25	modular	Add scripts/download_lol_splashes.py — recommended test corpus
+7	9181dca	2026-04-25	modular	scripts: treat 403 the same as 404 in splash downloader
 7	5fdecf2	2026-04-25	perf	Perf pass: CoreML EP, parallel thumbnails, model download UX, persistent cosine cache
 7	e3c96e6	2026-04-25	foundation	Dark theme + animation polish + redundant-feature sweep
 7	0908550	2026-04-25	pipeline	Multi-folder support + filesystem watcher + orphan detection
@@ -82,7 +82,7 @@
 7	3c2900f	2026-04-25	pipeline	Move user-state into <repo>/Library/ for project-local visibility
 7	2775c9f	2026-04-25	perf	Skip CoreML on the text encoder (transformer ops poorly supported)
 7	90a3842	2026-04-26	perf	Disable CoreML for the image encoder too — runtime inference errors
-7	2333fbc	2026-04-26	TODO	Comprehensive test suite: 96 new tests across backend + frontend
+7	2333fbc	2026-04-26	modular	Comprehensive test suite: 96 new tests across backend + frontend
 7	5910966	2026-04-26	perf	Stable grid order + perf-diagnostics master plan
 7	2f32f74	2026-04-26	perf	Performance diagnostics overlay + export to Library/exports/
 7	7e49b75	2026-04-26	perf	Profiling mode: --profile flag gates overlay + future telemetry
@@ -128,12 +128,12 @@
 7	334a45c	2026-04-26	retrieval	Phase 5 — multi-encoder rank fusion (RRF) replacing tiered top-k sampling
 7	882b46e	2026-04-26	modular	Phase 6 — code health bundle (clippy gate restored, dead deps removed)
 7	1761e4e	2026-04-26	perf	Phase 7 — diagnostics expansion: 1Hz system sampler + stall analysis report
-7	6e711d5	2026-04-26	TODO	docs: 2026-04-26 autonomous-session report + plan status update
+7	6e711d5	2026-04-26	modular	docs: 2026-04-26 autonomous-session report + plan status update
 7	ee95ef8	2026-04-26	perf	docs(context): upkeep pass after Tier 1+2 + Phase 4-7 perf bundle
 7	44ff366	2026-04-26	perf	Phase 11 — per-encoder toggles, parallel encoding, text-image fusion
 7	1ca42d2	2026-04-26	perf	Phase 12 — perf bundle from perf-1777226449 + empty-state regression fix
 7	ff7447b	2026-04-26	perf	docs(context): full upkeep pass — fix Library/ + --profile drift, refresh paths-and-state, mark plans, integrate audit output
-7	ecb4386	2026-04-26	TODO	docs(context): prune obsolete plan files; consolidate future-work into notes.md
+7	ecb4386	2026-04-26	modular	docs(context): prune obsolete plan files; consolidate future-work into notes.md
 8	7e5cf85	2026-04-29	modular	docs(readme): rewrite to reflect current feature surface; drop milestone scaffolding
 9	49efc38	2026-05-25	foundation	Remove iCloud sync-conflict duplicates and gitignore them
 11	00ee2fa	2026-07-15	commercial	Models move into the repo tree, and CLIP is swapped to a commercially-licensed OpenCLIP
@@ -141,3 +141,53 @@
 11	f7d1422	2026-07-15	commercial	Reshape into an apps/ monorepo and rebrand the product to Lynceus, the engine to Mnemosyne
 11	f1c23fa	2026-07-15	commercial	Remove AGENTS.md — intentionally dropped from this repo
 11	a547c8e	2026-07-15	commercial	docs(readme): rebrand to Lynceus/Mnemosyne and document the monorepo, OpenCLIP, and repo-local weights
+11	f29f202	2026-07-15	modular	Refresh context/ to the Mnemosyne/Lynceus monorepo reality; migrate architecture.md → architecture.html
+11	b58dd46	2026-07-15	commercial	Fix the OpenCLIP integration: three distinct bugs were silently killing CLIP embeddings, plus a progress-bar granularity fix
+11	8ab6d8c	2026-07-15	commercial	Add scripts/quantize_models.py — INT8 static-calibrated quantization working end to end; FP16 blocked on a real ONNX graph-transform bug
+11	7ea72fb	2026-07-15	commercial	settings: add model_precision field (fp32/fp16/int8) ahead of wiring it through the encoder constructors
+11	dd486bc	2026-07-15	commercial	Wire model_precision through every encoder call site: fp16/int8 quantized weights actually load now, not just sit on disk
+11	eea70f2	2026-07-15	commercial	Bundle model weights as a Tauri resource, closing the first-launch-download App Store review risk
+11	1c36143	2026-07-15	commercial	Implement macOS App Sandbox security-scoped bookmarks for user-picked root folders
+11	8dac69c	2026-07-15	feedui	DB schema: manual_order + manual_col_span columns on images, laying the groundwork for persisted drag-reorder and resize
+11	16c5a2f	2026-07-15	feedui	Masonry drag-to-reorder and drag-to-resize, closing out the "do those please" list from earlier this session
+11	958bdf6	2026-07-15	modular	Migrate the JS workspace from npm to pnpm, add just + convenience start scripts, and fix the Tauri version mismatch that had been sitting unaddressed
+11	7bafe15	2026-07-15	modular	The actual pnpm/just/version-bump content — the previous commit only captured the lockfile deletions
+11	50cefe3	2026-07-15	feedui	Fix masonry resize: native image drag was hijacking the gesture, and the resize handle's click was falling through to image selection
+11	caa773a	2026-07-15	feedui	Resize from all four corners with a small curved bracket indicator, and clarify why reorder looked totally broken
+11	e7b54dd	2026-07-15	foundation	README: sync feature list, sort-mode names, bundle ID, and test counts to what the code actually does
+11	b12ba46	2026-07-15	feedui	Rebuild the feed, masonry, and indexing-progress systems for v2 — the logic layer lands, the visual redesign is next
+11	977e693	2026-07-15	feedui	The v2 visual layer — a dark-gallery design system, built by gpt-5.6-sol against the locked logic contract
+11	49a3e0b	2026-07-15	foundation	README: sync the front door to v2 — single shuffle feed, smooth resize, adaptive thumbnails
+11	aa7e093	2026-07-15	feedui	v2 feel pass: drag/resize track the pointer, thumbnails pre-computed, wordmark returns home
+11	4dd85ba	2026-07-15	feedui	v2 polish: stop fast-drag tiles blanking out, OpenCLIP label, two-click reset, hover-prefetch
+11	dc4de4b	2026-07-15	retrieval	Record the CLIP re-encode fix — its diff was swept into 4dd85ba
+11	e60fb70	2026-07-15	feedui	Settings redesign + gesture-drawing timer mode, and the library-drawer components (built by gpt-5.6-sol)
+11	46fb75c	2026-07-15	perf	Prefetch every on-screen tile's similar-set, not just the hovered one
+11	f48241e	2026-07-15	perf	Parallelise the cosine search and warm the cache at startup — similarity stays instant at scale
+11	0f235d8	2026-07-15	feedui	Tag backend for the library drawer — per-tag counts + include/exclude filtering
+11	6bdb827	2026-07-15	feedui	Wire the library drawer live — folders-as-tags, include/exclude filters, a similarity breadcrumb trail, and native dialogs replaced
+11	55655a7	2026-07-15	pipeline	Indexing progress climbs per-image now, not per-batch — decouple the emit cadence from the batch-of-32 so a fresh index stops "feeling stuck"
+11	0534bfb	2026-07-15	feedui	Coherence pass: the search bar and the library drawer are now one filter, not two fighting over it
+11	161b511	2026-07-15	feedui	Coherence pass: reorder respects the exclude filter, and the drawer's folder counts stay live
+11	656abc5	2026-07-15	feedui	Coherence pass: kill a selection render-loop crash and three filter/selection state leaks
+11	0cb4f07	2026-07-15	feedui	Coherence pass: stop serving stale similarity/search/count results after the thing they depend on changes
+11	447e557	2026-07-15	feedui	Coherence pass: a filter now always acts on what you can see — the search bar is fully controlled and filtering leaves competing views
+11	889b765	2026-07-15	feedui	Masonry: resize and drag no longer freeze the UI — the whole grid stopped re-packing on every pointer frame
+11	406de87	2026-07-16	perf	Capture the 100k-scale performance roadmap as a plan-file set
+11	243bbda	2026-07-16	feedui	Close the v2 round: sync the README to the shipped features and bump 0.3.1 → 0.4.0
+11	780a4f8	2026-07-17	perf	Performance roadmap survives its own audit: 20 advisor ideas verified against the code, culled to 12 items in 3 tiers
+11	ebe4006	2026-07-17	perf	Perf round wave 1: nine verified roadmap items land — the render storm dies, scroll coalesces, scans batch, SigLIP/DINOv2 batch inference, and four smaller wins
+11	fc6667a	2026-07-17	perf	T3-2: search goes ID-native and the embedding caches collapse into flat, mmap-persisted stores — the backend 100k unlock lands
+11	3b719b5	2026-07-17	perf	Cargo.lock: the memmap2 entry that belonged in fc6667a
+11	012012c	2026-07-17	perf	T3-1 + T3-3: the feed stops re-materialising the world — compact manifest + delta protocol, and the masonry pack moves off the main thread onto typed arrays
+11	15d2476	2026-07-17	perf	Merge branch 'master' into worktree-agent-aa375b7ba897f5354
+11	fcad704	2026-07-17	feedui	Timer UX overhaul: setup moves into a redesigned inspector panel, and a hover pill on the selected hero quick-starts a session
+11	1514a90	2026-07-17	perf	The primary cosine index dies, and its removal fixes a staleness regression the reroute had quietly created — post-index search is fresh again
+11	44737d9	2026-07-17	perf	Close the performance round: 0.4.0 → 0.5.0, the plan folder retires, and its durable knowledge moves to context/notes
+11	a3e18ee	2026-07-17	TODO	Live-feedback pair: the quick-start pill sits inside the image now, and the encoder registry stops claiming the OpenAI weights we replaced a pivot ago
+11	5a001c0	2026-07-17	TODO	Pill positioning, properly this time: layout and reveal animation stop sharing one transform
+11	5ce6581	2026-07-17	TODO	Timer's second image no longer renders blank: the predecode warm-cache race with WebKit's load event is settled at mount
+11	60c7c2b	2026-07-17	TODO	Note the telemetry architecture decision: engine-owned sink, app-local capture, extract-on-Syrinx trigger
+11	1517604	2026-07-17	TODO	just lynceus-dev-telemetry: one command to launch with the profiling layer armed
+11	6b72b52	2026-07-17	TODO	Telemetry v2: the app becomes self-describing under profiling — every interaction carries its DOM path, errors freeze-frame the app state
+11	e31a809	2026-07-17	TODO	Timer running view: the artwork takes the whole viewport, chrome floats over it, and the reference is fully zoomable — pinch, pan, double-tap, keys

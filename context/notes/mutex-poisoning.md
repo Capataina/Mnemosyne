@@ -2,27 +2,52 @@
 
 ## Current Understanding
 
-Five long-lived sync primitives live for the lifetime of the app:
+Six long-lived sync primitives live for the lifetime of the app (five rows below — the
+text-encoder row holds two independent Mutexes, one per encoder family). The cosine/fusion row
+changed shape in the T3-2 perf round (`fc6667a` + `1514a90`): the old primary
+`Arc<Mutex<CosineIndex>>` (`CosineIndexState`) is GONE — removed outright, not just
+renamed — and `FusionIndexState`'s `Arc<RwLock<HashMap<String, CosineIndex>>>` is now the
+ONLY resident embedding-cache lock in the app. See `systems/cosine-similarity.md`'s Durable
+Notes for why the primary was removed (it had no genuine reader left once every search
+command was rerouted onto fusion slots) and `systems/multi-encoder-fusion.md` for the
+lock's double-checked-locking shape.
 
 | Primitive | Owner | Acquired by |
 |-----------|-------|-------------|
 | `Mutex<rusqlite::Connection>` | each `ImageDatabase` instance (foreground + background indexing) | every DB method (~30 sites across `db/`) |
-| `Arc<Mutex<CosineIndex>>` | `CosineIndexState.index` (shared with indexing thread) | every similarity / semantic command + `cosine.populate_from_db` + `cosine.save_to_disk` |
-| `Mutex<Option<TextEncoder>>` | `TextEncoderState.encoder` | `commands::semantic::semantic_search` + indexing pipeline pre-warm |
+| `Arc<RwLock<HashMap<String, CosineIndex>>>` | `FusionIndexState.per_encoder` — the only embedding cache; shared with the indexing thread | every similarity / semantic command (via `ranked_for_encoder` / `with_encoder_index`) + `indexing.rs`'s `Phase::Ready` refresh loop + `spawn_cache_warm` + the root-mutation IPCs' `invalidate_all()` |
+| `Mutex<Option<ClipTextEncoder>>` + `Mutex<Option<Siglip2TextEncoder>>` | `TextEncoderState.encoder` / `.siglip2_encoder` — two slots, not one, since the SigLIP-2 text encoder shipped | `commands::semantic::semantic_search`'s `encode_with_clip` / `encode_with_siglip2` |
 | `Arc<Mutex<Option<WatcherHandle>>>` | `watcher_state` (slot for the debouncer handle) | lib.rs setup callback |
 | `Arc<IndexingState>` (`AtomicBool`) | `indexing_state` | every command that triggers an index + watcher debounce closure |
 
-DB methods use `.lock().unwrap()` — the project treats Mutex poisoning as unrecoverable; a panic with the lock held should bring down the session and force a restart. Tauri command bodies use `?` (which routes through the `From<PoisonError<T>> for ApiError` impl) so poisoning surfaces as `ApiError::Cosine("mutex poisoned: ...")` to the frontend instead of crashing the Tauri process.
+DB methods use `.lock().unwrap()` — the project treats Mutex poisoning as unrecoverable; a panic with the lock held should bring down the session and force a restart. Tauri command bodies use `?` (which routes through the `From<PoisonError<T>> for ApiError` impl, and — for the fusion `RwLock` — a matching `map_err(|e| format!("fusion rwlock poisoned: {e}"))` on both `.read()` and `.write()`) so poisoning surfaces as a typed error to the frontend instead of crashing the Tauri process.
 
-If any code panics while holding one of the Mutexes, the lock is poisoned for the rest of the session — every subsequent `.lock()` on it returns `Err(PoisonError)`. Recovery requires restarting the app. The user gets typed errors instead of vague stringly-typed ones thanks to the `From<PoisonError>` impl, which is an improvement over the pre-typed-error state.
+If any code panics while holding one of these locks, it is poisoned for the rest of the session — every subsequent acquisition on it returns an error (`Err(PoisonError)` for a `Mutex`; both `RwLock::read()` and `RwLock::write()` poison identically on a panicking writer). Recovery requires restarting the app. The user gets typed errors instead of vague stringly-typed ones thanks to the `From<PoisonError>` impl / the fusion lock's own `map_err`, which is an improvement over the pre-typed-error state.
 
-## Why the contention pressure is now real
+## Why the contention pressure is now real, and simpler than it was
 
-WAL means foreground reads no longer block background writes (`systems/database.md`). But the cosine `Arc<Mutex<CosineIndex>>` is shared across the indexing thread (writes via `populate_from_db` + `save_to_disk`) AND the foreground commands (reads via the 3 retrieval methods). Concurrent foreground similarity queries during the cosine_repopulate phase contend on this Mutex; the foreground waits a few hundred ms for the populate to finish.
+WAL means foreground reads no longer block background writes (`systems/database.md`). The
+fusion `RwLock` is shared across the indexing thread (writes via `Phase::Ready`'s
+`refresh_if_stale` + `save_store_for`, one write lock per encoder released between encoders)
+AND the foreground commands (reads via `ranked_for_encoder` / `with_encoder_index`, which
+themselves briefly escalate to a write lock only on a cold/stale slot). Concurrent
+foreground queries against the SAME encoder the pipeline is actively refreshing contend on
+that encoder's populate+persist window (~0.5-1s at 100k; see
+`systems/cosine-similarity.md`'s Known Issues); queries against a different, unaffected
+encoder are unaffected — the write lock is per-encoder-iteration, not held across the whole
+refresh.
 
-Pre-Phase-5 the indexing pipeline ran inside `main()` (blocking pre-Tauri). The cosine Mutex contention didn't matter because the foreground couldn't issue queries while indexing was happening. Now it can — and does, briefly.
+**Lock discipline got simpler, not subtler, this round.** Before the primary index's
+removal, a caller could in principle need both the primary index's lock AND a fusion slot's
+lock in a fixed order to avoid AB-BA deadlock — the previous version of this note documented
+exactly that `current_encoder_id` → primary-index two-lock order as something to watch. With
+the primary gone, there is exactly ONE lock in the whole embedding-cache path. There is no
+ordering discipline to get wrong because there is nothing left to order against.
 
-This makes the cost of a poison panic higher than it was. A panic during `populate_from_db` poisons the Arc<Mutex>, and every subsequent foreground similarity query fails until restart.
+This makes the cost of a poison panic on the fusion lock similar in kind to before (a panic
+during a populate poisons the `RwLock`, and every subsequent foreground similarity/semantic
+query fails until restart) but the blast radius is now precisely "every encoder's cache,"
+since it's the only cache — there is no longer a separate primary to also worry about.
 
 ## Rationale
 
@@ -47,9 +72,9 @@ The typed-error migration (commit `cda7caa`) made the poison case observable: th
 ## Trigger to revisit
 
 - A real session loses functionality after a single panic and the user reports it.
-- A new Tauri command path holds two mutexes simultaneously (currently the most-locks-held-at-once is `semantic_search`, which holds the text encoder Mutex *then* the cosine Mutex — non-overlapping in scope).
+- A new Tauri command path holds two locks simultaneously (currently the most-locks-held-at-once is `semantic_search`, which locks a text-encoder Mutex inside `encode_with_clip`/`encode_with_siglip2` — dropped when that helper returns — *before* taking the fusion `RwLock` in `with_encoder_index`; still non-overlapping in scope, same as pre-round, just against a `RwLock` now instead of the old primary-cache `Mutex`).
 - Cross-session poisoning becomes observable in any non-trivial QA run.
-- The cosine Mutex contention measured in profiling exceeds a comfortable threshold (today's brief contention during the populate phase is acceptable).
+- The fusion `RwLock` contention measured in profiling exceeds a comfortable threshold (today's brief per-encoder contention during the `Phase::Ready` refresh — ~0.5-1s/encoder at 100k, see `systems/cosine-similarity.md` — is judged acceptable; a sustained user complaint here is the trigger, not the measurement alone).
 
 At that point: `parking_lot::Mutex` swap, then add `catch_unwind` at command bodies as a defence-in-depth.
 

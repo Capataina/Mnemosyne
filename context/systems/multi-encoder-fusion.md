@@ -1,19 +1,31 @@
 # Multi-Encoder Rank Fusion
 
-*Maturity: working*
+*Maturity: working · Stability: unstable*
 
 ## Scope / Purpose
 
 Image-image similarity ("View Similar") and text-image search (typed queries) both combine rankings from every enabled, applicable encoder via Reciprocal Rank Fusion (RRF) instead of returning top-K from a single encoder. This system covers the fusion algorithm, the per-encoder cache state shared by both paths, the two IPC entry points, and how the previous tiered random-sampling diversity strategy was retired.
 
+**Since the T3-2 perf round (`fc6667a` + `1514a90`), `FusionIndexState` is the ONLY resident
+embedding cache in the app.** The old primary `CosineIndexState` (a separate
+`Arc<Mutex<CosineIndex>>` the single-encoder search commands and the indexing pipeline used
+to read/write directly) is gone entirely — `get_similar_images`, `get_tiered_similar_images`,
+and `semantic_search` all now borrow a `FusionIndexState` slot via `with_encoder_index`
+instead of holding a duplicate cache. This file is now the canonical home for the shared
+search-state lifecycle, not just the RRF-specific fusion callers. See
+`systems/cosine-similarity.md`'s Durable Notes for the removal's full story (it also fixed a
+latent staleness regression) and `notes/mutex-poisoning.md` for the resulting lock inventory.
+
 ## Boundaries / Ownership
 
 | Component | Path | Role |
 |-----------|------|------|
-| RRF algorithm | `crates/engine/src/cosine/rrf.rs` | Pure: takes N ranked lists, returns one fused list. 6 unit tests pin the contract. Moved into the Mnemosyne engine crate by the 2026-07 monorepo extraction; re-exported unchanged at `similarity_and_semantic_search::cosine::rrf` so every call site in the product crate keeps resolving. |
-| Per-encoder cache state | `apps/lynceus/src-tauri/src/lib.rs::FusionIndexState` | `Arc<Mutex<HashMap<String, CosineIndex>>>` lazy-populated per encoder on first fusion call. |
-| Image-image IPC entry point | `apps/lynceus/src-tauri/src/commands/similarity.rs::get_fused_similar_images` | One Tauri command. Calls `ranked_for_encoder` × 3, fuses, resolves paths, returns `ImageSearchResult[]`. |
+| RRF algorithm | `crates/engine/src/cosine/rrf.rs` | Pure: takes N ranked lists, returns one fused list. `RankedList.items: Vec<(i64, f32)>` — ID-native since T3-2/#6. 6 unit tests pin the contract (fixtures use `i64` ids, not paths). Re-exported unchanged at `similarity_and_semantic_search::cosine::rrf`. |
+| Per-encoder cache state | `apps/lynceus/src-tauri/src/lib.rs::FusionIndexState` | `Arc<RwLock<HashMap<String, CosineIndex>>>` — an `RwLock`, not a `Mutex`, since T3-2/#8: a burst of concurrent queries against an already-warm encoder scores under a shared read lock instead of serialising on a Mutex. Lazy-populated per encoder on first use (see Cache lifecycle below), and the ONLY resident cache in the app — the primary `CosineIndexState` this table used to also list is removed. |
+| Image-image IPC entry point | `apps/lynceus/src-tauri/src/commands/similarity.rs::get_fused_similar_images` | One Tauri command. Calls `ranked_for_encoder` per enabled encoder, fuses, hydrates ids → `ImageSearchResult[]` via one batch `WHERE id IN` query. |
+| Single-encoder image-image commands | `apps/lynceus/src-tauri/src/commands/similarity.rs::{get_similar_images, get_tiered_similar_images}` | Non-fused single-encoder search, now borrowing the same `FusionIndexState` slot via `with_encoder_index` rather than a separate primary cache. |
 | Text-image IPC entry point | `apps/lynceus/src-tauri/src/commands/semantic_fused.rs::get_fused_semantic_search` | Mirrors `get_fused_similar_images` for text queries — encodes the query through every enabled text-capable encoder (CLIP, SigLIP-2; DINOv2 has no text branch), fuses via the same RRF. See the dedicated subsection below. |
+| Single-encoder text-image command | `apps/lynceus/src-tauri/src/commands/semantic.rs::semantic_search` | Also borrows a `FusionIndexState` slot (the matching image-encoder family for the chosen text encoder) via `with_encoder_index`. |
 | Frontend dispatch (image-image) | `apps/lynceus/src/queries/useSimilarImages.ts::useTieredSimilarImages` | Hook keeps its previous name (caller stability) but routes through `fetchFusedSimilarImages` under the hood. |
 | Frontend service (image-image) | `apps/lynceus/src/services/images.ts::fetchFusedSimilarImages` | IPC wrapper. |
 | Frontend service (text-image) | `apps/lynceus/src/services/images.ts::fetchFusedSemanticSearch` | IPC wrapper for `get_fused_semantic_search`. |
@@ -47,9 +59,48 @@ Every fused result carries a `per_encoder: Vec<(encoder_id, 1-based-rank, encode
 
 ### Cache lifecycle
 
-- **Lazy populate.** The first `get_fused_similar_images` call for encoder X triggers `populate_from_db_for_encoder(db, X)` and caches the result in `FusionIndexState.per_encoder["X"]`. Subsequent calls hit the warm cache.
-- **Invalidation.** `FusionIndexState::invalidate_all()` clears every slot. Wired into the same root-mutation IPCs that already invalidate `CosineIndexState`: `set_scan_root`, `remove_root`, `set_root_enabled`. Without this, fusion would happily return images from a now-disabled root.
-- **Memory cost.** ~6 MiB per encoder for 2000 images × 768 floats × 4 bytes. ~18 MiB total across CLIP+SigLIP-2+DINOv2.
+- **Double-checked locking, not a plain lazy populate.** `ranked_for_encoder` and
+  `with_encoder_index` (both on `FusionIndexState`) share the same shape: take a **read**
+  lock, and if the slot is already populated, score under that shared read lock and return
+  — this is the common case and lets concurrent queries against a warm encoder run in
+  parallel instead of serialising. Only on a miss does the caller take the **write** lock,
+  re-check (another thread may have populated between the read and write locks), and
+  populate. This replaces a plain `Mutex`-guarded lazy populate specifically to stop a
+  fused query (which touches up to 3 encoders) and the frontend's per-tile prefetch burst
+  from serialising on a single lock.
+- **Populate prefers the persisted flat store over a DB rebuild (T3-2/#8+#20).** Both
+  populate paths call `entry.load_store_if_valid(db, encoder_id)` FIRST — mapping the
+  on-disk `embstore_<encoder_id>.bin` zero-copy if its header + generation token are fresh
+  — and only fall back to `populate_from_db_for_encoder` on a miss or stale file. See
+  `systems/cosine-similarity.md` for the store format and freshness check.
+- **`spawn_cache_warm` pre-populates every enabled encoder's slot at launch**, on its own
+  thread, before the window opens — same mmap-preferred / DB-populate-then-persist order
+  as the lazy path above, so the FIRST similarity click after a warm (already-indexed)
+  launch hits an already-populated slot instead of paying a cold populate. On a first-ever
+  launch (empty DB) this is a no-op; the indexing pipeline populates as it indexes instead.
+- **The indexing pipeline refreshes + re-persists stale slots at `Phase::Ready`
+  (T3-2/#20).** For each enabled encoder, `refresh_if_stale` recomputes the generation
+  token and repopulates ONLY if it changed since the slot was last warmed, then
+  `save_store_for` re-persists the flat file so the next launch maps a current one. This is
+  what gives post-index search freshness now that the primary index (which the pipeline
+  used to repopulate directly) is gone — see `systems/cosine-similarity.md`'s Durable Notes
+  for the staleness regression this replaced and fixed. One write lock is taken per encoder,
+  released between encoders, so a concurrent query against an unaffected encoder never
+  waits on the whole loop — but a query against the encoder actively being refreshed does
+  block for that encoder's populate+persist duration (~0.5-1s at 100k; see
+  `systems/cosine-similarity.md`'s Known Issues and `notes/performance-decisions.md`).
+- **Invalidation.** `FusionIndexState::invalidate_all()` clears every slot (drops the
+  `FlatStore`s, unmapping any mmap'd files). Wired into the root-mutation IPCs:
+  `set_scan_root`, `remove_root`, `set_root_enabled`. Without this, fusion would happily
+  return images from a now-disabled root. Adding a root does NOT explicitly invalidate — new
+  images aren't scored until encoded and the next refresh picks them up, so there's nothing
+  stale to clear.
+- **Memory cost is now a mapped ceiling, not an allocated floor.** ~6 MiB per encoder for
+  2000 images × 768 floats × 4 bytes still holds as a rough per-library-size estimate, but
+  at 100k-image scale a warm slot loaded via `load_store_if_valid` is a zero-copy mmap view
+  — resident memory tracks what the OS actually pages in on demand, not the full file size
+  up front. A DB-populated (never-persisted, or stale-and-rebuilt) slot is still a fully
+  owned in-memory allocation until the next `save_store_for` persists it.
 
 ### Text-image fusion (`get_fused_semantic_search`) — Phase 11d, implemented
 
@@ -70,18 +121,26 @@ PinterestModal click
        └── fetchFusedSimilarImages(imageId, 30)  (services/images.ts)
             └── invoke("get_fused_similar_images", { imageId, topN: 30, perEncoderTopK })
                  └── get_fused_similar_images    (commands/similarity.rs)
-                      ├── db.get_all_images()                     ← exclude self
-                      ├── for each encoder in [CLIP, SigLIP-2, DINOv2]:
-                      │    ├── db.get_embedding(imageId, encoder) ← query vector
+                      ├── exclude_id = Some(imageId)               ← ID-native (T3-2/#6),
+                      │                                              no whole-library join
+                      ├── for each encoder in enabled_encoders():
+                      │    ├── db.get_embedding(imageId, encoder)  ← query vector
                       │    └── fusion_state.ranked_for_encoder(
-                      │          db, encoder, &q, top_k=150, exclude_path
-                      │        )                                  ← lazy populate + score
+                      │          db, encoder, &q, top_k=150, exclude_id
+                      │        )                                   ← double-checked lock,
+                      │                                               mmap-or-DB populate,
+                      │                                               score
                       ├── reciprocal_rank_fusion(lists, k=60, top_n=30)
-                      ├── for each fused entry: resolve_image_id_for_cosine_path
-                      └── return ImageSearchResult[]              ← scored by fused score
+                      ├── hydrate_search_results(db, &[(image_id, fused_score)])
+                      │        ← ONE `WHERE id IN (...)` batch query for all ~30 ids
+                      └── return ImageSearchResult[]                ← scored by fused score
 ```
 
-`per_encoder_top_k` defaults to `5 * top_n` (so 150 when `top_n=30`) — chosen empirically as enough candidate diversity from each encoder without inflating fusion cost.
+`per_encoder_top_k` defaults to `5 * top_n` (so 150 when `top_n=30`) — chosen empirically as
+enough candidate diversity from each encoder without inflating fusion cost. `hydrate_search_
+results` (`commands/mod.rs`) is the shared ID→`ImageSearchResult` batch hydrator every
+search command uses (fused and single-encoder alike) — see `systems/cosine-similarity.md`
+for its role in removing the old per-result thumbnail N+1.
 
 ## Implemented Outputs / Artifacts
 
@@ -98,7 +157,8 @@ PinterestModal click
 
 - **Frontend score labelling.** The fused score is not a cosine similarity and is unbounded. Currently the masonry grid doesn't display the score, so this is invisible to users; if a future tooltip surfaces it, it should be labelled "Fused" or normalised to [0, 1] for display. **Downstream impact:** users could misinterpret a fused score as a similarity percentage.
 - **Encoder set is hardcoded.** The list of fusion encoders lives in `commands/similarity.rs`. Adding a fourth requires editing one constant. **Downstream impact:** none; it's an additive change.
-- **First fusion call after launch is cold.** ~150 ms × 3 encoders ≈ 450 ms one-time warmup. **Downstream impact:** the first View-Similar click after app start feels slightly slower than subsequent clicks. Subsequent clicks are fast because the per-encoder caches are warm.
+- **First fusion call after launch is cold only when `spawn_cache_warm` hasn't finished, or on a first-ever (unindexed) launch.** Since T3-2/#8, `spawn_cache_warm` races the window opening to pre-map every enabled encoder's persisted flat store on its own thread, so on a normal (already-indexed) relaunch the warm-up usually completes before the user reaches a View-Similar click. If it hasn't, or the store is stale/missing (first launch, or a root change since the last save), the call pays a DB populate (~150 ms × N encoders) before the write lock releases. **Downstream impact:** unpredictable — usually invisible now, occasionally the old ~450 ms-for-3-encoders feel on a cold or freshly-changed library.
+- **A `Phase::Ready` refresh for a CHANGED encoder blocks queries against that encoder for its populate+persist duration (~0.5-1s at 100k).** See `systems/cosine-similarity.md`'s Known Issues and `notes/performance-decisions.md` for the full writeup and the named follow-up (build-outside-lock-then-swap).
 
 ## Partial / In Progress
 
@@ -113,7 +173,8 @@ PinterestModal click
 
 - **Why RRF rather than score-fusion.** Score-fusion (sum or mean of normalised cosines) sounds simpler but is fragile: encoders produce cosines on different distributions (CLIP cosines cluster differently than DINOv2's), so one encoder's "0.85" is not comparable to another's "0.85". RRF discards the score entirely — only the rank matters — which makes it robust to encoder-distribution differences. This is documented at length in `cosine/rrf.rs`'s module docstring.
 - **Why uniform `k_rrf=60` rather than per-encoder.** Per-encoder `k_rrf` would let us say "DINOv2's contribution decays slower because we trust its visual judgement more." Tempting but unprincipled — every weighting scheme requires a held-out validation set to tune. The Cormack 2009 paper picks 60 specifically because it balances top-of-list dominance vs consensus contribution across diverse retrieval tasks. Until we have a labelled retrieval-quality test set, uniform 60 is the right default.
-- **Why per-encoder caches not single shared cache.** The primary `CosineIndex` holds one encoder at a time (the user's "active" image encoder). Fusion needs all three resident *simultaneously* so it can score the same query in each space without paying populate-roundtrip per fusion call. ~18 MiB total is a small price for skipping ~150 ms × 3 cold populates per click.
+- **Why per-encoder caches not a single shared cache.** Fusion needs all three encoders' embeddings resident *simultaneously* so it can score the same query in each space without paying a populate-roundtrip per fusion call. This was true even before T3-2, and it's the reason the pre-round architecture's separate "primary" single-encoder cache was pure duplication once fusion shipped — the primary held one encoder, `FusionIndexState` already held all enabled ones, so the primary's only real content overlapped a slot fusion already had warm. T3-2/#8 recognised this fully and removed the primary, routing every single-encoder command through the same fusion slots (see `systems/cosine-similarity.md`'s Durable Notes). ~18 MiB (pre-100k estimate) to a few hundred MB mapped (at 100k) across encoders is a small price for skipping repeated cold populates per click.
+- **Why the fusion `RwLock` replaced the old two-lock (`current_encoder_id` → primary index) order.** Before the primary's removal, a caller could in principle need both the primary index's lock AND a fusion slot's lock, in a fixed order, to avoid AB-BA deadlock. With the primary gone there is exactly one lock (`FusionIndexState`'s `RwLock`) in the whole embedding-cache path — no ordering discipline is needed because there's nothing left to order against. See `notes/mutex-poisoning.md`.
 - **Why route through `useTieredSimilarImages` rather than introduce `useFusedSimilarImages`.** Renaming the hook would force a wave of import updates across PinterestModal and any future consumers without changing behaviour. Caller stability won; the hook's docstring documents that it now does fusion under the hood.
 - **The previous tiered-random-sampling system is preserved** at `cosine/index.rs::get_tiered_similar_images` for reference, but the frontend no longer calls it. Could be deleted in a future hygiene pass; kept for now in case fusion behaves unexpectedly and we need a fallback.
 
@@ -123,7 +184,19 @@ The previous diversity strategy `cosine/index.rs::get_tiered_similar_images` (7-
 
 ## Related Systems
 
-- `cosine-similarity` — RRF reuses `CosineIndex::populate_from_db_for_encoder` and `get_similar_images_sorted` per encoder.
+- `systems/cosine-similarity.md` — the `CosineIndex`/`FlatStore` machinery every fusion slot
+  wraps: population, scoring, the generation-token freshness check, and mmap persistence.
+  This file owns the shared-state lifecycle (locking, warm/refresh/invalidate); that file
+  owns what's inside each slot.
+- `systems/indexing.md` — the pipeline's step 7 (`refresh_if_stale` + `save_store_for`) is
+  what keeps fusion slots fresh after an index; `spawn_cache_warm` is this file's launch-time
+  counterpart.
+- `notes/mutex-poisoning.md` — the lock inventory; the fusion `RwLock` is now the only lock
+  in the embedding-cache path (no AB-BA surface).
+- `notes/fusion-architecture.md` — the conceptual two-loop model (indexing vs search) this
+  file's algorithm and cache lifecycle implement mechanically.
+- `notes/performance-decisions.md` — the T3-2 round's full narrative, including the honest
+  residual (Phase::Ready refresh blocking a changed encoder's queries) this file surfaces.
 - `database` — fusion reads from the per-encoder `embeddings` table via `get_embedding` and `get_all_embeddings_for`.
 - `search-routing` — the frontend dispatch path. `useTieredSimilarImages` is consumed by `PinterestModal` for the "View Similar" UX.
 - `tauri-commands` — `get_fused_similar_images` is registered in `lib.rs::run`'s `invoke_handler!`.

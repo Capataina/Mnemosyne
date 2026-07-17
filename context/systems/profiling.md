@@ -2,6 +2,8 @@
 
 *Maturity: comprehensive*
 
+> **Verified 2026-07 (100k perf round):** `perf.rs`, `perf_report.rs`, and `commands/profiling.rs` are byte-for-byte unchanged since the previous upkeep baseline (`f29f202`) — confirmed via `git diff f29f202 HEAD` against all three, empty. `cosine/diagnostics.rs` did change (+55/-56, `1514a90`) but purely as a data-source signature migration onto the new `FlatStore` — see the callout under "Domain diagnostics" below for the one corrected stale signature; the diagnostic-emission list, payload shapes, and every other section here were re-checked against current code and remain accurate.
+
 ## Scope / Purpose
 
 Opt-in performance diagnostics. When the binary is launched with the `--profiling` CLI flag (named `--profiling`, NOT `--profile`, because Tauri 2's CLI has its own `--profile <NAME>` for cargo profile selection — they collide) OR with the `PROFILING=1` env var set, every meaningful operation (Tauri commands, indexing phases, model downloads, watcher events, cosine retrievals, DB methods) emits `tracing` spans that are aggregated by an in-process `PerfLayer`, written to a JSONL timeline on disk, correlated with user-action breadcrumbs from the frontend, and rendered into a markdown report on app exit. The frontend mirrors the flag with a `<PerfOverlay>` panel (cmd+shift+P) and a `perfInvoke` wrapper that emits per-IPC start/end events.
@@ -157,10 +159,12 @@ The full diagnostic catalogue (current as of 2026-04-26):
 Diagnostics emit at the call site, not via tracing — they are richer than fields-on-a-span and fire only when interesting (per-search, per-cache-load, once-per-session). The `score_distribution`, `query_embedding`, and `path_resolution_outcomes` payloads are nested INSIDE the `search_query` diagnostic rather than emitted separately, because they're meaningful only in the context of a specific query.
 
 The four `cosine/diagnostics.rs` helpers are stateless functions (no `self`) so they can be called from anywhere without coupling to CosineIndex internals:
-- `embedding_stats(&[(PathBuf, Array1<f32>)]) -> Value`
-- `pairwise_distance_distribution(&[(PathBuf, Array1<f32>)]) -> Value`
-- `self_similarity_check(&[(PathBuf, Array1<f32>)]) -> Value`
+- `embedding_stats(&FlatStore) -> Value`
+- `pairwise_distance_distribution(&FlatStore) -> Value`
+- `self_similarity_check(&FlatStore) -> Value`
 - `score_distribution_stats(&[f32]) -> Value`
+
+> **Signature migration (1514a90, +55/-56 in `cosine/diagnostics.rs`):** these three took `&[(PathBuf, Array1<f32>)]` (the old owned per-encoder cache) before the flat mmap embedding store replaced it; they now take `&FlatStore` and read rows via `store.row(r)` / `store.ids()[r]` / `store.dim()` / `store.len()` instead of iterating `(path, embedding)` tuples. The stat computations themselves (L2 norms, dim means/vars, pairwise cosine buckets, self-similarity) are unchanged — same algorithm, same output shape — this is a data-source migration, not a diagnostic-behaviour change. The one payload difference: `embedding_stats`'s "first 3 sample embeddings" now tag each sample with `"image_id": store.ids()[r]` instead of `"path": <file_name>` (the flat store has no path field — image identity is the id, consistent with the rest of the T3-2 ID-native rewrite). `score_distribution_stats` is untouched (it already took a plain `&[f32]` of scores, not embeddings).
 
 The `interpretation` field convention (a human-readable verdict like "OK", "WARNING — near-zero norm", "BROKEN — NaN in embedding") appears in 5+ diagnostics and is the primary signal for someone reading the report quickly. The detailed numbers are for follow-up; the interpretation tells you whether to bother.
 
@@ -179,6 +183,26 @@ The system relies on every relevant code path being instrumented. Current covera
 | Frontend | — | `<Profiler id="masonry">` around the Masonry tree via `onRenderProfiler` callback |
 
 All instruments are info-level so they only fire under `--profiling` (the env filter is `warn,lynceus_lib=info,lynceus=info,mnemosyne=info` — the commercialisation refactor added the `mnemosyne=info` target so spans in the engine crate, e.g. `cosine/index.rs` and `db/*`, fire too).
+
+### Frontend automatic capture layer — telemetry v2 (`6b72b52`)
+
+`services/telemetry.ts` arms once from `App.tsx` iff profiling resolves true, and turns the
+breadcrumb trail from hand-instrumented to self-describing, all through the existing
+`record_user_action` IPC (no backend changes). Four surfaces: (1) capture-phase
+click/contextmenu + shortcut-grade keydown listeners record every interaction with a
+synthesised target descriptor and its ancestor DOM path (`ui_click`, `ui_key` — descriptor
+precedence id > `data-*` > aria-label > classes); (2) `window` error + `unhandledrejection` +
+a reentrancy-guarded tee on `console.error/warn` land in the timeline (`js_error`,
+`unhandled_rejection`, `console_error/warn`), with the capture-phase window listener also
+receiving non-bubbling resource errors so `<img>` failures are first-class (`img_error` with
+src/DOM path/naturalWidth); (3) a `PerformanceObserver` flags >500ms resource loads
+(`slow_resource`); (4) `state_bundle` freeze-frames — pruned DOM outline (150k-char budget,
+explicit truncation marker), react-query cache summary (keys + lifecycle, never data), and
+route — fire on errors (debounced 10s) and on demand via ⌘⇧M (`mark_moment`). Privacy is
+enforced in code and test-locked: plain typing into editable targets is never recorded, and
+descriptors/outlines never read form-control values. The module is deliberately app-logic-free
+— it is the seed of the future shared package per the extraction-on-Syrinx trigger in
+`notes/performance-decisions.md`. Launch via `just lynceus-dev-telemetry` (sets `PROFILING=1`).
 
 ## Key Interfaces / Data Flow
 

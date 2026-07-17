@@ -1,15 +1,15 @@
 # clip-image-encoder
 
-*Maturity: comprehensive*
+*Maturity: comprehensive · Stability: stable — deliberately excluded from the T2-3 batch-inference work (`ebe4006`) because the export's fixed batch-dim-1 makes true batching unsafe; the write path was also verified and updated this pass (per-encoder needs-set + single-transaction batch write, legacy column no longer written)*
 
 ## Scope / Purpose
 
-Loads OpenCLIP LAION-2B ViT-B/32's separate `vision_model.onnx` (MIT-licensed; swapped from OpenAI's non-commercial CLIP export 2026-07 — weights-only, see Durable Notes) and produces 512-dimensional L2-normalised `f32` embeddings for image files. Runs CPU-only on macOS (CoreML's runtime inference fails on this graph) and tries CUDA on non-macOS, both with CPU fallback. Driven by the indexing pipeline's encode phase to populate `images.embedding` BLOB + the per-encoder `embeddings(image_id, encoder_id="clip_vit_b_32", embedding)` row for every image lacking one.
+Loads OpenCLIP LAION-2B ViT-B/32's separate `visual/model.onnx` (cached on disk as `clip_vision.onnx`; MIT-licensed, swapped from OpenAI's non-commercial CLIP export 2026-07 — weights-only in intent, see Durable Notes) and produces 512-dimensional L2-normalised `f32` embeddings for image files. Runs CPU-only on macOS (CoreML's runtime inference fails on this graph) and tries CUDA on non-macOS, both with CPU fallback. Driven by the indexing pipeline's encode phase (`systems/indexing.md`) to populate the per-encoder `embeddings(image_id, encoder_id="clip_vit_b_32", embedding)` row for every image lacking one; the legacy `images.embedding` BLOB is no longer written by this path (see Key Interfaces below). Consumed by `systems/multi-encoder-fusion.md`'s RRF fusion across all three encoders.
 
 ## Boundaries / Ownership
 
 - **Owns:** image preprocessing (aspect-preserving bicubic resize + center-crop + CLIP-native normalization), ONNX session lifecycle with EP fallback, single + batched inference, L2-normalize at output.
-- **Does not own:** writing embeddings to disk (delegates to `db.update_image_embedding` + `db.upsert_embedding`), CUDA / CoreML detection (relies on `ort`'s built-in fallback semantics), the model file on disk (delegates to `paths::models_dir()` + `model_download::CLIP_VISION_FILENAME`), text-side encoding (lives in `clip-text-encoder`).
+- **Does not own:** writing embeddings to disk (delegates to `db.upsert_embeddings_batch("clip_vit_b_32", rows, legacy_clip_too=false)`, one transaction per 32-chunk — see Key Interfaces below), CUDA / CoreML detection (relies on `ort`'s built-in fallback semantics), the model file on disk (delegates to `paths::models_dir()` + `model_download::CLIP_VISION_FILENAME`), text-side encoding (lives in `clip-text-encoder`).
 - **Public API:** `ClipImageEncoder::new(model_path)`, `inspect_model`, `preprocess_image`, `batch_preprocess_image`, `encode`, `encode_batch`. Implements the `ImageEncoder` trait so the indexing pipeline can dispatch via `Box<dyn ImageEncoder>`.
 
 ## Current Implemented Reality
@@ -44,22 +44,24 @@ Reshape to ndarray::Array4 with shape (1, 3, 224, 224)
 ort::Tensor::from_array((shape, raw_vec))
     │
     ▼
-Session::run with ONE input (separate vision_model.onnx — no dummy text inputs):
-    pixel_values    ← image tensor
+Session::run with ONE input (separate visual/model.onnx — no dummy text inputs):
+    image    ← image tensor
     │
     ▼
-Output: image_embeds, shape [1, 512]
+Output: embedding, shape [1, 512]
     │
     ▼
 L2-normalize via super::encoder_text::pooling::normalize
     └─► return Vec<f32> length 512
 ```
 
+**I/O node names are `image` → `embedding`, not `pixel_values` → `image_embeds`.** Those were the OLD Xenova export's names; the current OpenCLIP `visual/model.onnx` (immich-app) export renamed both (`image` was `pixel_values`, `embedding` was `image_embeds`). Calling the new export with the old names errors at `session.run` with "Invalid input name" — this was Bug 1 of three fixed together in `b58dd46` (2026-07-15), the same commit that fixed the fixed-batch-dim-1 issue described in Batch Encoding below.
+
 ### The "no dummy text inputs" change
 
 Pre-2026-04-26 the encoder used Xenova's combined-graph CLIP export, which bundled image and text encoders in a single ONNX graph. Calling it for image-only inference required supplying dummy `input_ids: [[0]]` and `attention_mask: [[1]]` to satisfy the graph signature.
 
-The current build uses the **separate** `vision_model.onnx`. Inputs are reduced to just `pixel_values`, simplifying the call shape and removing the unused text branch from session memory. This was part of the same change that switched the text encoder from the multilingual distillation to OpenAI English (see `clip-text-encoder.md`) — both halves were swapped together to keep the embedding space consistent. (At the time, the export still came from Xenova's OpenAI-CLIP repo; the vision/text weights were later re-sourced from `immich-app/ViT-B-32__laion2b-s34b-b79k` — see Durable Notes below. The tokenizer export is the only piece still mirrored from Xenova.)
+The current build uses the **separate** `visual/model.onnx`. Inputs are reduced to just the one image tensor (named `image` on the current export), simplifying the call shape and removing the unused text branch from session memory. This was part of the same change that switched the text encoder from the multilingual distillation to OpenAI English (see `clip-text-encoder.md`) — both halves were swapped together to keep the embedding space consistent. (At the time, the export still came from Xenova's OpenAI-CLIP repo, with I/O named `pixel_values`/`image_embeds`; the vision/text weights were later re-sourced from `immich-app/ViT-B-32__laion2b-s34b-b79k` — see Durable Notes below — which renamed the I/O to `image`/`embedding` and required the `b58dd46` fix noted above. The tokenizer export is the only piece still mirrored from Xenova.)
 
 ### Execution provider — CoreML disabled, CPU-only on macOS
 
@@ -83,13 +85,19 @@ fn build_session_with_accel(model_path: &Path) -> Result<Session, Box<dyn Error>
 
 CoreML was disabled mid-2026 after the runtime-failure pattern was confirmed across multiple ort releases. The encoder.rs file header carries the diagnosis: ort's CoreML EP partition decision is permissive at compile time but the resulting graph doesn't actually run. CPU on M-series is ~200–500 ms per image — acceptable for the project's library sizes (1500–10k images).
 
-### Batch encoding
+### Batch encoding — stays per-image, on purpose, unlike SigLIP-2/DINOv2
 
 ```rust
 pub fn encode_batch(&mut self, paths: &[&Path]) -> Result<Vec<Vec<f32>>>
 ```
 
-Pre-processes every image in `paths` serially (could be rayon-parallelised), then runs a single `Session::run` with a stacked tensor of shape `[batch_size, 3, 224, 224]`. Default batch size in the indexing pipeline is 32. Output is `[batch_size, 512]` which gets unstacked and L2-normalised per-row.
+This is a **durable constraint, not an oversight**: `encode_batch` pre-processes `paths` in chunks of 32 (`batch_preprocess_image`, bounding peak decode memory), but the ONNX call inside each chunk still runs **one `[1, 3, 224, 224]` inference per image**, not a single stacked `[N, 3, 224, 224]` call. SigLIP-2 (`siglip2-encoder.md`) and DINOv2 (`dinov2-encoder.md`) both got a true batched-tensor override in T2-3 (commit `ebe4006`); CLIP was deliberately left out of that work because its export can't take it — see the fixed-batch-dim-1 reasoning below.
+
+**Why CLIP can't take the same batching the other two encoders got.** The OpenCLIP `visual/model.onnx` export (`immich-app/ViT-B-32__laion2b-s34b-b79k`) declares a **FIXED** batch dimension of 1 on its `image` input — `onnx.load(...).graph.input[0].type.tensor_type.shape.dim[0].dim_value == 1`, not a dynamic `dim_param` — unlike the old Xenova export it replaced (dynamic batch dim) and unlike SigLIP-2's/DINOv2's exports (both still dynamic). A stacked `[N, 3, 224, 224]` call against this export fails at `session.run` with ORT's `"Got invalid dimensions for input: image"`.
+
+This was discovered the hard way (`b58dd46`, 2026-07-15, landed the same day as the CLIP→OpenCLIP weights swap): the true-batched call silently failed on every indexing run, `encode_batch` returned `Err`, the whole chunk landed in `failed_paths`, and the only place that surfaces `failed_paths` is a perf diagnostic gated behind `--profiling` — so CLIP silently produced **zero** embeddings while DINOv2 and SigLIP-2 (still dynamic-batch at the time) encoded normally, with no error visible in the normal UI. Fixed by making `encode_batch` run one `[1, 3, 224, 224]` inference per image (same shape `encode()` already uses successfully) instead of trying to batch the ONNX call; the outer chunking by 32 stays for memory-bounding, but no longer feeds a multi-image tensor into the model.
+
+**Re-exporting to a dynamic batch dim is blocked on weights provenance, not effort.** The vision weights come from a third-party MIT-licensed re-export (`immich-app/ViT-B-32__laion2b-s34b-b79k`) chosen specifically for its commercial-safe licence after the 2026-07 OpenAI→OpenCLIP swap (see Durable Notes below); re-exporting it with a dynamic batch dim would mean re-running the ONNX export pipeline against weights whose provenance chain the project does not control end-to-end, which is exactly the kind of unverified-supply-chain risk the commercial-licensing swap was trying to eliminate. Until a dynamic-batch CLIP export with equivalent verified licensing surfaces, CLIP stays per-image.
 
 ### Where it runs
 
@@ -98,15 +106,17 @@ The indexing pipeline calls `ClipImageEncoder::new(image_model_path)` once per p
 ## Key Interfaces / Data Flow
 
 ```
-indexing.rs::run_clip_encoder:
+indexing.rs::run_clip_encoder_with_intra:
     image_model_path = paths::models_dir().join(model_download::CLIP_VISION_FILENAME)  // "clip_vision.onnx"
     if image_model_path.exists():
-        needs_embed = db.get_images_without_embeddings()
+        // Per-encoder needs-set, NOT the legacy images.embedding IS NULL column
+        // (R8 stopped writing that column — see below — so the legacy query
+        // would return the WHOLE library on every launch).
+        needs_embed = db.get_images_without_embedding_for("clip_vit_b_32")
         for chunk in needs_embed.chunks(32):
-            embeddings = encoder.encode_batch(chunk_paths)
-            for (image, embedding) in chunk.zip(embeddings):
-                db.update_image_embedding(image.id, embedding.clone())   // legacy column
-                db.upsert_embedding(image.id, "clip_vit_b_32", embedding) // per-encoder table
+            embeddings = encoder.encode_batch(chunk_paths)   // per-image ONNX calls, chunked preprocessing — see above
+            batch_rows = chunk.zip(embeddings) as Vec<(ID, Vec<f32>)>
+            db.upsert_embeddings_batch("clip_vit_b_32", &batch_rows, legacy_clip_too=false)  // R1: ONE transaction per chunk
             emit Phase::Encode(processed, total)
         emit "encoder_run_summary" diagnostic (attempted/succeeded/failed/mean ms)
         emit "preprocessing_sample" diagnostic on first batch
@@ -116,13 +126,13 @@ indexing.rs::run_clip_encoder:
 
 The encode phase is gated on the model file existing. If it doesn't (first launch + download in progress, user manually deleted), the pipeline skips encode entirely. Semantic + similarity search on a no-embedding library returns empty Vec.
 
+**Verified drift fix (this pass): the write path had moved on from what this doc described.** The doc previously showed `db.get_images_without_embeddings()` (the legacy whole-library query) plus a per-image `db.update_image_embedding` + `db.upsert_embedding` pair. Current code (`indexing.rs::run_clip_encoder_with_intra`) reads the per-encoder needs-set via `get_images_without_embedding_for("clip_vit_b_32")` and writes the whole chunk in one `upsert_embeddings_batch` call with `legacy_clip_too = false` — the legacy `images.embedding` column is no longer written at all (R8). Reading the per-encoder table instead of the legacy column matters operationally: under R8 the legacy column is never populated, so the old legacy-query would return the entire library on every launch and CLIP would silently re-encode everything it had already encoded, flashing a false "Encoding 100%" even on a fully-indexed library.
+
 ## Implemented Outputs / Artifacts
 
 - `<app_data_dir>/models/clip_vision.onnx` (~352 MB) loaded at construction.
 - 512-d L2-normalised `f32` embedding per image.
-- Two storage destinations per embedding:
-  - Legacy `images.embedding` BLOB (kept for backward-compat with semantic_search reader)
-  - New `embeddings(image_id, encoder_id="clip_vit_b_32", embedding)` row
+- One storage destination per embedding: `embeddings(image_id, encoder_id="clip_vit_b_32", embedding)` row, written in a single `upsert_embeddings_batch` transaction per 32-chunk. The legacy `images.embedding` BLOB column still exists in the schema (`update_image_embedding` is still a live method) but the indexing path stopped writing it — `upsert_embeddings_batch`'s `legacy_clip_too` flag is `false` at this call site. See the Key Interfaces drift note above for why this changed.
 - Encoder is recreated per indexing-pipeline run; not held in long-lived Tauri state.
 
 ## Known Issues / Active Risks
@@ -148,12 +158,12 @@ None.
 
 ## Durable Notes / Discarded Approaches
 
-- **Combined-graph + dummy text inputs is gone.** The encoder now uses the separate `vision_model.onnx`. Old indexing data with dummy-text-input embeddings is invalidated by `migrate_embedding_pipeline_version` (DB version 2) — see `systems/database.md`. If a future ONNX export change requires re-invalidating, bump the version constant.
+- **Combined-graph + dummy text inputs is gone.** The encoder now uses the separate `visual/model.onnx`. Old indexing data with dummy-text-input embeddings is invalidated by `migrate_embedding_pipeline_version` (DB version 2) — see `systems/database.md`. If a future ONNX export change requires re-invalidating, bump the version constant.
 - **CoreML stays disabled even though "GetCapability" reports it can handle the graph.** The runtime inference failure pattern was reproducible across multiple ort releases. Re-enabling without verifying every op runs under inference is silent corruption waiting to happen.
 - **Per-channel slice layout `[R..., G..., B...]` is intentional, not interleaved `[RGB, RGB, ...]`.** ONNX tensor convention is NCHW (channels first); interleaved would require a transpose at every encode call.
 - **CatmullRom over Lanczos3 is the canonical bicubic match.** PIL's `BICUBIC` (resample=3) maps to a cubic family closer to CatmullRom than Lanczos3. Not bit-exact, but standard for ONNX deployments outside Python.
-- **L2-normalize at output is required** — the vision_model.onnx export outputs un-normalised projected embeddings (true of both the original Xenova/OpenAI weights and the current OpenCLIP LAION-2B weights — same architecture, same un-normalised head). Cosine similarity still works without normalising (the math divides by norms) but pre-normalisation makes the resulting vectors interchangeable and the cache cosines well-conditioned.
-- **2026-07 commercial-licensing swap: OpenAI CLIP (Xenova export, non-commercial research licence) → OpenCLIP LAION-2B ViT-B/32 (`immich-app/ViT-B-32__laion2b-s34b-b79k`, MIT).** Weights-only: same CLIP BPE tokenizer (49408 vocab, 77-token context), same preprocessing pipeline described above, same 512-d L2-normalised output space, same on-disk filenames (`clip_vision.onnx` / `clip_text.onnx`). No encoder code changed, no consumer code changed, no `CURRENT_PIPELINE_VERSION` bump (see `systems/model-download.md` and `notes/clip-preprocessing-decisions.md`). CLIP is still English-only ViT-B/32 — this is a provenance and licence change, not a quality or behaviour change. All three encoders are now commercially licensed: OpenCLIP MIT, DINOv2 Apache-2.0 (Meta), SigLIP-2 Apache-2.0 (Google).
+- **L2-normalize at output is required** — the `visual/model.onnx` export outputs un-normalised projected embeddings (true of both the original Xenova/OpenAI weights and the current OpenCLIP LAION-2B weights — same architecture, same un-normalised head). Cosine similarity still works without normalising (the math divides by norms) but pre-normalisation makes the resulting vectors interchangeable and the cache cosines well-conditioned.
+- **2026-07 commercial-licensing swap: OpenAI CLIP (Xenova export, non-commercial research licence) → OpenCLIP LAION-2B ViT-B/32 (`immich-app/ViT-B-32__laion2b-s34b-b79k`, MIT).** Weights-only in the sense that the preprocessing pipeline, tokenizer vocab, and 512-d output space are unchanged — but the new export's I/O node names and dtypes DID differ from the old Xenova export, and the swap's own commit (`00ee2fa`) did not catch it: the encoder code kept calling the new export with the old names (`input_ids`/`pixel_values` instead of `text`/`image`) and the old int64 dtype (the new export wants int32 for text), and the new export's fixed batch-dim-1 vision graph broke the true-batched `encode_batch` call outright. All three bugs were silently failing (CLIP wrote zero embeddings on every indexing run) until `b58dd46` (same day, 2026-07-15) fixed them — see the "Batch encoding" section above for the batch-dim-1 half of that fix. No `CURRENT_PIPELINE_VERSION` bump was needed for either commit (see `systems/model-download.md` and `notes/clip-preprocessing-decisions.md`) since the output embedding space itself didn't change. CLIP is still English-only ViT-B/32 — this is a provenance and licence change in intent, though it did carry real code-level fallout in practice. All three encoders are now commercially licensed: OpenCLIP MIT, DINOv2 Apache-2.0 (Meta), SigLIP-2 Apache-2.0 (Google).
 - **Resize is now implemented via the shared `similarity_and_semantic_search/preprocess.rs` helper** (introduced Phase 12e, pre-dating the commercialisation refactor), used identically by all three image encoders rather than each encoder inlining its own resize call.
 
 ## Obsolete / No Longer Relevant

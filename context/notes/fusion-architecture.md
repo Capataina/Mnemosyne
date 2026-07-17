@@ -20,15 +20,29 @@ So after indexing, the `embeddings` table has up to (`#enabled_image_encoders` �
 
 **Image-to-image** (clicked an image to find similar ones):
 
-1. For each enabled image encoder, look up the clicked image's vector in that encoder's space.
-2. For each encoder, score the query vector against every other image in the cosine cache for that encoder. Get a ranked list (top-K).
-3. Fuse the ranked lists via Reciprocal Rank Fusion (RRF). The single fused list is what the user sees.
+1. For each enabled image encoder, look up the clicked image's vector (by `image_id`, not
+   path — search has been ID-native end-to-end since the T3-2 perf round) in that encoder's
+   space.
+2. For each encoder, score the query vector against every other image in the cosine cache
+   for that encoder (a `FusionIndexState` slot — see below). Get a ranked list (top-K).
+3. Fuse the ranked lists via Reciprocal Rank Fusion (RRF). The single fused list is what the
+   user sees, hydrated from ids to full result rows via one batched `WHERE id IN (...)` query.
 
 **Text-to-image** (typed a query):
 
 1. For each **enabled text-supporting** encoder (CLIP, SigLIP-2 — DINOv2 has no text branch and is implicitly skipped), encode the query into a text vector.
-2. For each, score against the matching image-side cosine cache. Get a ranked list (top-K).
+2. For each, score against the matching image-side `FusionIndexState` slot. Get a ranked list (top-K).
 3. RRF fuse → single ordered list.
+
+**There is only ONE cache per encoder now, not a "fusion cache" plus a separate "active
+encoder" cache.** Before the T3-2 perf round, a single-encoder View-Similar/semantic-search
+click read a dedicated primary in-memory index (one active encoder at a time), while fusion
+kept its own separate per-encoder caches warm. That primary index was removed entirely
+(`1514a90`) — every search path, fused or single-encoder, now borrows the same
+`FusionIndexState` slot for whichever encoder(s) it needs. This is strictly simpler (one
+cache per encoder, one lock, no duplicate ~200 MB block sitting unread) and it fixed a
+staleness bug the removal work uncovered along the way — see
+`systems/cosine-similarity.md`'s Durable Notes for the full story.
 
 ## Why fusion replaces the picker
 
@@ -91,7 +105,9 @@ That's fine — RRF works with any number of ranked lists ≥ 1. With only 1 ena
 | Type a query | `useSemanticSearch` → `fetchFusedSemanticSearch` | `get_fused_semantic_search` reads enabled list (intersected with text-capable encoders), fuses | Not triggered |
 | Toggle an encoder OFF | `EncoderSection` calls `set_enabled_encoders` | settings.json updated; future fusion calls skip this encoder | Existing rows stay; the encoder doesn't run on the next pass |
 | Toggle an encoder back ON | Same | Future fusion calls re-include this encoder; **existing rows resurrect instantly** | Encoder runs only for images that don't yet have a row for it |
-| Add a new folder | `add_root` IPC | Cosine + fusion caches invalidated | Pipeline runs every enabled encoder on the new images |
+| Add a new folder | `add_root` IPC | Fusion caches NOT explicitly invalidated — the re-spawned pipeline's `Phase::Ready` token-gated refresh picks up the new images once encoded, so there's nothing stale to clear in the meantime | Pipeline runs every enabled encoder on the new images |
+| Replace the scan root entirely | `set_scan_root` IPC | Fusion caches invalidated (`invalidate_all()`) — the old root's images are gone | Pipeline runs every enabled encoder on the new root |
+| Remove a root / toggle a root off | `remove_root` / `set_root_enabled` IPC | Fusion caches invalidated (`invalidate_all()`) — the next query rebuilds against the remaining enabled set | Not triggered (`set_root_enabled`); CASCADE delete (`remove_root`) |
 
 ## Performance shape
 
@@ -104,7 +120,14 @@ parallel( CLIP encode ‖ SigLIP-2 encode ‖ DINOv2 encode )
 
 Compared to the previous serial CLIP → SigLIP-2 → DINOv2 chain (sum of all three), parallel saves ~half the encoder phase wall-clock for full-3 indexing. Fewer encoders = strictly fewer threads spawned; with 1 encoder enabled, the parallelism overhead is zero.
 
-Search-side: each enabled encoder does one cosine score pass + one sort. With caches resident in `FusionIndexState`, that's ~5-15 ms per encoder, ~15-45 ms total fused. Plus RRF is O(N log N) on the union of top-K's — negligible.
+Search-side: each enabled encoder does one cosine score pass (rayon-parallelised across the
+cache since the T3-2 perf round — see `systems/cosine-similarity.md`'s `score_all`) + one
+sort. With caches warm in `FusionIndexState` (mapped or DB-populated), that's ~5-15 ms per
+encoder at small-library scale, ~15-45 ms total fused. Plus RRF is O(N log N) on the union
+of top-K's — negligible. At 100k-image scale the per-encoder scan cost grows with library
+size, but the *warm-up* cost that used to dominate (deserialising ~800 MB into fresh
+allocations on every launch) is gone — a warm slot is a zero-copy mmap view, and the
+generation-token check that decides whether to repopulate is one cheap SQL aggregate.
 
 ## Adding a 4th encoder later
 
@@ -119,6 +142,9 @@ Fusion automatically picks it up because the iteration is over `enabled_encoders
 
 ## See also
 
-- `systems/multi-encoder-fusion.md` — implementation details (RRF math, per-encoder cache state, IPC shape).
+- `systems/multi-encoder-fusion.md` — implementation details (RRF math, per-encoder cache state and its lock discipline, IPC shape).
+- `systems/cosine-similarity.md` — what lives inside a `FusionIndexState` slot: the `FlatStore`, scoring, generation-token freshness, mmap persistence.
+- `notes/performance-decisions.md` — the T3-2 perf round's full narrative: the ID-native migration, the flat store, the primary-index removal, and the staleness regression it fixed.
+- `notes/mutex-poisoning.md` — the lock inventory this file's "only one cache per encoder now" point simplifies.
 - `notes/encoder-additions-considered.md` — research-grade notes on what 4th encoder we might add.
 - `notes.md` § Active work areas — Phase 5 (image-image fusion) was part of the broader perf bundle; the per-recommendation plan was deleted post-ship.

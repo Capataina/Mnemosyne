@@ -246,8 +246,8 @@ Since the commercialisation refactor the backend spans two crates — see § Eng
 
 ## Test locations
 
-- Backend: `#[cfg(test)] mod tests` inside each submodule. The `db/test_helpers.rs::fresh_db()` helper creates an in-memory DB with `initialize` already run. Split across two crates post-refactor: 89 tests in the engine (`crates/engine`), 36 in the product (`apps/lynceus/src-tauri`) — 125 total, unchanged from before the split.
-- Backend integration: `apps/lynceus/src-tauri/tests/*.rs` for cross-module tests (`cosine_topk_partial_sort_diagnostic.rs`, `indexing_pipeline.rs`, `similarity_integration_test.rs`, `cosine_cache_invalidation_diagnostic.rs`, plus 3 `audit_*_diagnostic.rs` files marked `#[ignore]`).
+- Backend: `#[cfg(test)] mod tests` inside each submodule. The `db/test_helpers.rs::fresh_db()` helper creates an in-memory DB with `initialize` already run. Split across two crates post-refactor: 115 tests in the engine (`crates/engine`), 44 in the product (`apps/lynceus/src-tauri`) as of the perf round's close — counts move with every session, so treat these as a snapshot, not a target.
+- Backend integration: `apps/lynceus/src-tauri/tests/*.rs` for cross-module tests (`cosine_topk_partial_sort_diagnostic.rs`, `indexing_pipeline.rs`, `similarity_integration_test.rs`, `batched_encode_equivalence_diagnostic.rs` — real-weights-gated, `#[ignore]`d by default — plus the `audit_*_diagnostic.rs` files, also `#[ignore]`d). The old `cosine_cache_invalidation_diagnostic.rs` was deleted when the primary cosine index it tested was removed (`1514a90`); the flat store's equivalent freshness tests live inline in `crates/engine/src/cosine/cache.rs` and `index.rs`.
 - Frontend unit: alongside the source file (`useUserPreferences.test.ts`, `services.test.ts`).
 - Frontend component: alongside the source file (`IndexingStatusPill.test.tsx`).
 
@@ -280,24 +280,27 @@ Used by `Settings::save`. Survives a crash mid-write — the original file is un
 
 For very-critical state (cosine cache, models) the same pattern applies but isn't currently implemented (the cache uses a single-shot bincode write; a model download writes to `.part` then renames). Worth adding to the cosine cache path in the future.
 
-## R-tag perf annotation pattern (introduced 2026-04-26)
+## Numbered-recommendation annotation pattern (`R<n>`, then `T<n>-<n>`)
 
-Every line touched by the Tier 1 + Tier 2 perf bundle carries an `R<n>` prefix in its inline comment, where `<n>` was the recommendation number from the (since-deleted) per-recommendation perf plan. The shipped recommendations and their R-numbers are summarised in `notes.md` § Active work areas; the deferred ones (R5, R10-R16) are described there too.
+Every line landed against a numbered perf/roadmap plan carries that plan's task ID as an inline-comment prefix. The 2026-04-26 perf bundle used `R<n>` (recommendation number from that plan); the 100k performance round (`context/notes/performance-decisions.md`) used `T<n>-<n>` (tier-task IDs from the verified roadmap, e.g. `T1-2`, `T3-2`) — same pattern, new plan, new prefix scheme, since each plan owns its own numbering:
 
 ```rust
-// R3 — busy_timeout caps how long a momentary lock contention waits
-// before returning SQLITE_BUSY. 5 s is generous enough that any
-// real-world contention resolves transparently.
-conn.pragma_update(None, "busy_timeout", 5000)?;
+/// T3-1 — the compact layout manifest that replaces the full-catalogue
+/// `get_images` fetch for the main feed. Same filter surface and the
+/// same visibility membership as `get_images` (test-locked engine-side),
+/// but each row is a handful of scalars plus one thumbnail path: no
+/// tags join, no notes, no original path.
+#[tauri::command]
+pub fn get_feed_manifest(...) -> Result<Vec<FeedManifestRow>, ApiError> { ... }
 ```
 
-There are 43 such annotations across the perf-bundle commit set (grep `// R[0-9]`). The pattern serves three purposes:
+The pattern serves three purposes:
 
-1. **Forward traceability** — a reader scanning a file can grep `R<n>` and immediately find every line that landed for that recommendation, then follow the trail to the plan file's reasoning.
-2. **Reverse traceability** — when the next perf report comes back and (say) `ipc.get_images` is still slow, you can grep `R2` to see exactly what the read-only secondary connection touched.
-3. **Review aid** — commit reviewers can correlate diff hunks against the plan's Tier 1/2 ranking without having to mentally cross-reference.
+1. **Forward traceability** — a reader scanning a file can grep the task ID and immediately find every line that landed for it, then follow the trail to the plan's (or, once the plan retires, `performance-decisions.md`'s) reasoning.
+2. **Reverse traceability** — when a later perf report flags a regression, grep the relevant ID to see exactly what that task touched.
+3. **Review aid** — commit reviewers can correlate diff hunks against the plan's ranking without mentally cross-referencing.
 
-Apply the same pattern to future numbered recommendation bundles. Don't introduce R-tags for ad-hoc fixes — the plan-traceability is what makes them worth their visual cost.
+Apply the same pattern to future numbered recommendation bundles, picking a prefix scheme that doesn't collide with an already-shipped one. Don't introduce numbered tags for ad-hoc fixes — the plan-traceability is what makes them worth their visual cost.
 
 ## BEGIN IMMEDIATE for batched writes
 
@@ -316,6 +319,113 @@ tx.commit()?;
 ```
 
 `IMMEDIATE` rather than the default `DEFERRED`: `DEFERRED` upgrades to a write lock on the first INSERT, racing with any concurrent reader; `IMMEDIATE` takes the write lock up-front. The canonical example is `db/embeddings.rs::upsert_embeddings_batch`. Per-row autocommit produces N implicit transactions + N fsyncs; the batched form produces one of each, which is 10-100× faster for bulk inserts and eliminates the per-row mutex-and-checkpoint churn that produced the perf-1777212369 22 s freezes.
+
+## `useSyncExternalStore` module-singleton for cross-tree event state
+
+When several independent surfaces (a status pill, a route, a settings drawer) all need to
+react to the same backend event stream, don't give each one its own `listen()` + `useState`.
+That produces one duplicate Tauri listener per mount and re-renders every consumer on every
+event, even for slices it doesn't read. Introduced fixing exactly this in
+`apps/lynceus/src/hooks/useIndexingStatus.ts` (the render-storm fix, `ebe4006`):
+
+```ts
+let eventState: EventState = { phase: null, message: null, active: false, eventFraction: null };
+const subscribers = new Set<() => void>();
+let listenerStarted = false; // starts the single listen() call lazily, once
+
+function notify() {
+  for (const cb of subscribers) cb();
+}
+
+function subscribe(cb: () => void): () => void {
+  subscribers.add(cb);
+  /* ...lazily start the listener on first subscriber... */
+  return () => subscribers.delete(cb);
+}
+
+// getSnapshot selectors each return one primitive slice, so a subscriber
+// only re-renders when the slice it reads actually changes:
+export function useIsIndexing(): boolean {
+  return useSyncExternalStore(subscribe, getActive);
+}
+```
+
+One module-level listener owns the event and runs the invalidation policy exactly once;
+every hook (`usePipelineStats` / `useIsIndexing` / `useIndexingPhase`) subscribes to the same
+store but reads a different scalar slice via its own `getSnapshot`. Use this pattern for any
+future cross-tree event stream (a second Tauri event, a WebSocket feed) with more than one
+consumer — a single `useState` + `useEffect(() => listen(...))` per consumer is the pattern
+this replaced and should not be reintroduced.
+
+## Scalar comparators over reference-identity `React.memo`
+
+`MasonryItem` and similar high-fanout components take a scalar comparator (`React.memo(Item,
+(prev, next) => prev.id === next.id && prev.width === next.width && ...)`) whose field list is
+documented against the component's props type, rather than relying on default reference-identity
+memoisation. Two failure modes motivated this: tiles keyed on `id+url` remounted their whole
+subtree every time `useAdaptiveThumbnail` sharpened the image (a new `url` looks like a new
+identity), and route handlers that weren't `useCallback`'d produced a new prop reference every
+render regardless of whether the underlying value changed. Key tiles by stable `id` alone (never
+`id+url`) and give any component sitting under a high-frequency parent (the feed grid, the
+indexing pill) an explicit comparator naming exactly the fields that should trigger a re-render.
+
+## Stable per-image keys over positional/derived ordering
+
+The feed's ordering is a pure function of `hash(id, seed)`, not a stored index or a `Date`-based
+sort. A tile's position depends only on its own id plus the session's current seed, so a refetch
+that adds newly-thumbnailed rows never reshuffles existing tiles — the newcomer just drops into
+its own gap. Apply the same principle anywhere state needs a stable per-item identity across a
+changing collection (drag-reorder's `id→index` map, the masonry worker's generation-tagged
+requests): derive the key from the item's own identity, never from its position in whatever
+array is currently in scope.
+
+## Generation-token invalidation for anything cached or computed off-thread
+
+Two different subsystems independently converged on the same shape: a monotonically-changing
+token that must match before a cached or in-flight result is trusted, rather than a timestamp or
+a boolean dirty flag.
+
+- **Embedding-cache freshness** (`crates/engine/src/db/images_query.rs::embedding_generation_token`,
+  consumed by `crates/engine/src/cosine/cache.rs` and `cosine/index.rs::refresh_if_stale`): an
+  FNV-1a fold of `COUNT(*)`, `SUM(rowid)`, and `MAX(rowid)` over the same enabled/orphaned JOIN
+  the store is built from. A bare `mtime` check on the cache file can't see a root being
+  disabled — the embeddings table is untouched, only the JOIN's row-set changes — so the token
+  is derived from the query that actually determines "what's in the store," not from a
+  filesystem timestamp.
+- **Masonry worker staleness** (`apps/lynceus/src/hooks/useMasonryEngine.ts`,
+  `isCurrentGeneration`): every pack request carries the engine's current generation number;
+  a result — worker or synchronous fallback — is applied only if `resultGen === currentGen`.
+  A rapid filter/resize/reorder sequence fires several requests before the first resolves; the
+  token discards every result but the latest instead of applying stale geometry.
+
+When introducing a new cache or off-thread computation whose input can change while a result is
+in flight, reach for a comparable token — cheap to compute, derived from the actual
+inputs-that-matter, and checked before a result is trusted — rather than a timestamp or a
+same-reference check.
+
+## Versioned binary headers on persisted caches
+
+Any cache persisted to disk in a raw/binary format carries a fixed-size versioned header, not a
+bare blob. The flat embedding store (`crates/engine/src/cosine/cache.rs`) is the canonical
+example: a 64-byte header (8-byte magic `b"LYNEMB01"`, `format_version: u32`, `encoder_hash: u64`
+(FNV-1a of the encoder id, cross-checked against the filename), `dim`/`row_count`, the
+generation token, reserved padding) precedes the id table and the f32 embedding block, written
+via temp-file + atomic rename. Every header field has its own rejection test (bad magic, version
+mismatch, dim/row-count disagreement) so a stale or foreign file fails closed instead of being
+mapped and silently misread. Apply the same shape — magic + version + content-identifying fields
++ a freshness token — to any future persisted binary cache; a bare `mtime` or an un-versioned
+blob is the anti-pattern this replaced.
+
+## Cached-not-assumed norms
+
+Never assume a stored embedding is unit-normalised. The flat store
+(`crates/engine/src/cosine/store.rs`) computes and caches a real inverse norm
+(`math::inv_norm`, `1.0 / sqrt(dot(v, v))`, zero on a zero vector) for every row at insertion
+time and scores as `dot × q_inv × c_inv`, rather than assuming `|v| == 1` and scoring as a bare
+dot product. Legacy embeddings written before encode-time L2-normalisation was introduced are
+not unit vectors; assuming otherwise would silently distort every score touching one of those
+rows. When adding a new cached derived quantity (a norm, a hash, a checksum), compute and store
+it from the real data rather than assuming an invariant the data doesn't actually guarantee.
 
 ## Read-only secondary `read_lock()` for foreground SELECTs
 

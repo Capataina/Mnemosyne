@@ -147,9 +147,22 @@ export function useTileDrag(input: UseTileDragInput) {
     (id: number, pointer: { x: number; y: number }) => {
       latestPointerRef.current = pointer;
       writeDragVisual(id, pointer);
-      reorderOverPoint(id, pointer.x, pointer.y);
+      // Hit-test the reorder from the dragged tile's VISUAL CENTRE, not the
+      // raw cursor. The cursor is wherever you grabbed the tile, which on a
+      // 2x2 / 3x3 tile can sit over an empty corner while the tile's body
+      // overlaps other tiles — sampling only the cursor pixel then finds
+      // nothing and displaces nothing ("treats a 2x2 like a 1x1"). The
+      // dragged node already carries the follow-the-cursor transform, so its
+      // getBoundingClientRect centre is exactly where the tile's body is.
+      const node = tileElementsRef.current.get(id);
+      if (node) {
+        const r = node.getBoundingClientRect();
+        reorderOverPoint(id, r.left + r.width / 2, r.top + r.height / 2);
+      } else {
+        reorderOverPoint(id, pointer.x, pointer.y);
+      }
     },
-    [reorderOverPoint, writeDragVisual],
+    [reorderOverPoint, writeDragVisual, tileElementsRef],
   );
 
   const cancelScheduledFrame = useCallback(() => {

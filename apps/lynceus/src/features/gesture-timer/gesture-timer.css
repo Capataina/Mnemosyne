@@ -11,9 +11,58 @@
   --gesture-ring-progress: var(--gesture-accent);
   color-scheme: dark;
   color: var(--gesture-text);
+  background: var(--gesture-stage);
+}
+
+.gesture-timer-vignette {
   background:
-    radial-gradient(circle at 50% 44%, oklch(0.13 0.012 252), transparent 58%),
-    var(--gesture-stage);
+    linear-gradient(to bottom, oklch(0.02 0.005 252 / 0.52), transparent 18%),
+    linear-gradient(to top, oklch(0.02 0.005 252 / 0.62), transparent 24%);
+}
+
+.gesture-timer-stage {
+  isolation: isolate;
+  overscroll-behavior: none;
+}
+
+.gesture-timer-image {
+  transform-origin: center;
+  -webkit-user-drag: none;
+  will-change: transform;
+}
+
+.gesture-timer-root[data-controls-visible="true"][data-zoomed="true"]
+  .gesture-timer-stage {
+  cursor: grab;
+}
+
+.gesture-timer-root[data-controls-visible="true"]
+  .gesture-timer-stage[data-panning="true"] {
+  cursor: grabbing;
+}
+
+.gesture-timer-root[data-controls-visible="false"] .gesture-timer-stage {
+  cursor: none;
+}
+
+.gesture-timer-progress-shell {
+  box-shadow:
+    inset 0 1px 0 oklch(0.96 0.01 245 / 0.055),
+    0 12px 42px -22px oklch(0.01 0.005 252 / 0.96);
+}
+
+.gesture-timer-identity {
+  position: relative;
+  overflow: hidden;
+}
+
+.gesture-timer-identity::before {
+  position: absolute;
+  inset: 9px auto 9px 0;
+  width: 2px;
+  border-radius: 999px;
+  background: var(--gesture-accent);
+  content: "";
 }
 
 .gesture-timer-chrome {
@@ -47,6 +96,12 @@
   background: oklch(0.9 0.012 245 / 0.08);
 }
 
+.gesture-timer-control:focus-visible,
+.gesture-timer-zoom-control:focus-visible {
+  outline: 2px solid color-mix(in oklab, var(--gesture-accent), transparent 38%);
+  outline-offset: 2px;
+}
+
 .gesture-timer-control:active:not(:disabled) {
   transform: scale(0.96);
 }
@@ -64,6 +119,43 @@
 .gesture-timer-control-primary:hover:not(:disabled) {
   color: oklch(0.1 0.018 230);
   background: color-mix(in oklab, var(--gesture-accent), oklch(0.96 0.008 245) 10%);
+}
+
+.gesture-timer-zoom-control {
+  display: inline-flex;
+  width: 32px;
+  height: 32px;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  color: var(--gesture-text-muted);
+  transition:
+    color 180ms cubic-bezier(0.16, 1, 0.3, 1),
+    background-color 180ms cubic-bezier(0.16, 1, 0.3, 1),
+    border-color 180ms cubic-bezier(0.16, 1, 0.3, 1),
+    transform 180ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.gesture-timer-zoom-control:hover {
+  border-color: var(--gesture-border);
+  color: var(--gesture-text);
+  background: oklch(0.9 0.012 245 / 0.08);
+}
+
+.gesture-timer-zoom-control:active {
+  transform: scale(0.95);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .gesture-timer-root *,
+  .gesture-timer-root *::before,
+  .gesture-timer-root *::after {
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+  }
 }
 
 @media (prefers-reduced-transparency: reduce) {

@@ -9,15 +9,19 @@ import {
   ChevronLeft,
   ChevronRight,
   ImageOff,
+  Minus,
   Pause,
   Play,
+  Plus,
   RotateCcw,
+  Scan,
   SlidersHorizontal,
   X,
 } from "lucide-react";
 import { GestureTimerProgress } from "./GestureTimerProgress";
 import type { GestureTimerConfig, GestureTimerImage } from "./types";
 import { useGestureTimer } from "./useGestureTimer";
+import { useGestureZoom } from "./useGestureZoom";
 
 /**
  * Warm the browser's decode cache for `url` off-screen so the real <img> hits
@@ -100,6 +104,19 @@ export function GestureTimerView({
     timer.isRunning,
   ]);
 
+  const {
+    stageRef,
+    zoomLabelRef,
+    isZoomed,
+    resetZoom,
+    zoomIn,
+    zoomOut,
+    pointerHandlers,
+  } = useGestureZoom({
+    imageId: timer.currentImage.id,
+    onInteraction: revealControls,
+  });
+
   useEffect(() => {
     rootRef.current?.focus();
   }, []);
@@ -165,6 +182,15 @@ export function GestureTimerView({
     } else if (event.key === "ArrowLeft") {
       event.preventDefault();
       timer.previous();
+    } else if (event.key === "+" || event.key === "=") {
+      event.preventDefault();
+      zoomIn();
+    } else if (event.key === "-" || event.key === "_") {
+      event.preventDefault();
+      zoomOut();
+    } else if (event.key === "0") {
+      event.preventDefault();
+      resetZoom();
     }
   };
 
@@ -182,23 +208,22 @@ export function GestureTimerView({
       onKeyDown={handleKeyDown}
       onPointerMove={revealControls}
       onFocusCapture={revealControls}
+      data-controls-visible={controlsVisible}
+      data-zoomed={isZoomed}
       className={[
-        "gesture-timer-root fixed inset-0 z-[200] flex min-h-[100dvh] items-center justify-center overflow-hidden px-5 py-24 outline-none sm:px-10 sm:py-20",
+        "gesture-timer-root fixed inset-0 z-[200] min-h-[100dvh] overflow-hidden outline-none",
         controlsVisible ? "cursor-default" : "cursor-none",
       ].join(" ")}
     >
+      <div
+        aria-hidden="true"
+        className="gesture-timer-vignette pointer-events-none absolute inset-0 z-10"
+      />
+
       <header
-        className={`pointer-events-none absolute inset-x-5 top-5 z-20 flex items-start justify-between gap-5 transition-[opacity,transform] duration-300 sm:inset-x-8 sm:top-7 ${chromeVisibility}`}
+        className={`pointer-events-none absolute left-1/2 top-3 z-20 -translate-x-1/2 transition-[opacity,transform] duration-300 sm:top-5 ${chromeVisibility}`}
       >
-        <div className="min-w-0 pt-1">
-          <p className="text-[11px] font-[600] text-[var(--gesture-text-muted)]">
-            Gesture timer
-          </p>
-          <p className="mt-1 max-w-[min(54vw,680px)] truncate text-[13px] font-[540] text-[var(--gesture-text)]">
-            {timer.currentImage.name ?? "Untitled reference"}
-          </p>
-        </div>
-        <div>
+        <div className="gesture-timer-chrome gesture-timer-progress-shell rounded-full">
           <GestureTimerProgress
             remainingMs={timer.remainingMs}
             progress={timer.progress}
@@ -209,9 +234,24 @@ export function GestureTimerView({
         </div>
       </header>
 
-      <div className="relative flex h-full w-full items-center justify-center">
+      <div
+        ref={stageRef}
+        data-gesture-zoom-stage
+        aria-label="Drawing reference. Pinch, scroll, or use plus and minus to zoom. Drag to pan while zoomed."
+        className="gesture-timer-stage absolute inset-0 flex touch-none items-center justify-center overflow-hidden"
+        {...pointerHandlers}
+      >
         {imageStatus === "loading" && (
-          <div className="absolute h-[min(68dvh,720px)] w-[min(72vw,960px)] animate-pulse rounded-[14px] bg-[oklch(0.94_0.008_245/0.035)]" />
+          <div
+            style={
+              timer.currentImage.width && timer.currentImage.height
+                ? {
+                    aspectRatio: `${timer.currentImage.width} / ${timer.currentImage.height}`,
+                  }
+                : undefined
+            }
+            className="absolute h-[88dvh] max-h-full max-w-[94vw] animate-pulse rounded-[4px] bg-[oklch(0.94_0.008_245/0.035)]"
+          />
         )}
 
         {imageStatus !== "error" && (
@@ -226,8 +266,10 @@ export function GestureTimerView({
             decoding="async"
             onLoad={() => setImageStatus("ready")}
             onError={() => setImageStatus("error")}
+            draggable={false}
+            data-gesture-timer-image
             className={[
-              "max-h-[calc(100dvh-9rem)] max-w-[min(92vw,1800px)] rounded-[14px] object-contain shadow-[0_32px_100px_-42px_oklch(0.01_0.005_252/0.96)] transition-opacity duration-200",
+              "gesture-timer-image block h-auto w-auto max-h-[100dvh] max-w-[100vw] select-none object-contain transition-opacity duration-200",
               imageStatus === "ready" ? "opacity-100" : "opacity-0",
             ].join(" ")}
           />
@@ -287,11 +329,21 @@ export function GestureTimerView({
       </div>
 
       <div
-        className={`absolute inset-x-5 bottom-5 z-20 flex flex-col items-center gap-3 transition-[opacity,transform] duration-300 sm:inset-x-8 sm:bottom-7 ${chromeVisibility}`}
+        className={`pointer-events-none absolute bottom-[5.25rem] left-4 z-20 max-w-[calc(100vw-2rem)] transition-[opacity,transform] duration-300 sm:left-6 lg:bottom-6 lg:max-w-[min(34vw,520px)] ${chromeVisibility}`}
       >
-        <p className="text-[12px] font-[600] tabular-nums text-[var(--gesture-text-muted)]">
-          {timer.positionLabel}
-        </p>
+        <div className="gesture-timer-chrome gesture-timer-identity min-w-0 rounded-[12px] px-4 py-3 sm:px-5 sm:py-3.5">
+          <p className="text-[10px] font-[650] uppercase tracking-[0.14em] text-[var(--gesture-accent)]">
+            Reference {timer.positionLabel.replace(" / ", " of ")}
+          </p>
+          <p className="mt-1 max-w-full truncate text-[14px] font-[620] tracking-[-0.018em] text-[var(--gesture-text)] sm:text-[15px]">
+            {timer.currentImage.name ?? "Untitled reference"}
+          </p>
+        </div>
+      </div>
+
+      <div
+        className={`absolute bottom-4 left-1/2 z-20 -translate-x-1/2 transition-[opacity,transform] duration-300 sm:bottom-6 ${chromeVisibility}`}
+      >
         <div className="gesture-timer-chrome flex items-center gap-1 rounded-[14px] p-1.5">
           <button
             type="button"
@@ -343,6 +395,58 @@ export function GestureTimerView({
             aria-label="Exit timer"
           >
             <X className="size-[18px]" strokeWidth={1.8} />
+          </button>
+        </div>
+      </div>
+
+      <div
+        className={[
+          "absolute right-4 top-[5.75rem] z-20 transition-[opacity,transform] duration-300 sm:right-6 lg:bottom-6 lg:top-auto",
+          isZoomed && controlsVisible
+            ? "opacity-100 translate-y-0"
+            : "pointer-events-none translate-y-1 opacity-0",
+        ].join(" ")}
+        aria-hidden={!isZoomed}
+      >
+        <div className="gesture-timer-chrome flex items-center gap-0.5 rounded-[12px] p-1">
+          <button
+            type="button"
+            className="gesture-timer-zoom-control"
+            onClick={zoomOut}
+            aria-label="Zoom out"
+            tabIndex={isZoomed ? 0 : -1}
+          >
+            <Minus className="size-3.5" strokeWidth={1.9} />
+          </button>
+          <span
+            ref={zoomLabelRef}
+            className="min-w-11 px-1 text-center text-[11px] font-[650] tabular-nums text-[var(--gesture-text)]"
+            aria-live="polite"
+          >
+            100%
+          </span>
+          <button
+            type="button"
+            className="gesture-timer-zoom-control"
+            onClick={zoomIn}
+            aria-label="Zoom in"
+            tabIndex={isZoomed ? 0 : -1}
+          >
+            <Plus className="size-3.5" strokeWidth={1.9} />
+          </button>
+          <span
+            aria-hidden="true"
+            className="mx-0.5 h-4 w-px bg-[var(--gesture-border)]"
+          />
+          <button
+            type="button"
+            className="gesture-timer-zoom-control w-auto gap-1.5 px-2"
+            onClick={resetZoom}
+            aria-label="Reset zoom to fit"
+            tabIndex={isZoomed ? 0 : -1}
+          >
+            <Scan className="size-3.5" strokeWidth={1.8} />
+            <span className="text-[10px] font-[650]">Fit</span>
           </button>
         </div>
       </div>

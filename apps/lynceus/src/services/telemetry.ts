@@ -195,10 +195,102 @@ export function summariseQueries(
 }
 
 /* ------------------------------------------------------------------ */
+/* Masonry geometry (interaction/layout debugging)                     */
+/*                                                                     */
+/* App-specific for now — it reads `[data-masonry-id]` tiles. When the */
+/* capture layer is extracted to the shared package this becomes a     */
+/* configurable selector the app registers. It exists so a layout bug  */
+/* (a tile rendering wider than the packer reserved → overlap; a gap;  */
+/* a drag over empty space) is visible in the timeline as NUMBERS, not */
+/* something the next session has to reproduce and eyeball.            */
+/* ------------------------------------------------------------------ */
+
+export interface TileGeometry {
+  id: number;
+  /** Width the packer set on the anchor (the reserved footprint). */
+  packW: number;
+  /** The anchor's committed transform (its reserved x/y). */
+  packTransform: string;
+  /** What the tile actually renders as (its on-screen box). */
+  renderW: number;
+  renderH: number;
+  x: number;
+  y: number;
+}
+
+/** Do two tile boxes overlap by more than `slop` px on both axes? */
+export function tilesOverlap(a: TileGeometry, b: TileGeometry, slop = 4): number {
+  const ox = Math.max(0, Math.min(a.x + a.renderW, b.x + b.renderW) - Math.max(a.x, b.x));
+  const oy = Math.max(0, Math.min(a.y + a.renderH, b.y + b.renderH) - Math.max(a.y, b.y));
+  return ox > slop && oy > slop ? Math.round(ox * oy) : 0;
+}
+
+/**
+ * Snapshot every visible masonry tile: what the packer reserved vs what
+ * it renders, plus the two things that make a broken grid broken —
+ * tiles whose render width diverges from the reserved width, and pairs
+ * of tiles whose boxes overlap. Returns null when no grid is mounted.
+ */
+export function captureGridGeometry(): Record<string, unknown> | null {
+  const nodes = Array.from(
+    document.querySelectorAll<HTMLElement>("[data-masonry-id]"),
+  );
+  if (nodes.length === 0) return null;
+
+  const tiles: TileGeometry[] = nodes.map((el) => {
+    const anchor = el.parentElement;
+    const style = anchor?.style;
+    const r = el.getBoundingClientRect();
+    return {
+      id: Number(el.dataset.masonryId),
+      packW: style ? Math.round(parseFloat(style.width) || 0) : 0,
+      packTransform: style?.transform ?? "",
+      renderW: Math.round(r.width),
+      renderH: Math.round(r.height),
+      x: Math.round(r.left),
+      y: Math.round(r.top),
+    };
+  });
+
+  // Divergence: the packer reserved packW but the tile renders renderW.
+  // A non-trivial gap here IS the "2x2 acts like a wrong size" bug.
+  const mismatched = tiles
+    .filter((t) => Math.abs(t.renderW - t.packW) > 2)
+    .map((t) => ({ id: t.id, packW: t.packW, renderW: t.renderW }));
+
+  // Overlaps: pairs of tiles whose rendered boxes intersect. On a healthy
+  // masonry this is empty (barring the active drag tile).
+  const overlaps: Array<{ a: number; b: number; area: number }> = [];
+  for (let i = 0; i < tiles.length; i++) {
+    for (let j = i + 1; j < tiles.length; j++) {
+      const area = tilesOverlap(tiles[i], tiles[j]);
+      if (area > 0) overlaps.push({ a: tiles[i].id, b: tiles[j].id, area });
+    }
+  }
+
+  return { count: tiles.length, mismatched, overlaps, tiles };
+}
+
+/** First `[data-masonry-id]` tile under a screen point, or EMPTY. */
+export function tileUnderPoint(x: number, y: number): {
+  id: number | null;
+  label: string;
+} {
+  for (const hit of document.elementsFromPoint(x, y)) {
+    const tile = hit.closest<HTMLElement>("[data-masonry-id]");
+    if (tile) {
+      return { id: Number(tile.dataset.masonryId), label: `tile#${tile.dataset.masonryId}` };
+    }
+  }
+  return { id: null, label: "EMPTY" };
+}
+
+/* ------------------------------------------------------------------ */
 /* Wiring                                                              */
 /* ------------------------------------------------------------------ */
 
 const BUNDLE_DEBOUNCE_MS = 10_000;
+const DRAG_SAMPLE_MS = 100; // ~10 drag samples/sec, enough to trace motion
 let lastBundleAt = 0;
 let telemetryStarted = false;
 
@@ -208,6 +300,7 @@ function captureStateBundle(queryClient: QueryClient, reason: string): void {
     route: `${window.location.pathname}${window.location.hash}`,
     dom: serialiseDomOutline(document.body),
     queries: summariseQueries(queryClient),
+    grid: captureGridGeometry(),
   });
 }
 
@@ -249,6 +342,69 @@ export function initTelemetry(queryClient: QueryClient): void {
       const t = e.target;
       if (!(t instanceof Element)) return;
       recordAction("ui_contextmenu", { path: domPathFor(t) });
+    },
+    { capture: true, passive: true },
+  );
+
+  /* 1b — pointer / drag tracing (the "see what I see" surface) ------- */
+  // Records where the cursor is, what it's over (a tile id or EMPTY),
+  // and whether a button is held — so a drag/reorder session reads back
+  // as a motion trace: grab point, path, what each sample is over, drop.
+  // Grid geometry is snapshotted at grab and at drop so a broken layout
+  // shows its overlaps/gaps before AND after the interaction.
+  let pointerDown = false;
+  let grabbedId: number | null = null;
+  let lastDragSample = 0;
+
+  document.addEventListener(
+    "pointerdown",
+    (e) => {
+      pointerDown = true;
+      const under = tileUnderPoint(e.clientX, e.clientY);
+      grabbedId = under.id;
+      recordAction("pointer_down", {
+        x: Math.round(e.clientX),
+        y: Math.round(e.clientY),
+        over: under.label,
+        button: e.button,
+        grid: captureGridGeometry(),
+      });
+    },
+    { capture: true, passive: true },
+  );
+
+  document.addEventListener(
+    "pointermove",
+    (e) => {
+      if (!pointerDown) return; // only trace motion WHILE holding
+      const now = Date.now();
+      if (now - lastDragSample < DRAG_SAMPLE_MS) return;
+      lastDragSample = now;
+      const under = tileUnderPoint(e.clientX, e.clientY);
+      recordAction("pointer_drag", {
+        x: Math.round(e.clientX),
+        y: Math.round(e.clientY),
+        over: under.label,
+        grabbed: grabbedId,
+      });
+    },
+    { capture: true, passive: true },
+  );
+
+  document.addEventListener(
+    "pointerup",
+    (e) => {
+      if (!pointerDown) return;
+      pointerDown = false;
+      const under = tileUnderPoint(e.clientX, e.clientY);
+      recordAction("pointer_up", {
+        x: Math.round(e.clientX),
+        y: Math.round(e.clientY),
+        over: under.label,
+        grabbed: grabbedId,
+        grid: captureGridGeometry(),
+      });
+      grabbedId = null;
     },
     { capture: true, passive: true },
   );

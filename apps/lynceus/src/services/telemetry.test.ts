@@ -6,7 +6,42 @@ import {
   serialiseDomOutline,
   shouldRecordKey,
   summariseQueries,
+  tilesOverlap,
+  type TileGeometry,
 } from "./telemetry";
+
+describe("tilesOverlap", () => {
+  const tile = (over: Partial<TileGeometry>): TileGeometry => ({
+    id: 0,
+    packW: 100,
+    packTransform: "",
+    renderW: 100,
+    renderH: 100,
+    x: 0,
+    y: 0,
+    ...over,
+  });
+
+  it("reports the intersection area for overlapping boxes", () => {
+    const a = tile({ id: 1, x: 0, y: 0, renderW: 100, renderH: 100 });
+    const b = tile({ id: 2, x: 50, y: 50, renderW: 100, renderH: 100 });
+    // 50×50 overlap
+    expect(tilesOverlap(a, b)).toBe(2500);
+  });
+
+  it("returns 0 for adjacent, non-overlapping boxes", () => {
+    const a = tile({ id: 1, x: 0, y: 0, renderW: 100, renderH: 100 });
+    const b = tile({ id: 2, x: 100, y: 0, renderW: 100, renderH: 100 });
+    expect(tilesOverlap(a, b)).toBe(0);
+  });
+
+  it("ignores a sub-slop touch (shared edge)", () => {
+    const a = tile({ id: 1, x: 0, y: 0, renderW: 100, renderH: 100 });
+    const b = tile({ id: 2, x: 98, y: 0, renderW: 100, renderH: 100 });
+    // 2px horizontal overlap ≤ slop → not counted
+    expect(tilesOverlap(a, b)).toBe(0);
+  });
+});
 
 function build(html: string): HTMLElement {
   const host = document.createElement("div");

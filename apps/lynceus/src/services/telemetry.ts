@@ -259,7 +259,9 @@ export function captureGridGeometry(): Record<string, unknown> | null {
     .map((t) => ({ id: t.id, packW: t.packW, renderW: t.renderW }));
 
   // Overlaps: pairs of tiles whose rendered boxes intersect. On a healthy
-  // masonry this is empty (barring the active drag tile).
+  // masonry this is empty (barring the active drag tile) — but a snapshot
+  // taken MID-reflow catches tiles still sliding through each other, so a
+  // settled snapshot (see sampleReflowMotion) is the one that judges bugs.
   const overlaps: Array<{ a: number; b: number; area: number }> = [];
   for (let i = 0; i < tiles.length; i++) {
     for (let j = i + 1; j < tiles.length; j++) {
@@ -268,7 +270,30 @@ export function captureGridGeometry(): Record<string, unknown> | null {
     }
   }
 
-  return { count: tiles.length, mismatched, overlaps, tiles };
+  // Vertical gaps within a column (the "empty black square"): a tile whose
+  // top sits well below the bottom of the tile above it in the same column.
+  // Some gap is inherent to spanned tiles (a wide tile sits below the taller
+  // of its columns, leaving the shorter one short); flagged here so the size
+  // and frequency are visible rather than guessed at.
+  const byColumn = new Map<number, TileGeometry[]>();
+  for (const t of tiles) {
+    const arr = byColumn.get(t.x) ?? [];
+    arr.push(t);
+    byColumn.set(t.x, arr);
+  }
+  const gaps: Array<{ x: number; gap: number; above: number; below: number }> = [];
+  for (const [x, col] of byColumn) {
+    col.sort((a, b) => a.y - b.y);
+    for (let i = 1; i < col.length; i++) {
+      const gap = Math.round(col[i].y - (col[i - 1].y + col[i - 1].renderH));
+      if (gap > 40) {
+        gaps.push({ x, gap, above: col[i - 1].id, below: col[i].id });
+      }
+    }
+  }
+  gaps.sort((a, b) => b.gap - a.gap);
+
+  return { count: tiles.length, mismatched, overlaps, gaps, tiles };
 }
 
 /**
@@ -321,7 +346,14 @@ export function sampleReflowMotion(reason: string, frames = 24): void {
       });
     }
     moved.sort((a, b) => (b.total as number) - (a.total as number));
-    recordAction("reflow_motion", { reason, frames, moved: moved.slice(0, 30) });
+    // The SETTLED geometry — captured after the animation frames complete, so
+    // its overlaps/gaps reflect the final layout, not tiles mid-slide.
+    recordAction("reflow_motion", {
+      reason,
+      frames,
+      moved: moved.slice(0, 30),
+      settledGrid: captureGridGeometry(),
+    });
   };
 
   requestAnimationFrame(step);

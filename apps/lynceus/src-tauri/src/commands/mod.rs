@@ -14,13 +14,11 @@
 //!   cosine/semantic command (semantic_search, get_similar_images,
 //!   get_tiered_similar_images). Single struct rather than a
 //!   per-command shape so the frontend deserialises one type.
-//! - `resolve_image_id_for_cosine_path` — maps a cosine-result path
-//!   back to its DB `(id, canonical_path)`, with three lookup
-//!   strategies for the various canonical-form mismatches.
+//! - `hydrate_search_results` — turns the cosine index's id-native
+//!   `(image_id, score)` output into `ImageSearchResult`s via ONE
+//!   `WHERE id IN (...)` batch query (T3-2/#6), preserving ranked order.
 
-use crate::db::{ImageDatabase, ID};
-use crate::image_struct::ImageData;
-use crate::paths;
+use crate::db::{images_query::ImageResultMeta, ImageDatabase, ID};
 
 pub mod encoders;
 pub mod error;
@@ -66,68 +64,64 @@ pub struct ImageSearchResult {
     pub height: Option<u32>,
 }
 
-/// Map a cosine-result `PathBuf` back to its database `(id, canonical_path)`.
+/// Outcome of batch-hydrating a ranked `(image_id, score)` list into
+/// `ImageSearchResult`s. `missed_ids` are ranked ids with no matching
+/// DB row (dropped from `results`, kept for the diagnostic — the
+/// old path-resolution "misses"); `thumbnail_misses` counts results
+/// whose row had no thumbnail bundle yet.
+pub(crate) struct HydratedResults {
+    pub results: Vec<ImageSearchResult>,
+    pub missed_ids: Vec<ID>,
+    pub thumbnail_misses: u32,
+}
+
+/// Turn the cosine index's id-native `(image_id, score)` output into
+/// `ImageSearchResult`s in ONE `WHERE id IN (...)` query (T3-2/#6).
 ///
-/// The cosine index returns paths from its in-memory cache; those
-/// paths might have a Windows extended-prefix (`\\?\`) if the
-/// indexing pipeline canonicalised them on Windows, or a different
-/// canonical form than what's stored in the DB. Three lookup
-/// strategies, in order:
-///
-/// 1. Try the path with `\\?\` stripped (the common case — covers
-///    every modern run on every platform).
-/// 2. Fall back to the raw path the cosine index gave us.
-/// 3. As a last resort, walk `all_images_cache` looking for any row
-///    whose path matches under any normalisation. This handles
-///    legacy DBs where some rows were inserted with one canonical
-///    form and the cosine index now returns another.
-///
-/// Returns `Some((id, canonical_path))` if any strategy matches.
-///
-/// Audit finding (extracted from triplicated inline closures + 3
-/// triplicated 60-line lookup blocks across `semantic_search`,
-/// `get_similar_images`, `get_tiered_similar_images`). The project
-/// notes already flagged "don't add a fourth normalisation closure"
-/// — the third one was the redundancy.
-pub(crate) fn resolve_image_id_for_cosine_path(
+/// This replaces the old per-result `resolve_image_id_for_cosine_path`
+/// + `get_image_thumbnail_info` N+1 (which also required a whole-library
+/// `get_all_images()` join up front just to map paths → ids that were
+/// ids to begin with). The index now hands us ids directly, so there is
+/// no path to resolve — the id is the DB key. Ranked order is preserved:
+/// we hydrate into a map, then walk the ranked list, so the returned
+/// results are in exactly the score order the caller produced.
+pub(crate) fn hydrate_search_results(
     db: &ImageDatabase,
-    cosine_path: &std::path::Path,
-    all_images_cache: Option<&[ImageData]>,
-) -> Option<(ID, String)> {
-    let path_str = cosine_path.to_string_lossy().into_owned();
-    let normalized = paths::strip_windows_extended_prefix(&path_str).into_owned();
+    ranked: &[(ID, f32)],
+) -> HydratedResults {
+    let ids: Vec<ID> = ranked.iter().map(|(id, _)| *id).collect();
+    // A DB failure here degrades to "everything missed" rather than
+    // erroring the whole command — same posture the old resolver had
+    // (a failed lookup dropped the row, it didn't fail the search).
+    let metas = db.get_images_metadata_for_ids(&ids).unwrap_or_default();
+    let mut by_id: std::collections::HashMap<ID, ImageResultMeta> =
+        metas.into_iter().map(|m| (m.id, m)).collect();
 
-    // Strategy 1: direct DB lookup using the normalised path.
-    if let Ok(id) = db.get_image_id_by_path(&normalized) {
-        return Some((id, normalized));
+    let mut results = Vec::with_capacity(ranked.len());
+    let mut missed_ids = Vec::new();
+    let mut thumbnail_misses = 0u32;
+    for (id, score) in ranked {
+        match by_id.remove(id) {
+            Some(m) => {
+                if m.thumbnail_path.is_none() {
+                    thumbnail_misses += 1;
+                }
+                results.push(ImageSearchResult {
+                    id: m.id,
+                    path: m.path,
+                    score: *score,
+                    thumbnail_path: m.thumbnail_path,
+                    width: m.width,
+                    height: m.height,
+                });
+            }
+            None => missed_ids.push(*id),
+        }
     }
-    // Strategy 2: direct DB lookup using the raw path.
-    if let Ok(id) = db.get_image_id_by_path(&path_str) {
-        return Some((id, path_str));
+
+    HydratedResults {
+        results,
+        missed_ids,
+        thumbnail_misses,
     }
-    // Strategy 3: scan the cached image list for a flexible match.
-    let images = all_images_cache?;
-    let search_path = cosine_path
-        .canonicalize()
-        .ok()
-        .map(|p| p.to_string_lossy().into_owned())
-        .unwrap_or_else(|| normalized.clone());
-
-    images
-        .iter()
-        .find(|img| {
-            let img_norm = paths::strip_windows_extended_prefix(&img.path);
-            let img_canon = std::path::Path::new(&img.path)
-                .canonicalize()
-                .ok()
-                .map(|p| p.to_string_lossy().into_owned())
-                .unwrap_or_else(|| img_norm.clone().into_owned());
-
-            img_norm.as_ref() == normalized.as_str()
-                || img_norm.as_ref() == path_str.as_str()
-                || img.path == normalized
-                || img.path == path_str
-                || img_canon == search_path
-        })
-        .map(|img| (img.id, img.path.clone()))
 }

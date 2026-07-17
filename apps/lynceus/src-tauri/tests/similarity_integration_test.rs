@@ -56,6 +56,9 @@ fn test_real_image_similarity_search() {
     // Encode all images using batch processing
     println!("Encoding images in batches...");
     let mut index = CosineIndex::new();
+    // The index is id-native (T3-2/#6); map each synthetic id back to a
+    // path for the human-readable prints below.
+    let mut id_to_path: Vec<std::path::PathBuf> = Vec::new();
     let mut embeddings_map = std::collections::HashMap::new();
 
     const BATCH_SIZE: usize = 32;
@@ -81,7 +84,9 @@ fn test_real_image_similarity_search() {
                 // Match embeddings back to their paths
                 for (path, embedding) in chunk.iter().zip(embeddings.iter()) {
                     embeddings_map.insert(path.clone(), embedding.clone());
-                    index.add_image(path.clone(), Array1::from_vec(embedding.clone()));
+                    let id = id_to_path.len() as i64;
+                    id_to_path.push(path.clone());
+                    index.add_image(id, Array1::from_vec(embedding.clone()));
                 }
                 println!("  Successfully encoded {} images", embeddings.len());
             }
@@ -94,7 +99,9 @@ fn test_real_image_similarity_search() {
                     match encoder.encode(path) {
                         Ok(embedding) => {
                             embeddings_map.insert(path.clone(), embedding.clone());
-                            index.add_image(path.clone(), Array1::from_vec(embedding.clone()));
+                            let id = id_to_path.len() as i64;
+                            id_to_path.push(path.clone());
+                            index.add_image(id, Array1::from_vec(embedding.clone()));
                         }
                         Err(e) => {
                             eprintln!("Failed to encode {:?}: {}", path.file_name().unwrap(), e);
@@ -126,11 +133,11 @@ fn test_real_image_similarity_search() {
 
     println!("Query image: {:?}", query_path.file_name().unwrap());
     println!("Top 5 similar images:");
-    for (i, (path, similarity)) in similar_images.iter().enumerate() {
+    for (i, (id, similarity)) in similar_images.iter().enumerate() {
         println!(
             "  {}. {:?} - similarity: {:.4}",
             i + 1,
-            path.file_name().unwrap(),
+            id_to_path[*id as usize].file_name().unwrap(),
             similarity
         );
     }
@@ -165,11 +172,11 @@ fn test_real_image_similarity_search() {
         let results = index.get_similar_images(&Array1::from_vec(query_embedding.clone()), 3, None);
 
         println!("  Top 3 matches:");
-        for (i, (path, sim)) in results.iter().enumerate() {
+        for (i, (id, sim)) in results.iter().enumerate() {
             println!(
                 "    {}. {:?} (sim: {:.4})",
                 i + 1,
-                path.file_name().unwrap(),
+                id_to_path[*id as usize].file_name().unwrap(),
                 sim
             );
         }

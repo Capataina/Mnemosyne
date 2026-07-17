@@ -193,8 +193,8 @@ impl FusionIndexState {
         encoder_id: &str,
         query: &ndarray::Array1<f32>,
         top_k: usize,
-        exclude_path: Option<&std::path::PathBuf>,
-    ) -> Result<Vec<(std::path::PathBuf, f32)>, String> {
+        exclude_id: Option<i64>,
+    ) -> Result<Vec<(i64, f32)>, String> {
         // Double-checked locking so the common (warm) case scores under a
         // SHARED read lock — concurrent fused queries against an
         // already-populated cache never serialise. Only the first query
@@ -209,12 +209,14 @@ impl FusionIndexState {
                 .map_err(|e| format!("fusion rwlock poisoned: {e}"))?;
             if let Some(entry) = map.get(encoder_id) {
                 if !entry.cached_images.is_empty() {
-                    return Ok(entry.get_similar_images_sorted(query, top_k, exclude_path));
+                    return Ok(entry.get_similar_images_sorted(query, top_k, exclude_id));
                 }
             }
         }
         // Slow path: write lock, populate if still empty (another thread
-        // may have populated between the read and write locks).
+        // may have populated between the read and write locks). Prefer the
+        // persisted flat store (mmap, zero-copy) and fall back to a DB
+        // populate on miss/stale — same order as spawn_cache_warm.
         {
             let mut map = self
                 .per_encoder
@@ -223,7 +225,9 @@ impl FusionIndexState {
             let entry = map
                 .entry(encoder_id.to_string())
                 .or_insert_with(CosineIndex::new);
-            if entry.cached_images.is_empty() {
+            if entry.cached_images.is_empty()
+                && !entry.load_store_if_valid(db, encoder_id)
+            {
                 entry.populate_from_db_for_encoder(db, encoder_id);
             }
         }
@@ -234,12 +238,66 @@ impl FusionIndexState {
             .map_err(|e| format!("fusion rwlock poisoned: {e}"))?;
         match map.get(encoder_id) {
             Some(entry) if !entry.cached_images.is_empty() => {
-                Ok(entry.get_similar_images_sorted(query, top_k, exclude_path))
+                Ok(entry.get_similar_images_sorted(query, top_k, exclude_id))
             }
             // No embeddings available for this encoder — return empty
             // ranked list. Fusion still works with the other encoders.
             _ => Ok(Vec::new()),
         }
+    }
+
+    /// Run an arbitrary read-only query against the warm fusion slot for
+    /// `encoder_id`, ensuring the slot is populated first. This is what
+    /// lets the legacy/primary single-encoder commands (get_similar,
+    /// get_tiered, semantic_search) BORROW the fusion slot instead of
+    /// keeping the duplicate primary `CosineIndexState` warm (T3-2/#8) —
+    /// the fusion slot already holds exactly the same per-encoder cache.
+    ///
+    /// Same double-checked shape as `ranked_for_encoder`: the warm case
+    /// scores under a shared read lock (so the prefetch burst stays
+    /// parallel); only a cold slot takes the write lock to map-or-populate.
+    /// The closure is handed the populated index; on an encoder with no
+    /// embeddings it runs against an empty index (returning empty), and if
+    /// the slot is concurrently invalidated between locks the result
+    /// defaults — both degrade to "no results", never an error.
+    pub fn with_encoder_index<R: Default>(
+        &self,
+        db: &ImageDatabase,
+        encoder_id: &str,
+        f: impl FnOnce(&CosineIndex) -> R,
+    ) -> Result<R, String> {
+        // Fast path: warm slot, run under a shared read lock.
+        {
+            let map = self
+                .per_encoder
+                .read()
+                .map_err(|e| format!("fusion rwlock poisoned: {e}"))?;
+            if let Some(entry) = map.get(encoder_id) {
+                if !entry.cached_images.is_empty() {
+                    return Ok(f(entry));
+                }
+            }
+        }
+        // Slow path: map the persisted store, else DB-populate.
+        {
+            let mut map = self
+                .per_encoder
+                .write()
+                .map_err(|e| format!("fusion rwlock poisoned: {e}"))?;
+            let entry = map
+                .entry(encoder_id.to_string())
+                .or_insert_with(CosineIndex::new);
+            if entry.cached_images.is_empty()
+                && !entry.load_store_if_valid(db, encoder_id)
+            {
+                entry.populate_from_db_for_encoder(db, encoder_id);
+            }
+        }
+        let map = self
+            .per_encoder
+            .read()
+            .map_err(|e| format!("fusion rwlock poisoned: {e}"))?;
+        Ok(map.get(encoder_id).map(f).unwrap_or_default())
     }
 }
 
@@ -270,30 +328,28 @@ pub struct TextEncoderState {
     >,
 }
 
-/// Background cache warm, spawned right at launch so the FIRST
-/// similarity click — and the frontend's prefetch burst across every
-/// on-screen tile — is instant on a cold session instead of paying the
-/// DB→memory populate lazily on first use.
+/// Background cache warm, spawned right at launch so the FIRST similarity
+/// click — and the frontend's prefetch burst across every on-screen tile
+/// — is instant on a cold session instead of paying the DB→memory populate
+/// lazily on first use.
 ///
-/// Warms two caches, each guarded by an `is_empty` check so it
-/// cooperates with the indexing pipeline's own warm rather than
-/// duplicating it:
-///   - the primary single-encoder `CosineIndexState.index` — prefers the
-///     on-disk snapshot (`cosine_cache.bin`) when fresh, else populates
-///     the active encoder from the DB;
-///   - every enabled encoder's `FusionIndexState` slot — the real gap,
-///     since nothing else warmed these, so the first FUSED query used to
-///     pay a cold per-encoder populate under the fusion lock.
+/// **Fusion slots only (T3-2/#8).** Every search command now borrows the
+/// per-encoder `FusionIndexState` slot (via `with_encoder_index` /
+/// `ranked_for_encoder`), so warming the primary `CosineIndexState` here
+/// too would be the ~205 MB duplicate the flat-store work exists to
+/// remove — the primary is left to the indexing pipeline, which populates
+/// and persists it as a side effect. For each enabled encoder we prefer
+/// the persisted flat store (`embstore_<encoder>.bin`, mapped zero-copy);
+/// on a miss/stale file we DB-populate AND write the store so the NEXT
+/// launch maps it. One write lock per encoder (not one held across all
+/// three) so a real fused query can slip in between populates.
 ///
 /// Runs on its own thread and returns immediately; the window opens
-/// without waiting for it. On a first-ever launch the DB has no
-/// embeddings yet, so the warm loads nothing and the pipeline populates
-/// as it indexes; the payoff is every subsequent (already-indexed)
-/// launch.
+/// without waiting. On a first-ever launch the DB has no embeddings yet,
+/// so nothing loads and the pipeline populates as it indexes; the payoff
+/// is every subsequent (already-indexed) launch.
 fn spawn_cache_warm(
     db_path: String,
-    index: Arc<RwLock<CosineIndex>>,
-    current_encoder_id: Arc<Mutex<String>>,
     fusion: Arc<RwLock<std::collections::HashMap<String, CosineIndex>>>,
 ) {
     std::thread::spawn(move || {
@@ -309,38 +365,18 @@ fn spawn_cache_warm(
             return;
         }
         let settings = crate::settings::Settings::load();
-        let active = settings
-            .priority_image_encoder
-            .clone()
-            .filter(|s| !s.is_empty())
-            .unwrap_or_else(|| "clip_vit_b_32".to_string());
 
-        // Primary single-encoder index. Take both locks in the documented
-        // order (current_encoder_id first, then index) to stay
-        // deadlock-free with ensure_loaded_for / invalidate. Only warm
-        // when empty so we never fight the pipeline's own populate: prefer
-        // the on-disk snapshot, falling back to a DB populate of the
-        // active encoder when it's missing or stale.
-        if let (Ok(mut cur), Ok(mut idx)) = (current_encoder_id.lock(), index.write()) {
-            if idx.cached_images.is_empty() {
-                let loaded = idx.load_from_disk_if_fresh(std::path::Path::new(&db_path));
-                if !loaded {
-                    idx.populate_from_db_for_encoder(&db, &active);
-                }
-                if !idx.cached_images.is_empty() {
-                    *cur = active.clone();
-                }
-            }
-        }
-
-        // Fusion per-encoder caches — the slot nothing else warms. One
-        // write per encoder (rather than one held across all three) so a
-        // real fused query can slip in between populates.
         for enc in settings.resolved_enabled_encoders() {
+            // Map the persisted store if valid; only DB-populate (and then
+            // persist) on a miss/stale file. Guarded by is_empty so we
+            // never fight a populate that already landed.
             if let Ok(mut map) = fusion.write() {
                 let entry = map.entry(enc.clone()).or_insert_with(CosineIndex::new);
-                if entry.cached_images.is_empty() {
+                if entry.cached_images.is_empty() && !entry.load_store_if_valid(&db, &enc) {
                     entry.populate_from_db_for_encoder(&db, &enc);
+                    if !entry.cached_images.is_empty() {
+                        entry.save_store_for(&enc);
+                    }
                 }
             }
         }
@@ -396,18 +432,13 @@ pub fn run(db: ImageDatabase, db_path: String) {
     // from the same DB rows the primary CosineIndexState reads.
     let fusion_state = FusionIndexState::new();
 
-    // Pre-warm both cosine caches in the background right at launch, so
-    // the first similarity click — and the frontend's prefetch burst
-    // across every on-screen tile — is instant on a cold session instead
-    // of paying the DB→memory populate lazily on first use. Idempotent
-    // (each cache is only populated when empty), so it cooperates with
-    // the indexing pipeline's own warm rather than duplicating it.
-    spawn_cache_warm(
-        db_path.clone(),
-        cosine_index.clone(),
-        current_encoder_id.clone(),
-        fusion_state.per_encoder.clone(),
-    );
+    // Pre-warm the per-encoder fusion slots in the background right at
+    // launch (mapping the persisted flat stores), so the first similarity
+    // click — and the frontend's prefetch burst across every on-screen
+    // tile — is instant on a cold session. Fusion-slots-only now (T3-2/#8):
+    // every search command borrows these slots, so the old duplicate warm
+    // of the primary CosineIndexState is gone.
+    spawn_cache_warm(db_path.clone(), fusion_state.per_encoder.clone());
 
     // Single-flight guard for the indexing pipeline. Wrapped in Arc so
     // the .setup() callback (and later set_scan_root commands) can both

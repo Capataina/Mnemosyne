@@ -20,6 +20,11 @@ sysinfo = { version = "0.32", default-features = false, features = ["system"] }
 dirs = "6"
 rand = "0.9.2"
 rayon = "1.10"
+# T3-2/#8+#20 — mmap-backed flat embedding store. Maps each encoder's
+# persisted store zero-copy so a warm launch pages embeddings in on
+# demand (clean, file-backed, OS-evictable) instead of faulting +
+# copying the whole ~800 MB block up front. Pre-authorised for this task.
+memmap2 = "0.9"
 
 [dev-dependencies]
 tempfile = "3.27.0"

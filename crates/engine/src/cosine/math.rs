@@ -16,16 +16,39 @@ pub(crate) fn score_cmp_desc(a: &(usize, f32), b: &(usize, f32)) -> std::cmp::Or
     }
 }
 
-// Function to compute cosine similarity between two embeddings
-pub(crate) fn cosine_similarity(a: &Array1<f32>, b: &Array1<f32>) -> f32 {
-    // Guard against dimension mismatch — ndarray::dot panics if the
-    // lengths differ. Returning 0.0 means "not similar" which is the
-    // safe semantic for cross-encoder vectors. This case happens when
-    // the cosine cache holds embeddings from one encoder (e.g. DINOv2,
-    // 384-d) and a query arrives from a different encoder (e.g. CLIP
-    // text, 512-d) — should be prevented by the dispatch layer
-    // (ensure_loaded_for) but defending here too means a code-path bug
-    // doesn't crash the app.
+/// Sequential f32 dot product over two equal-length slices.
+///
+/// Deliberately a plain sequential fold rather than an ndarray/BLAS
+/// reduction: the flat-store scan (`score_all`) and the serial
+/// equivalence reference both go through this one function, so the
+/// summation order is identical and their scores are bit-for-bit equal
+/// — the ranking-equivalence guarantee T3-2 rests on. Callers guarantee
+/// `a.len() == b.len()`.
+#[inline]
+pub(crate) fn dot_slice(a: &[f32], b: &[f32]) -> f32 {
+    a.iter().zip(b).map(|(x, y)| x * y).sum()
+}
+
+/// Inverse L2 norm (`1/|v|`) of a vector, or `0.0` for a zero vector.
+/// Precomputed once per cached row (T1-4 cached norms, absorbed into
+/// the flat store) so the hot scan multiplies by it instead of paying
+/// a `sqrt` per candidate. Real norm, never assumed 1.0 — legacy
+/// pre-normalise CLIP rows are not unit vectors.
+#[inline]
+pub(crate) fn inv_norm(v: &[f32]) -> f32 {
+    let sq = dot_slice(v, v);
+    if sq == 0.0 {
+        0.0
+    } else {
+        1.0 / sq.sqrt()
+    }
+}
+
+/// Cosine similarity from two slices, computing both norms fresh. This
+/// is the reference formula (`dot / (|a| |b|)`); the flat scan uses the
+/// cached-inverse-norm form `dot * inv_a * inv_b`, which is FP-equal to
+/// this to well within the 1e-6 equivalence tolerance.
+pub(crate) fn cosine_similarity_slice(a: &[f32], b: &[f32]) -> f32 {
     if a.len() != b.len() {
         tracing::warn!(
             "cosine_similarity dim mismatch: query={} cache={}; returning 0.0",
@@ -34,17 +57,32 @@ pub(crate) fn cosine_similarity(a: &Array1<f32>, b: &Array1<f32>) -> f32 {
         );
         return 0.0;
     }
-
-    let dot_product = a.dot(b);
-    let norm_a = a.dot(a).sqrt();
-    let norm_b = b.dot(b).sqrt();
-
-    // Handle zero vectors
+    let dot_product = dot_slice(a, b);
+    let norm_a = dot_slice(a, a).sqrt();
+    let norm_b = dot_slice(b, b).sqrt();
     if norm_a == 0.0 || norm_b == 0.0 {
-        return 0.0; // or some other sensible default
+        return 0.0;
     }
-
     dot_product / (norm_a * norm_b)
+}
+
+// Function to compute cosine similarity between two embeddings.
+//
+// Thin `Array1` wrapper over `cosine_similarity_slice` so the public
+// `CosineIndex::cosine_similarity(&a, &b)` path (tests, the startup
+// sanity check, the integration test) shares the one implementation the
+// flat scan uses. `as_slice` is `Some` for contiguous standard-layout
+// arrays, which every embedding here is; the `unwrap_or` fallback
+// materialises a contiguous copy for the pathological non-contiguous
+// case rather than panicking.
+pub(crate) fn cosine_similarity(a: &Array1<f32>, b: &Array1<f32>) -> f32 {
+    match (a.as_slice(), b.as_slice()) {
+        (Some(sa), Some(sb)) => cosine_similarity_slice(sa, sb),
+        _ => cosine_similarity_slice(
+            &a.to_vec(),
+            &b.to_vec(),
+        ),
+    }
 }
 
 #[cfg(test)]

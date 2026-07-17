@@ -84,7 +84,7 @@ export function SelectedImageTimerPill({
 
   return (
     <div
-      className="selected-image-timer-pill floating-surface absolute bottom-3 left-1/2 z-20 flex h-11 max-w-[calc(100%-24px)] -translate-x-1/2 items-center gap-1 rounded-full border p-1 pl-2 shadow-[var(--shadow-float)]"
+      className="selected-image-timer-pill floating-surface absolute inset-x-0 bottom-4 z-20 mx-auto flex h-11 w-fit max-w-[calc(100%-24px)] items-center gap-1 rounded-full border p-1 pl-2 shadow-[var(--shadow-float)]"
       role="group"
       aria-label="Quick gesture timer"
       onClick={stopHeroActivation}

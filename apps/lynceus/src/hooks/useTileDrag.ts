@@ -93,20 +93,49 @@ export function useTileDrag(input: UseTileDragInput) {
   );
 
   const reorderOverPoint = useCallback(
-    (id: number, x: number, y: number) => {
-      // The active wrapper has pointer-events disabled, but its transparent
-      // absolute-positioning anchor can still be the first hit. Walk the full
-      // browser-computed stack and select the first actual tile that is not
-      // the active one; this stays proportional to the tiny overlap stack,
-      // not to the library's placement count.
+    (id: number) => {
+      // Sample a span×span grid of points across the dragged tile's body —
+      // one dot per cell (a 2-wide tile is probed at 4 points, a 3-wide at 9,
+      // a 1-wide at its single centre). Hit-testing only the cursor pixel (or
+      // even the tile centre) fails for a big tile: telemetry showed the
+      // centre landed on EMPTY space 79% of a drag, so nothing displaced. Each
+      // cell that overlaps another tile votes for it; the MOST-overlapped tile
+      // wins, so the swap is driven by the tile's whole footprint, not a
+      // single point — and the pack then reflows to make room for the span.
+      const node = tileElementsRef.current.get(id);
+      const placement = placementByIdRef.current.get(id);
+      if (!node) {
+        lastHoveredIdRef.current = null;
+        return;
+      }
+      const rect = node.getBoundingClientRect();
+      const span = Math.max(1, placement?.colSpan ?? 1);
+
+      const votes = new Map<number, number>();
+      for (let cx = 0; cx < span; cx++) {
+        for (let cy = 0; cy < span; cy++) {
+          const px = rect.left + rect.width * ((cx + 0.5) / span);
+          const py = rect.top + rect.height * ((cy + 0.5) / span);
+          for (const hit of document.elementsFromPoint(px, py)) {
+            const tile = hit.closest<HTMLElement>("[data-masonry-id]");
+            if (!tile) continue;
+            const cand = Number(tile.dataset.masonryId);
+            if (Number.isFinite(cand) && cand !== id) {
+              votes.set(cand, (votes.get(cand) ?? 0) + 1);
+              break; // first real tile beneath this cell
+            }
+          }
+        }
+      }
+
+      // The tile the dragged footprint overlaps most; ties break to the
+      // first seen (Map preserves insertion = scan order, top-left first).
       let hoveredId: number | null = null;
-      for (const hit of document.elementsFromPoint(x, y)) {
-        const tile = hit.closest<HTMLElement>("[data-masonry-id]");
-        if (!tile) continue;
-        const candidateId = Number(tile.dataset.masonryId);
-        if (Number.isFinite(candidateId) && candidateId !== id) {
-          hoveredId = candidateId;
-          break;
+      let bestVotes = 0;
+      for (const [cand, v] of votes) {
+        if (v > bestVotes) {
+          bestVotes = v;
+          hoveredId = cand;
         }
       }
 
@@ -147,22 +176,12 @@ export function useTileDrag(input: UseTileDragInput) {
     (id: number, pointer: { x: number; y: number }) => {
       latestPointerRef.current = pointer;
       writeDragVisual(id, pointer);
-      // Hit-test the reorder from the dragged tile's VISUAL CENTRE, not the
-      // raw cursor. The cursor is wherever you grabbed the tile, which on a
-      // 2x2 / 3x3 tile can sit over an empty corner while the tile's body
-      // overlaps other tiles — sampling only the cursor pixel then finds
-      // nothing and displaces nothing ("treats a 2x2 like a 1x1"). The
-      // dragged node already carries the follow-the-cursor transform, so its
-      // getBoundingClientRect centre is exactly where the tile's body is.
-      const node = tileElementsRef.current.get(id);
-      if (node) {
-        const r = node.getBoundingClientRect();
-        reorderOverPoint(id, r.left + r.width / 2, r.top + r.height / 2);
-      } else {
-        reorderOverPoint(id, pointer.x, pointer.y);
-      }
+      // reorderOverPoint samples the dragged tile's whole footprint (span×span
+      // dots), so it needs no cursor coordinate — it reads the tile's current
+      // rendered box directly.
+      reorderOverPoint(id);
     },
-    [reorderOverPoint, writeDragVisual, tileElementsRef],
+    [reorderOverPoint, writeDragVisual],
   );
 
   const cancelScheduledFrame = useCallback(() => {

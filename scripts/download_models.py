@@ -18,7 +18,7 @@ can ship on the Mac App Store:
     image/
       clip_vision.onnx      OpenCLIP LAION-2B ViT-B/32 vision   (MIT)
       clip_text.onnx        OpenCLIP LAION-2B ViT-B/32 text     (MIT)
-      clip_tokenizer.json   CLIP BPE tokenizer (49408 vocab)    (see note *)
+      clip_tokenizer.json   CLIP BPE tokenizer (49408 vocab)    (MIT, note *)
       dinov2_base_image.onnx  DINOv2-Base vision, Meta          (Apache-2.0)
       siglip2_vision.onnx   SigLIP-2 Base 256 vision, Google    (Apache-2.0)
       siglip2_text.onnx     SigLIP-2 Base 256 text, Google      (Apache-2.0)
@@ -33,11 +33,17 @@ commercial pivot. `immich-app/ViT-B-32__laion2b-s34b-b79k` is a drop-in MIT
 replacement — same CLIP BPE tokenizer, same image preprocessing, same 512-d
 output — so nothing but these URLs changed.
 
-* Tokenizer note: the CLIP BPE tokenizer.json below is currently mirrored from
-  Xenova's OpenAI export. It is functionally the open_clip MIT vocab/merges
-  (not trained model weights), but its provenance should be re-sourced from an
-  explicitly MIT repo before a paid release. Tracked as a pre-sale checklist
-  item, not a blocker for development.
+* Tokenizer note: the CLIP BPE tokenizer.json below is sourced from
+  laion/CLIP-ViT-B-32-laion2B-s34B-b79K (HuggingFace repo license: MIT) — the
+  same LAION-2B ViT-B/32 checkpoint the immich-app ONNX weights above are
+  re-exported from, so the tokenizer ships with the exact model it pairs with.
+  It is the standard CLIP byte-level BPE (49408 vocab: base tokens 0-49405,
+  <|startoftext|>=49406, <|endoftext|>=49407), identical in vocab/merges to
+  OpenAI CLIP (openai/CLIP, MIT) and open_clip (mlfoundations/open_clip, MIT) —
+  the vocab/merges are data, not trained weights, and MIT at origin regardless
+  of mirror. It was previously mirrored from Xenova's OpenAI export, whose HF
+  repo declares no license; re-sourced to the explicitly-MIT LAION repo so the
+  provenance is clean for a paid release. Not a licence blocker.
 
 Usage:
     python3 scripts/download_models.py                 # all modalities → repo models/
@@ -72,9 +78,10 @@ MODELS = {
             "https://huggingface.co/immich-app/ViT-B-32__laion2b-s34b-b79k/resolve/main/textual/model.onnx",
             "clip_text.onnx",
         ),
-        # CLIP BPE tokenizer — see provenance note in the module docstring.
+        # CLIP BPE tokenizer, MIT — from the LAION repo the immich weights are
+        # re-exported from (see provenance note in the module docstring).
         (
-            "https://huggingface.co/Xenova/clip-vit-base-patch32/resolve/main/tokenizer.json",
+            "https://huggingface.co/laion/CLIP-ViT-B-32-laion2B-s34B-b79K/resolve/main/tokenizer.json",
             "clip_tokenizer.json",
         ),
         # DINOv2-Base (Meta, Apache-2.0) — image-only "View Similar" specialist.

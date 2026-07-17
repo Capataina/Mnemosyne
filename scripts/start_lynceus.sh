@@ -19,6 +19,13 @@ case "$MODE" in
     echo "Starting Lynceus (dev, models at $LYNCEUS_MODELS_DIR)…"
     pnpm run tauri dev
     ;;
+  dev-telemetry)
+    # PROFILING=1 is equivalent to the --profiling CLI flag (main.rs
+    # accepts either) but avoids threading a flag through pnpm's
+    # literal `--` forwarding and Tauri's own cargo-args marker.
+    echo "Starting Lynceus (dev + telemetry, models at $LYNCEUS_MODELS_DIR)…"
+    PROFILING=1 pnpm run tauri dev
+    ;;
   release)
     echo "Building Lynceus (release, models at $LYNCEUS_MODELS_DIR)…"
     # --bundles app skips the DMG step (slower, needs a signing

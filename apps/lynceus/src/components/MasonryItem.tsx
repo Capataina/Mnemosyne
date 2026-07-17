@@ -152,10 +152,9 @@ export const MasonryItem = memo(function MasonryItem(props: MasonryItemProps) {
     : adaptiveUrl ?? props.item.thumbnailUrl ?? props.item.url;
 
   const animationLevel = props.animationLevel ?? "standard";
-  // While THIS tile is being resized or dragged it must track the pointer
-  // 1:1 — framer-motion's layout animation would otherwise ease its box
-  // toward each new position/size, which reads as the tile lagging behind
-  // the cursor. Every other tile keeps `layout` for smooth reflow + pop-in.
+  // Whether THIS tile is under an active gesture (used to suppress the
+  // pop-in `initial`/`animate` motion while the imperative gesture wrapper
+  // drives it — see the motion.div below).
   const gestureActive = props.isDragging || props.activeResizeCorner != null;
 
   return (
@@ -179,13 +178,25 @@ export const MasonryItem = memo(function MasonryItem(props: MasonryItemProps) {
       }
     >
       <motion.div
-        layout={!gestureActive}
+        // NO `layout`. Grid POSITION is owned entirely by MasonryAnchor's CSS
+        // `transition-transform` — a single, symmetric animator. framer's
+        // `layout` here was a SECOND position animator: because this motion.div
+        // sits inside the anchor, when the anchor's translate moved the tile,
+        // framer measured a screen-position change it hadn't caused and
+        // FLIP-animated it too, on a spring curve fighting the anchor's
+        // ease-in-out. The two resolved asymmetrically — a move down blended,
+        // a move up snapped ("teleport"). Dropping `layout` leaves the anchor
+        // as the sole position owner (fixes the teleport) and removes a
+        // per-tile getBoundingClientRect every reflow (a perf win). This
+        // motion.div now owns ONLY the pop-in / drag feedback (opacity+scale),
+        // which never conflicted. gestureActive skips the pop-in for the tile
+        // the imperative wrapper is driving.
         transition={
           animationLevel === "off"
             ? { duration: 0 }
             : { type: "spring", stiffness: 350, damping: 35, mass: 0.8 }
         }
-        initial={{ opacity: 0, scale: 0.97 }}
+        initial={gestureActive ? false : { opacity: 0, scale: 0.97 }}
         animate={{
           opacity: props.isDragging ? 0.6 : 1,
           scale: props.isDragging ? 0.98 : 1,

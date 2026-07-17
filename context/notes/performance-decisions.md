@@ -99,3 +99,17 @@ e2e-driven); and the new timer panel/pill look in the WebView.
 - The masonry grid is never paginated — packing is prefix-dependent and shuffle order is global;
   scaling the feed means compact manifests + deltas, not pages.
 - Cached norms, not assumed unit norms: legacy CLIP rows predate encode-time L2-normalisation.
+
+## Telemetry architecture (decided 2026-07-17)
+
+The profiling system is deliberately split: the **sink lives in the engine**
+(`crates/engine/src/perf.rs` + `perf_report.rs` — timeline, JSONL flush, on-exit report), the
+**capture layer is app-local** (`apps/lynceus/src/services/perf.ts` + `PerfOverlay.tsx`), and the
+**event vocabulary is per-app by design** (breadcrumb names live at call sites). Decision: do NOT
+extract the TS capture layer into a shared workspace package while it has one consumer —
+*trigger:* the session that scaffolds Syrinx lifts `perf.ts` + `PerfOverlay` into `packages/` in
+the same pass (pnpm workspace was adopted partly for this). Disciplines until then: keep
+`perf.ts` free of app-specific logic, and use a consistent event-naming scheme when
+instrumenting new surfaces (timer setup panel and pill controls are currently uninstrumented).
+Boundary: this is local, opt-in diagnostics written to the user's own disk — never conflate
+with phone-home product analytics, which would be a separate consented system.

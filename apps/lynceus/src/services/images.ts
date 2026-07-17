@@ -1,6 +1,12 @@
 import { convertFileSrc, invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
-import { ImageData, ImageItem, SimilarImageItem } from "../types";
+import {
+  FeedItem,
+  FeedManifestRowDTO,
+  ImageData,
+  ImageItem,
+  SimilarImageItem,
+} from "../types";
 import { perfInvoke } from "./perf";
 import { formatApiError } from "./apiError";
 
@@ -18,45 +24,94 @@ import { formatApiError } from "./apiError";
 const PLACEHOLDER_WIDTH = 400;
 const PLACEHOLDER_HEIGHT = 400;
 
-export async function fetchImages(
+/**
+ * Map one compact manifest wire row (from `get_feed_manifest` or a
+ * `feed-delta` event) into the grid's `FeedItem` shape. Exported so the
+ * delta-merge path produces byte-identical items to a fresh manifest
+ * fetch — one mapping, two entry points.
+ *
+ * `hasThumbnail` gates feed eligibility — un-thumbnailed rows are held
+ * back by useShuffledFeed until their thumbnail lands (nothing pops in
+ * blank), which is why the placeholder width/height matter: a row can
+ * arrive here before its real dimensions are known.
+ */
+export function mapFeedManifestRow(row: FeedManifestRowDTO): FeedItem {
+  const hasThumbnail = !!row.thumbnail_path;
+  return {
+    id: row.id,
+    name: row.name,
+    thumbnailUrl: hasThumbnail
+      ? convertFileSrc(row.thumbnail_path as string)
+      : undefined,
+    hasThumbnail,
+    width: row.width ?? PLACEHOLDER_WIDTH,
+    height: row.height ?? PLACEHOLDER_HEIGHT,
+    manualColSpan: row.manual_col_span ?? null,
+  };
+}
+
+/**
+ * T3-1 — the compact layout manifest for the main feed. One row per
+ * visible image (same membership as the legacy `get_images`, engine
+ * test-locked), id-ASC, no tags join backend-side. The feed re-orders
+ * via useShuffledFeed's stable-key shuffle; full detail (tags, notes,
+ * original path) is hydrated per id via `fetchImageDetails`.
+ */
+export async function fetchFeedManifest(
   filterTagIds: number[] = [],
-  filterString: string = "",
   matchAllTags: boolean = false,
   excludeTagIds: number[] = [],
-): Promise<ImageItem[]> {
+): Promise<FeedItem[]> {
   try {
-    const imagesDB: ImageData[] = await perfInvoke("get_images", {
+    const rows: FeedManifestRowDTO[] = await perfInvoke("get_feed_manifest", {
       filterTagIds,
-      filterString,
       matchAllTags,
       excludeTagIds,
     });
+    return rows.map(mapFeedManifestRow);
+  } catch (error) {
+    throw new Error(formatApiError(error));
+  }
+}
 
-    // Backend returns stable id-ASC order. The main feed re-orders via
-    // useShuffledFeed (stable-key shuffle); search / similar results keep
-    // this order. `hasThumbnail` gates feed eligibility — un-thumbnailed
-    // rows are held back until their thumbnail lands (nothing pops in
-    // blank), which is why the placeholder width/height still matter: a
-    // row can be returned here before its real dimensions are known.
-    const images: ImageItem[] = imagesDB.map((img) => {
-      const url = convertFileSrc(img.path);
-      const hasThumbnail = !!img.thumbnail_path;
-      return {
-        id: img.id,
-        name: img.name,
-        url,
-        thumbnailUrl: hasThumbnail
-          ? convertFileSrc(img.thumbnail_path as string)
-          : undefined,
-        hasThumbnail,
-        width: img.width ?? PLACEHOLDER_WIDTH,
-        height: img.height ?? PLACEHOLDER_HEIGHT,
-        tags: img.tags,
-        manualColSpan: img.manual_col_span ?? null,
-      };
+/**
+ * Map a full backend ImageData row into the frontend's hydrated
+ * `ImageItem` shape — the same conversion the legacy full-catalogue
+ * fetch performed (URL conversion for both paths, placeholder dims,
+ * thumbnail gating).
+ */
+function mapImageDetail(img: ImageData): ImageItem {
+  const hasThumbnail = !!img.thumbnail_path;
+  return {
+    id: img.id,
+    name: img.name,
+    url: convertFileSrc(img.path),
+    thumbnailUrl: hasThumbnail
+      ? convertFileSrc(img.thumbnail_path as string)
+      : undefined,
+    hasThumbnail,
+    width: img.width ?? PLACEHOLDER_WIDTH,
+    height: img.height ?? PLACEHOLDER_HEIGHT,
+    tags: img.tags,
+    manualColSpan: img.manual_col_span ?? null,
+  };
+}
+
+/**
+ * T3-1 — hydrate full detail records for an id batch in one IPC call
+ * (`WHERE id IN` backend-side). Ids that don't exist or are currently
+ * invisible (orphaned / disabled root) are simply absent from the
+ * result, matching how the old catalogue lookup missed them.
+ */
+export async function fetchImageDetails(
+  ids: number[],
+): Promise<ImageItem[]> {
+  if (ids.length === 0) return [];
+  try {
+    const imagesDB: ImageData[] = await perfInvoke("get_image_details", {
+      ids,
     });
-
-    return images;
+    return imagesDB.map(mapImageDetail);
   } catch (error) {
     throw new Error(formatApiError(error));
   }

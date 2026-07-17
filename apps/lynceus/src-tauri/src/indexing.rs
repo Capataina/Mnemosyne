@@ -90,6 +90,47 @@ pub enum Phase {
     Error,
 }
 
+/// One compact row of a `feed-delta` event (T3-1) — "this image is now
+/// thumbnailed, with these dimensions". Mirrors the manifest row shape
+/// the frontend feeds its `["feed-manifest"]` cache with, minus
+/// `manual_col_span`: a delta never carries a span, and the frontend
+/// merge preserves any existing span on patch, so a re-thumbnail can
+/// never wipe a persisted resize.
+#[derive(Serialize, Clone, Debug)]
+pub struct FeedDeltaRow {
+    pub id: i64,
+    /// File basename — same derivation as the manifest's.
+    pub name: String,
+    pub width: u32,
+    pub height: u32,
+    pub thumbnail_path: String,
+}
+
+/// Batched `feed-delta` payload. Rows are flushed every
+/// [`FEED_DELTA_BATCH`] completions (and once at the end of the
+/// thumbnail pass, BEFORE the terminal `Phase::Thumbnail` progress emit,
+/// so any frontend phase-transition handling always runs after the last
+/// delta has been delivered).
+#[derive(Serialize, Clone, Debug)]
+pub struct FeedDeltaBatch {
+    pub rows: Vec<FeedDeltaRow>,
+}
+
+/// Rows per `feed-delta` event. At 100k images this yields ~1.5k events
+/// across the whole thumbnail phase — the frontend additionally
+/// throttles cache application to a ~5s cadence, so event count is not
+/// a render-frequency concern, only an IPC-payload-size one.
+const FEED_DELTA_BATCH: usize = 64;
+
+fn emit_feed_delta(app: &AppHandle, rows: Vec<FeedDeltaRow>) {
+    if rows.is_empty() {
+        return;
+    }
+    if let Err(e) = app.emit("feed-delta", FeedDeltaBatch { rows }) {
+        warn!("failed to emit feed-delta event: {e}");
+    }
+}
+
 #[derive(Debug)]
 pub enum IndexingError {
     AlreadyRunning,
@@ -505,6 +546,14 @@ fn run_pipeline_inner(
         // the event rate to ≈4000 emits above that so a 100k index is sane.
         let emit_every = (total_thumbs / 4000).max(1);
 
+        // T3-1 delta buffer: each successfully thumbnailed image becomes a
+        // compact `feed-delta` row so the frontend can patch its manifest
+        // cache in place instead of refetching the whole catalogue every
+        // ~5s. Flushed at FEED_DELTA_BATCH under the lock (the same
+        // "mutate-and-emit while held" discipline as `last_emit`), with a
+        // terminal flush after the pass.
+        let delta_buffer = std::sync::Mutex::new(Vec::<FeedDeltaRow>::new());
+
         needs_thumbs.par_iter().for_each(|image| {
             let root_id = path_to_root.get(&image.path).copied().flatten();
             match thumbnail_generator.generate_thumbnail(
@@ -520,6 +569,27 @@ fn run_pipeline_inner(
                         result.original_height,
                     ) {
                         warn!("DB update for thumbnail of image {} failed: {e}", image.id);
+                    } else {
+                        // Only rows whose DB write landed become deltas —
+                        // the manifest cache must never claim a thumbnail
+                        // the DB doesn't know about (a Ready reconcile
+                        // would visibly un-pop the tile).
+                        let row = FeedDeltaRow {
+                            id: image.id,
+                            name: image.name.clone(),
+                            width: result.original_width,
+                            height: result.original_height,
+                            thumbnail_path: result
+                                .thumbnail_path
+                                .to_string_lossy()
+                                .into_owned(),
+                        };
+                        let mut buf = delta_buffer.lock().unwrap();
+                        buf.push(row);
+                        if buf.len() >= FEED_DELTA_BATCH {
+                            let rows = std::mem::take(&mut *buf);
+                            emit_feed_delta(app, rows);
+                        }
                     }
                 }
                 Err(e) => {
@@ -540,6 +610,12 @@ fn run_pipeline_inner(
                 }
             }
         });
+
+        // Terminal delta flush — before the terminal Thumbnail progress
+        // emit below, so the frontend's flush-on-phase-transition always
+        // fires after every delta row has been delivered.
+        let remaining = std::mem::take(&mut *delta_buffer.lock().unwrap());
+        emit_feed_delta(app, remaining);
     }
     emit(app, Phase::Thumbnail, total_thumbs, total_thumbs, None);
 

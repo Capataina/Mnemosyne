@@ -1,5 +1,5 @@
 import { memo, useCallback } from "react";
-import { ImageItem } from "../types";
+import { FeedItem } from "../types";
 import { motion } from "framer-motion";
 import type { ResizeCorner } from "../hooks/useTileResize";
 import { useAdaptiveThumbnail } from "../hooks/useAdaptiveThumbnail";
@@ -37,9 +37,9 @@ const RESIZE_CORNERS: Array<{
 ];
 
 interface MasonryItemProps {
-  item: ImageItem;
+  item: FeedItem;
   isSelected?: boolean;
-  onClick: (item: ImageItem) => void;
+  onClick: (item: FeedItem) => void;
   /** Fired on pointer-enter — used to prefetch the tile's similar-set. */
   onHover?: (id: number) => void;
   /** Reduce / disable animations per user setting. */

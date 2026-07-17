@@ -3,7 +3,10 @@ use std::path::Path;
 use tauri::State;
 
 use crate::commands::ApiError;
-use crate::db::{images_query::PipelineStats, ImageDatabase, ID};
+use crate::db::{
+    images_query::{FeedManifestRow, PipelineStats},
+    ImageDatabase, ID,
+};
 use crate::image_struct::ImageData;
 use crate::paths;
 use crate::thumbnail::ThumbnailGenerator;
@@ -37,6 +40,41 @@ pub fn get_images(
     let match_all = match_all_tags.unwrap_or(false);
     let exclude = exclude_tag_ids.unwrap_or_default();
     Ok(db.get_images_with_thumbnails(filter_tag_ids, filter_string, match_all, exclude)?)
+}
+
+/// T3-1 — the compact layout manifest that replaces the full-catalogue
+/// `get_images` fetch for the main feed. Same filter surface and the
+/// same visibility membership as `get_images` (test-locked engine-side),
+/// but each row is a handful of scalars plus one thumbnail path: no
+/// tags join, no notes, no original path. Full detail is hydrated per
+/// id-batch via `get_image_details`.
+#[tauri::command]
+#[tracing::instrument(name = "ipc.get_feed_manifest", skip(db), fields(tag_count = filter_tag_ids.len()))]
+pub fn get_feed_manifest(
+    db: State<'_, ImageDatabase>,
+    filter_tag_ids: Vec<ID>,
+    match_all_tags: Option<bool>,
+    exclude_tag_ids: Option<Vec<ID>>,
+) -> Result<Vec<FeedManifestRow>, ApiError> {
+    // Optional args mirror `get_images` so both commands accept the same
+    // call shapes during the transition.
+    let match_all = match_all_tags.unwrap_or(false);
+    let exclude = exclude_tag_ids.unwrap_or_default();
+    Ok(db.get_feed_manifest(filter_tag_ids, match_all, exclude)?)
+}
+
+/// T3-1 — id-batch hydration of full image detail (tags, notes-adjacent
+/// metadata, original path, manual layout columns). One `WHERE id IN`
+/// SELECT per ≤500-id chunk; unknown or currently-invisible ids are
+/// silently absent from the result, matching how the old catalogue
+/// `find` simply missed them.
+#[tauri::command]
+#[tracing::instrument(name = "ipc.get_image_details", skip(db), fields(id_count = ids.len()))]
+pub fn get_image_details(
+    db: State<'_, ImageDatabase>,
+    ids: Vec<ID>,
+) -> Result<Vec<ImageData>, ApiError> {
+    Ok(db.get_image_details_by_ids(&ids)?)
 }
 
 /// Snapshot of pipeline progress — counts of images at each stage

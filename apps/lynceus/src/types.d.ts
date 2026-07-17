@@ -44,6 +44,39 @@ export type ImageItem = {
   manualColSpan?: number | null;
 };
 
+/** Wire shape of one `get_feed_manifest` row / `feed-delta` row (T3-1).
+ *  Compact by design: no tags, no notes, no original path — the
+ *  thumbnail path is the only path a feed tile renders. `feed-delta`
+ *  rows are this shape minus `manual_col_span` (deltas never carry a
+ *  span; the merge preserves any existing one). */
+export type FeedManifestRowDTO = {
+  id: number;
+  name: string;
+  width?: number | null;
+  height?: number | null;
+  thumbnail_path?: string | null;
+  manual_col_span?: number | null;
+};
+
+/** What the grid layers (shuffle → pack → tile) consume. The compact
+ *  manifest maps to exactly this; a full `ImageItem` (hydrated detail,
+ *  search/similar results) is structurally assignable to it, so both
+ *  flow through the same Masonry props. `url` is only present on
+ *  hydrated/search items — a feed tile renders its thumbnail, and the
+ *  selected hero is always a hydrated `ImageItem`. */
+export type FeedItem = {
+  id: number;
+  name: string;
+  /** Full-resolution URL; present on hydrated detail and search results,
+   *  absent on compact manifest entries. */
+  url?: string;
+  thumbnailUrl?: string;
+  hasThumbnail: boolean;
+  width: number;
+  height: number;
+  manualColSpan?: number | null;
+};
+
 export type Tag = {
   id: number;
   name: string;

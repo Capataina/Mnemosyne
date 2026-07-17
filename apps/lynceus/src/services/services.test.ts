@@ -108,82 +108,113 @@ describe("services/notes", () => {
 });
 
 describe("services/images", () => {
-  it("fetchImages threads matchAllTags through to invoke", async () => {
-    const { fetchImages } = await import("./images");
+  it("fetchFeedManifest threads matchAllTags through to invoke", async () => {
+    const { fetchFeedManifest } = await import("./images");
     mockInvoke.mockResolvedValueOnce([]);
-    await fetchImages([1, 2], "skipped", true);
-    expect(mockInvoke).toHaveBeenCalledWith("get_images", {
+    await fetchFeedManifest([1, 2], true);
+    expect(mockInvoke).toHaveBeenCalledWith("get_feed_manifest", {
       filterTagIds: [1, 2],
-      filterString: "skipped",
       matchAllTags: true,
       excludeTagIds: [],
     });
   });
 
-  it("fetchImages defaults matchAllTags to false (OR semantic)", async () => {
-    const { fetchImages } = await import("./images");
+  it("fetchFeedManifest defaults matchAllTags to false (OR semantic)", async () => {
+    const { fetchFeedManifest } = await import("./images");
     mockInvoke.mockResolvedValueOnce([]);
-    await fetchImages([1]);
-    expect(mockInvoke).toHaveBeenCalledWith("get_images", {
+    await fetchFeedManifest([1]);
+    expect(mockInvoke).toHaveBeenCalledWith("get_feed_manifest", {
       filterTagIds: [1],
-      filterString: "",
       matchAllTags: false,
       excludeTagIds: [],
     });
   });
 
-  it("fetchImages threads excludeTagIds through to invoke", async () => {
-    const { fetchImages } = await import("./images");
+  it("fetchFeedManifest threads excludeTagIds through to invoke", async () => {
+    const { fetchFeedManifest } = await import("./images");
     mockInvoke.mockResolvedValueOnce([]);
     // Include tag 1, exclude tags 2 and 3 — the library drawer's
     // "must have" / "must not have" split reaches the backend intact.
-    await fetchImages([1], "", false, [2, 3]);
-    expect(mockInvoke).toHaveBeenCalledWith("get_images", {
+    await fetchFeedManifest([1], false, [2, 3]);
+    expect(mockInvoke).toHaveBeenCalledWith("get_feed_manifest", {
       filterTagIds: [1],
-      filterString: "",
       matchAllTags: false,
       excludeTagIds: [2, 3],
     });
   });
 
-  it("fetchImages constructs convertFileSrc URLs for thumbnail and full", async () => {
-    const { fetchImages } = await import("./images");
+  it("fetchFeedManifest maps compact rows (thumbnail URL, span, real dims)", async () => {
+    const { fetchFeedManifest } = await import("./images");
     mockInvoke.mockResolvedValueOnce([
       {
         id: 1,
+        name: "photo.jpg",
+        thumbnail_path: "/tmp/thumb.jpg",
+        width: 800,
+        height: 600,
+        manual_col_span: 2,
+      },
+    ]);
+    const items = await fetchFeedManifest();
+    expect(items).toHaveLength(1);
+    expect(items[0].thumbnailUrl).toContain("thumb.jpg");
+    expect(items[0].hasThumbnail).toBe(true);
+    expect(items[0].width).toBe(800);
+    expect(items[0].height).toBe(600);
+    expect(items[0].manualColSpan).toBe(2);
+    // Compact row carries no original path — no full-res URL grid-side.
+    expect(items[0].url).toBeUndefined();
+  });
+
+  it("fetchFeedManifest gates un-thumbnailed rows and applies placeholder dims", async () => {
+    // The feed is thumbnail-gated on `hasThumbnail`, so an un-thumbnailed
+    // row must report false and carry no thumbnail URL (it's held back
+    // from the grid until its thumbnail lands, then pops in). Its NULL
+    // dimensions become the 400×400 square placeholder.
+    const { fetchFeedManifest } = await import("./images");
+    mockInvoke.mockResolvedValueOnce([
+      { id: 1, name: "photo.jpg", width: null, height: null },
+    ]);
+    const items = await fetchFeedManifest();
+    expect(items[0].hasThumbnail).toBe(false);
+    expect(items[0].thumbnailUrl).toBeUndefined();
+    expect(items[0].width).toBe(400);
+    expect(items[0].height).toBe(400);
+  });
+
+  it("fetchImageDetails hydrates a batch in one invoke and maps full detail", async () => {
+    const { fetchImageDetails } = await import("./images");
+    mockInvoke.mockResolvedValueOnce([
+      {
+        id: 7,
         path: "/tmp/photo.jpg",
         name: "photo.jpg",
         thumbnail_path: "/tmp/thumb.jpg",
         width: 800,
         height: 600,
-        tags: [],
+        tags: [{ id: 1, name: "t", color: "#fff" }],
+        manual_col_span: 2,
       },
     ]);
-    const items = await fetchImages();
+    const items = await fetchImageDetails([7, 8]);
+    expect(mockInvoke).toHaveBeenCalledWith("get_image_details", {
+      ids: [7, 8],
+    });
     expect(items).toHaveLength(1);
     expect(items[0].url).toContain("photo.jpg");
     expect(items[0].thumbnailUrl).toContain("thumb.jpg");
-    expect(items[0].hasThumbnail).toBe(true);
+    expect(items[0].tags).toHaveLength(1);
+    expect(items[0].manualColSpan).toBe(2);
   });
 
-  it("fetchImages leaves thumbnailUrl undefined and hasThumbnail false when no thumbnail_path", async () => {
-    // The feed is thumbnail-gated on `hasThumbnail`, so an un-thumbnailed
-    // row must report false and carry no thumbnail URL (it's held back
-    // from the grid until its thumbnail lands, then pops in).
-    const { fetchImages } = await import("./images");
-    mockInvoke.mockResolvedValueOnce([
-      {
-        id: 1,
-        path: "/tmp/photo.jpg",
-        name: "photo.jpg",
-        width: 800,
-        height: 600,
-        tags: [],
-      },
-    ]);
-    const items = await fetchImages();
-    expect(items[0].hasThumbnail).toBe(false);
-    expect(items[0].thumbnailUrl).toBeUndefined();
+  it("fetchImageDetails short-circuits an empty id batch without an IPC call", async () => {
+    const { fetchImageDetails } = await import("./images");
+    const items = await fetchImageDetails([]);
+    expect(items).toEqual([]);
+    expect(mockInvoke).not.toHaveBeenCalledWith(
+      "get_image_details",
+      expect.anything(),
+    );
   });
 
   it("setScanRoot sends only the path argument", async () => {

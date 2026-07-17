@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef } from "react";
-import { ImageItem } from "../types";
+import { FeedItem } from "../types";
 import { MasonryItem } from "./MasonryItem";
 import { MasonryAnchor } from "./MasonryAnchor";
 import type { MasonryItemPlacement } from "./masonryPacking";
@@ -10,12 +10,12 @@ import { useTileResize } from "../hooks/useTileResize";
 export type MasonryItemData = MasonryItemPlacement;
 
 interface MasonryProps {
-  items?: ImageItem[];
-  selectedItem?: ImageItem | null;
+  items?: FeedItem[];
+  selectedItem?: FeedItem | null;
   minItemWidth: number;
   columnGap: number;
   verticalGap: number;
-  onItemClick: (item: ImageItem) => void;
+  onItemClick: (item: FeedItem) => void;
   /** Override the computed column count. 0/undefined = auto. */
   columnCountOverride?: number;
   /** Tile size scale multiplier. Default 1.0. */
@@ -129,7 +129,7 @@ export default function Masonry(props: MasonryProps) {
   }, [visiblePlacements, resize.syncVisual, drag.syncVisual]);
 
   const handleItemClick = useCallback(
-    (item: ImageItem) => {
+    (item: FeedItem) => {
       if (suppressNextClickRef.current) {
         suppressNextClickRef.current = false;
         return;

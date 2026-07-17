@@ -1,4 +1,4 @@
-import type { ImageItem } from "../types";
+import type { FeedItem } from "../types";
 
 /**
  * Pure layout calculation for the Pinterest-style masonry grid.
@@ -23,7 +23,7 @@ import type { ImageItem } from "../types";
  */
 
 export interface MasonryItemPlacement {
-  itemData: ImageItem;
+  itemData: FeedItem;
   x: number;
   y: number;
   width: number;
@@ -35,8 +35,8 @@ export interface MasonryItemPlacement {
 }
 
 export interface MasonryLayoutInput {
-  items: ImageItem[];
-  selectedItem?: ImageItem | null;
+  items: FeedItem[];
+  selectedItem?: FeedItem | null;
   containerWidth: number;
   minItemWidth: number;
   columnGap: number;
@@ -66,28 +66,132 @@ export interface MasonryLayoutOutput {
   columnWidth: number;
 }
 
-export function computeMasonryLayout(
-  input: MasonryLayoutInput,
-): MasonryLayoutOutput {
+// ============================================================
+//  Typed-array geometry core (T3-3)
+// ============================================================
+//
+// The packing algorithm lives here, once, in a numeric-only form that
+// carries no object references and so can (a) run inside a Web Worker
+// across a structured-clone / transfer boundary and (b) hold a whole
+// 100k-image layout as five flat typed arrays instead of 100k placement
+// objects + a 100k-entry Map. `computeMasonryLayout` above is now a thin
+// decorator over `computeMasonryGeometry` — the object placements are
+// reattached to `itemData` for whoever needs them (the sync fallback, and
+// the tests that assert on the full placement shape), while the engine
+// keeps only the geometry and materialises objects for the visible window.
+//
+// Precision note: geometry crosses as `Float64Array`, never `Float32Array`.
+// JS packing math is double throughout, so a Float64 round-trip is
+// bit-for-bit equal to a direct object pack — the equivalence invariant.
+// Float32 would truncate x/y/w/h and break it for a ~2 MB saving that does
+// not matter at this scale.
+
+/** Numeric, worker-crossable pack input. `widths`/`heights` are the source
+ *  image dimensions in feed order; `spans` is the already-resolved
+ *  requested column span per item (override ?? manualColSpan ?? 1). The
+ *  three typed arrays are transferred into the worker; the scalars are
+ *  cloned. The hero (selected item) is described separately because it may
+ *  not appear in `items` at all — `selectedIndex` is where it does appear
+ *  (to be skipped in the flow), or -1. */
+export interface MasonryPackInput {
+  widths: Float64Array;
+  heights: Float64Array;
+  spans: Int32Array;
+  containerWidth: number;
+  minItemWidth: number;
+  columnGap: number;
+  verticalGap: number;
+  /** 0 = auto (computed). 1..12 forces. */
+  columnCountOverride: number;
+  tileScale: number;
+  hasHero: boolean;
+  /** Index of the selected item within the feed, or -1 (absent / none). */
+  selectedIndex: number;
+  selectedWidth: number;
+  selectedHeight: number;
+}
+
+export interface MasonryHeroGeometry {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  colSpan: number;
+}
+
+/** Index-aligned geometry output. `xs`/`ys`/`widths`/`heights`/`spans`
+ *  are parallel to the input feed order; the entry at `selectedIndex` is
+ *  left unwritten (the hero carries that item's geometry instead) and
+ *  callers skip it. `columnCount === 0` is the sole marker of the
+ *  degenerate zero-width layout. */
+export interface MasonryGeometry {
+  xs: Float64Array;
+  ys: Float64Array;
+  widths: Float64Array;
+  heights: Float64Array;
+  spans: Int32Array;
+  selectedIndex: number;
+  hero: MasonryHeroGeometry | null;
+  height: number;
+  columnCount: number;
+  columnWidth: number;
+  count: number;
+}
+
+/** Generation-tagged pack request sent to the worker. The `gen` tags the
+ *  request so the engine can discard results superseded by a newer
+ *  filter/resize/reorder input. */
+export interface MasonryPackRequest {
+  gen: number;
+  input: MasonryPackInput;
+}
+
+/** Geometry for a tagged request, returned by the worker (or produced by
+ *  the synchronous fallback). */
+export interface MasonryPackResponse {
+  gen: number;
+  geometry: MasonryGeometry;
+}
+
+export function computeMasonryGeometry(
+  input: MasonryPackInput,
+): MasonryGeometry {
   const {
-    items,
-    selectedItem,
+    widths,
+    heights,
+    spans,
     containerWidth,
     minItemWidth,
     columnGap,
     verticalGap,
     columnCountOverride,
-    tileScale = 1.0,
-    spanOverrides,
+    tileScale,
+    hasHero,
+    selectedIndex,
+    selectedWidth,
+    selectedHeight,
   } = input;
+
+  const n = widths.length;
+  const xs = new Float64Array(n);
+  const ys = new Float64Array(n);
+  const outWidths = new Float64Array(n);
+  const outHeights = new Float64Array(n);
+  const outSpans = new Int32Array(n);
 
   if (containerWidth <= 0) {
     return {
-      placements: [],
-      placementById: new Map(),
+      xs,
+      ys,
+      widths: outWidths,
+      heights: outHeights,
+      spans: outSpans,
+      selectedIndex: -1,
+      hero: null,
       height: 0,
       columnCount: 0,
       columnWidth: 0,
+      count: n,
     };
   }
 
@@ -100,34 +204,26 @@ export function computeMasonryLayout(
       ? Math.min(columnCountOverride, 12)
       : autoCount;
 
-  const columnWidth =
-    (containerWidth - (colCount - 1) * columnGap) / colCount;
-  const placements: MasonryItemPlacement[] = [];
-  const placementById = new Map<number, MasonryItemPlacement>();
+  const columnWidth = (containerWidth - (colCount - 1) * columnGap) / colCount;
   const colHeights: number[] = new Array(colCount).fill(0);
 
   // Hero placement: selected item spans up to 3 columns at the top.
-  if (selectedItem) {
+  let hero: MasonryHeroGeometry | null = null;
+  if (hasHero) {
     const selectedCols = Math.min(colCount, 3);
-    const selectedWidth =
+    const heroWidth =
       columnWidth * selectedCols + columnGap * (selectedCols - 1);
-    const ratio = selectedWidth / selectedItem.width;
-    const selectedHeight = selectedItem.height * ratio;
-
-    const placement: MasonryItemPlacement = {
-      itemData: selectedItem,
+    const ratio = heroWidth / selectedWidth;
+    const heroHeight = selectedHeight * ratio;
+    hero = {
       x: 0,
       y: 0,
-      width: selectedWidth,
-      height: selectedHeight,
-      isSelected: true,
+      width: heroWidth,
+      height: heroHeight,
       colSpan: selectedCols,
     };
-    placements.push(placement);
-    placementById.set(selectedItem.id, placement);
-
     for (let i = 0; i < selectedCols; i++) {
-      colHeights[i] = selectedHeight + verticalGap;
+      colHeights[i] = heroHeight + verticalGap;
     }
   }
 
@@ -136,10 +232,10 @@ export function computeMasonryLayout(
   // same search widened to a `span`-column sliding window, placed
   // flush against the tallest column in that window so every spanned
   // column's top edge lines up (no jagged mid-tile offsets).
-  for (const img of items) {
-    if (selectedItem && img.id === selectedItem.id) continue;
+  for (let i = 0; i < n; i++) {
+    if (i === selectedIndex) continue;
 
-    const requestedSpan = spanOverrides?.[img.id] ?? img.manualColSpan ?? 1;
+    const requestedSpan = spans[i];
     const span = Math.max(1, Math.min(requestedSpan, colCount));
 
     let bestStart = 0;
@@ -156,19 +252,13 @@ export function computeMasonryLayout(
     }
 
     const placedWidth = columnWidth * span + columnGap * (span - 1);
-    const ratio = placedWidth / img.width;
-    const itemHeight = img.height * ratio;
-    const placement: MasonryItemPlacement = {
-      itemData: img,
-      x: bestStart * (columnWidth + columnGap),
-      y: bestMax,
-      width: placedWidth,
-      height: itemHeight,
-      isSelected: false,
-      colSpan: span,
-    };
-    placements.push(placement);
-    placementById.set(img.id, placement);
+    const ratio = placedWidth / widths[i];
+    const itemHeight = heights[i] * ratio;
+    xs[i] = bestStart * (columnWidth + columnGap);
+    ys[i] = bestMax;
+    outWidths[i] = placedWidth;
+    outHeights[i] = itemHeight;
+    outSpans[i] = span;
     for (let k = bestStart; k < bestStart + span; k++) {
       colHeights[k] = bestMax + itemHeight + verticalGap;
     }
@@ -176,10 +266,163 @@ export function computeMasonryLayout(
 
   const height = colHeights.length > 0 ? Math.max(...colHeights, 0) : 0;
   return {
-    placements,
-    placementById,
+    xs,
+    ys,
+    widths: outWidths,
+    heights: outHeights,
+    spans: outSpans,
+    selectedIndex,
+    hero,
     height,
     columnCount: colCount,
     columnWidth,
+    count: n,
+  };
+}
+
+/** Scalar packing parameters shared by `buildPackInput` and the layout
+ *  decorator — everything the pack needs that is not per-item. */
+export interface MasonryPackParams {
+  containerWidth: number;
+  minItemWidth: number;
+  columnGap: number;
+  verticalGap: number;
+  columnCountOverride?: number;
+  tileScale?: number;
+  spanOverrides?: Record<number, number>;
+}
+
+/** Flatten a feed slice into the numeric pack input. Resolves each item's
+ *  requested span (live drag override ahead of the persisted footprint) and
+ *  locates the selected item's index in one O(N) pass, so the geometry core
+ *  and the worker stay purely numeric. */
+export function buildPackInput(
+  items: FeedItem[],
+  selectedItem: FeedItem | null,
+  params: MasonryPackParams,
+): MasonryPackInput {
+  const n = items.length;
+  const widths = new Float64Array(n);
+  const heights = new Float64Array(n);
+  const spans = new Int32Array(n);
+  const overrides = params.spanOverrides;
+  const selectedId = selectedItem ? selectedItem.id : -1;
+  let selectedIndex = -1;
+
+  for (let i = 0; i < n; i++) {
+    const item = items[i];
+    widths[i] = item.width;
+    heights[i] = item.height;
+    spans[i] = overrides?.[item.id] ?? item.manualColSpan ?? 1;
+    if (selectedItem && item.id === selectedId) selectedIndex = i;
+  }
+
+  return {
+    widths,
+    heights,
+    spans,
+    containerWidth: params.containerWidth,
+    minItemWidth: params.minItemWidth,
+    columnGap: params.columnGap,
+    verticalGap: params.verticalGap,
+    columnCountOverride: params.columnCountOverride ?? 0,
+    tileScale: params.tileScale ?? 1.0,
+    hasHero: !!selectedItem,
+    selectedIndex,
+    selectedWidth: selectedItem ? selectedItem.width : 0,
+    selectedHeight: selectedItem ? selectedItem.height : 0,
+  };
+}
+
+/**
+ * Materialise one placement object from index-aligned geometry. Used by
+ * the layout decorator (all N) and by the engine's visible-window pass
+ * (O(visible)); the single call site keeps the placement shape in one
+ * place. `index` must not be the hero's `selectedIndex` (that entry is
+ * unwritten — use `heroPlacement`).
+ */
+export function placementAt(
+  geo: MasonryGeometry,
+  items: FeedItem[],
+  index: number,
+): MasonryItemPlacement {
+  return {
+    itemData: items[index],
+    x: geo.xs[index],
+    y: geo.ys[index],
+    width: geo.widths[index],
+    height: geo.heights[index],
+    isSelected: false,
+    colSpan: geo.spans[index],
+  };
+}
+
+/** The hero placement for a geometry that has one, reattaching the
+ *  selected item as its `itemData`. Returns null when there is no hero. */
+export function heroPlacement(
+  geo: MasonryGeometry,
+  selectedItem: FeedItem | null,
+): MasonryItemPlacement | null {
+  if (!geo.hero || !selectedItem) return null;
+  return {
+    itemData: selectedItem,
+    x: geo.hero.x,
+    y: geo.hero.y,
+    width: geo.hero.width,
+    height: geo.hero.height,
+    isSelected: true,
+    colSpan: geo.hero.colSpan,
+  };
+}
+
+/**
+ * Object-placement layout — the original public contract, now a thin
+ * decorator over the numeric geometry core. Behaviour is identical to the
+ * pre-T3-3 implementation (the 21 packing tests assert on this output):
+ * the placements array is hero-first, then feed order skipping the hero,
+ * each carrying its `itemData` ref. This path is the synchronous fallback
+ * and the reference the worker's output is equivalence-tested against.
+ */
+export function computeMasonryLayout(
+  input: MasonryLayoutInput,
+): MasonryLayoutOutput {
+  const { items, selectedItem, ...params } = input;
+  const geo = computeMasonryGeometry(
+    buildPackInput(items, selectedItem ?? null, params),
+  );
+
+  // Degenerate zero-width layout: no columns, no placements (matches the
+  // pre-T3-3 early return exactly).
+  if (geo.columnCount === 0) {
+    return {
+      placements: [],
+      placementById: new Map(),
+      height: 0,
+      columnCount: 0,
+      columnWidth: 0,
+    };
+  }
+
+  const placements: MasonryItemPlacement[] = [];
+  const placementById = new Map<number, MasonryItemPlacement>();
+
+  const hero = heroPlacement(geo, selectedItem ?? null);
+  if (hero) {
+    placements.push(hero);
+    placementById.set(hero.itemData.id, hero);
+  }
+  for (let i = 0; i < items.length; i++) {
+    if (i === geo.selectedIndex) continue;
+    const placement = placementAt(geo, items, i);
+    placements.push(placement);
+    placementById.set(items[i].id, placement);
+  }
+
+  return {
+    placements,
+    placementById,
+    height: geo.height,
+    columnCount: geo.columnCount,
+    columnWidth: geo.columnWidth,
   };
 }

@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { convertFileSrc } from "@tauri-apps/api/core";
-import type { ImageItem } from "../types";
+import type { FeedItem } from "../types";
 import { getThumbnail } from "../services/images";
 
 /**
@@ -43,7 +43,7 @@ function bucketFor(targetPx: number): number | null {
  * @param renderedWidth the tile's current CSS width in px (0 to skip)
  */
 export function useAdaptiveThumbnail(
-  item: ImageItem,
+  item: FeedItem,
   renderedWidth: number,
 ): string | undefined {
   const base = item.thumbnailUrl ?? item.url;

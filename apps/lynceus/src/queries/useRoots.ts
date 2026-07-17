@@ -38,7 +38,7 @@ export function useAddRoot() {
       // event channel will surface the new tiles. We invalidate the
       // image query proactively so the empty-state vanishes once the
       // first thumbnails land.
-      qc.invalidateQueries({ queryKey: ["images"] });
+      qc.invalidateQueries({ queryKey: ["feed-manifest"] });
     },
   });
 }
@@ -63,7 +63,7 @@ export function useRemoveRoot() {
     onSuccess: () => {
       // Image set changed — refetch so the grid drops the removed root's
       // images.
-      qc.invalidateQueries({ queryKey: ["images"] });
+      qc.invalidateQueries({ queryKey: ["feed-manifest"] });
     },
   });
 }
@@ -88,7 +88,7 @@ export function useSetRootEnabled() {
     },
     onSuccess: () => {
       // Toggling enabled changes which images the grid query returns.
-      qc.invalidateQueries({ queryKey: ["images"] });
+      qc.invalidateQueries({ queryKey: ["feed-manifest"] });
     },
   });
 }

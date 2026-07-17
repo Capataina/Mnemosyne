@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type RefObject } from "react";
-import type { ImageItem } from "../types";
+import type { FeedItem } from "../types";
 import type { MasonryItemPlacement } from "../components/masonryPacking";
+import { buildIndexMap, reorderWithinList } from "./masonryReorder";
 
 /** Pixels of movement before a pointer-down on a tile counts as a drag
  *  rather than a click - below this, releasing still fires onItemClick. */
@@ -8,7 +9,7 @@ const DRAG_THRESHOLD_PX = 6;
 
 interface UseTileDragInput {
   enabled: boolean;
-  items: ImageItem[] | undefined;
+  items: FeedItem[] | undefined;
   placementsRef: RefObject<MasonryItemPlacement[]>;
   placementByIdRef: RefObject<Map<number, MasonryItemPlacement>>;
   tileElementsRef: RefObject<Map<number, HTMLElement>>;
@@ -39,7 +40,7 @@ export function useTileDrag(input: UseTileDragInput) {
   } = input;
 
   const [dragItemId, setDragItemId] = useState<number | null>(null);
-  const [workingOrder, setWorkingOrder] = useState<ImageItem[] | null>(null);
+  const [workingOrder, setWorkingOrder] = useState<FeedItem[] | null>(null);
 
   const dragStartPosRef = useRef<{ x: number; y: number } | null>(null);
   // Packed slot position + pointer position captured at grab, so the
@@ -55,7 +56,13 @@ export function useTileDrag(input: UseTileDragInput) {
   const animationFrameRef = useRef<number | null>(null);
   const dragMovedRef = useRef(false);
   const lastHoveredIdRef = useRef<number | null>(null);
-  const workingOrderRef = useRef<ImageItem[] | null>(null);
+  const workingOrderRef = useRef<FeedItem[] | null>(null);
+  // id→index map over the working order, built once per drag and patched on
+  // each swap (see masonryReorder). Kills the two O(N) findIndex scans that
+  // a hover-swap used to pay. `indexMapBaseRef` is the array the live map
+  // describes, so a mid-drag base change (a delta) triggers a rebuild.
+  const idToIndexRef = useRef<Map<number, number> | null>(null);
+  const indexMapBaseRef = useRef<FeedItem[] | null>(null);
   const itemsRef = useRef(items);
   itemsRef.current = items;
   const onReorderRef = useRef(input.onReorder);
@@ -107,19 +114,23 @@ export function useTileDrag(input: UseTileDragInput) {
       lastHoveredIdRef.current = hoveredId;
 
       const base = workingOrderRef.current ?? itemsRef.current ?? [];
-      // Index lookup and the array copy are intentionally paid only for a
-      // new hover target, alongside the discrete O(n) repack. Building a
-      // 100k-entry order map synchronously at pointer-down would make the
-      // gesture feel stuck before the tile even began following the cursor.
-      const fromIndex = base.findIndex((item) => item.id === id);
-      const toIndex = base.findIndex((item) => item.id === hoveredId);
-      if (fromIndex === -1 || toIndex === -1 || fromIndex === toIndex) return;
-
-      const next = base.slice();
-      const [moved] = next.splice(fromIndex, 1);
-      next.splice(toIndex, 0, moved);
-      // Update the imperative ref before scheduling React so another pointer
-      // frame cannot derive a second reorder from stale item positions.
+      // Build the id→index map lazily on the first swap (not at pointer-down:
+      // a plain click never pays for it, and the drag threshold means the
+      // tile hasn't moved yet, so the one-time O(N) build is invisible), or
+      // rebuild it if the base order changed identity beneath us (a mid-drag
+      // delta). Each swap then patches the map in O(window), replacing the two
+      // O(N) findIndex scans the hover path used to pay.
+      if (idToIndexRef.current === null || indexMapBaseRef.current !== base) {
+        idToIndexRef.current = buildIndexMap(base);
+        indexMapBaseRef.current = base;
+      }
+      const next = reorderWithinList(base, idToIndexRef.current, id, hoveredId);
+      if (!next) return;
+      // The map now describes `next`; track it as the base so the next swap
+      // reuses the patched map instead of rebuilding, and update the
+      // imperative ref before scheduling React so another pointer frame
+      // cannot derive a second reorder from stale item positions.
+      indexMapBaseRef.current = next;
       workingOrderRef.current = next;
       setWorkingOrder(next);
     },
@@ -184,6 +195,8 @@ export function useTileDrag(input: UseTileDragInput) {
       dragMovedRef.current = false;
       lastHoveredIdRef.current = null;
       workingOrderRef.current = null;
+      idToIndexRef.current = null;
+      indexMapBaseRef.current = null;
       setDragItemId(id);
     },
     [enabled, placementByIdRef, placementsRef],
@@ -227,6 +240,8 @@ export function useTileDrag(input: UseTileDragInput) {
       setDragItemId(null);
       setWorkingOrder(null);
       workingOrderRef.current = null;
+      idToIndexRef.current = null;
+      indexMapBaseRef.current = null;
       dragStartPosRef.current = null;
       dragBaseRef.current = null;
       latestPointerRef.current = null;

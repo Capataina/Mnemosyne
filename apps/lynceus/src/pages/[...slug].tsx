@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useRef, useState, useMemo, Profiler } from "react";
 import Masonry from "../components/Masonry";
 import {
-  useImages,
+  useFeedManifest,
+  useImageDetail,
+  prefetchImageDetails,
   useAssignTagToImage,
   useRemoveTagFromImage,
   useSetManualColSpan,
@@ -14,7 +16,7 @@ import { usePipelineStats, useIsIndexing } from "../hooks/useIndexingStatus";
 import { LibraryDrawer, LibraryMenuButton } from "@/components/library-drawer";
 import { useConfirm } from "@/components/ui/confirm";
 import { getTagCounts } from "@/services/tags";
-import { ImageItem, Tag } from "../types";
+import { FeedItem, ImageItem, Tag } from "../types";
 import { AnimatePresence, motion } from "framer-motion";
 import { useLocation, useNavigate } from "react-router";
 import { useTags, useCreateTag, useDeleteTag } from "@/queries/useTags";
@@ -30,6 +32,28 @@ import { pickScanFolder, fetchFusedSimilarImages } from "@/services/images";
 import { useAddRoot, useRoots } from "@/queries/useRoots";
 import { useUserPreferences } from "@/hooks/useUserPreferences";
 import { getImageNotes, setImageNotes } from "@/services/notes";
+
+/**
+ * Synchronous selection seed built from a grid entry (T3-1). The compact
+ * manifest has no tags and no full-res URL, so a fresh click selects this
+ * interim shape immediately (keeping the feed→similar swap instant) and
+ * the URL effect upgrades it to the hydrated `ImageItem` the moment the
+ * per-id detail query lands — usually the same tick, thanks to the
+ * click/hover prefetch.
+ */
+function seedSelectionItem(entry: FeedItem): ImageItem {
+  return {
+    id: entry.id,
+    name: entry.name,
+    url: entry.url ?? entry.thumbnailUrl ?? "",
+    thumbnailUrl: entry.thumbnailUrl,
+    hasThumbnail: entry.hasThumbnail,
+    width: entry.width,
+    height: entry.height,
+    tags: [],
+    manualColSpan: entry.manualColSpan ?? null,
+  };
+}
 
 export default function Home() {
   const [selectedItem, setSelectedItem] = useState<ImageItem | null>(null);
@@ -121,16 +145,18 @@ export default function Home() {
   const [excludeTags, setExcludeTags] = useState<Tag[]>([]);
   const confirm = useConfirm();
 
-  const images = useImages({
+  // T3-1: the compact layout manifest replaces the full catalogue fetch.
+  // Same membership, same filter surface; tags/notes/full paths are
+  // hydrated per id (useImageDetail) only where a surface needs them.
+  const manifest = useFeedManifest({
     tagIds: searchTags.map((t) => t.id),
-    searchText: searchText,
     matchAllTags: prefs.tagFilterMode === "all",
     excludeTagIds: excludeTags.map((t) => t.id),
   });
 
   // The main feed: stable-key shuffle + thumbnail-gate + any in-session
   // reorder. Search / similar results bypass this and keep their ranking.
-  const feed = useShuffledFeed(images.data, shuffleSeed, sessionOrder);
+  const feed = useShuffledFeed(manifest.data, shuffleSeed, sessionOrder);
   // Narrow consumption: stats drive the drawer/count, `isIndexing` is a coarse
   // flag that flips on phase transitions only. Neither subscribes to the
   // per-event `message`, so an indexing run's message churn no longer
@@ -138,15 +164,15 @@ export default function Home() {
   const pipelineStats = usePipelineStats();
   const isIndexing = useIsIndexing();
 
-  // "All images" count for the library drawer. NOT `images.data.length` —
-  // that's the currently-filtered catalogue, which shrinks to the selected
+  // "All images" count for the library drawer. NOT `manifest.data.length` —
+  // that's the currently-filtered manifest, which shrinks to the selected
   // folder's size. total_images − orphaned is the whole non-orphaned
   // library: a stable superset of every tag-folder count (so "All images"
   // never reads smaller than a folder), independent of the active filter.
-  // Falls back to the loaded catalogue length until the first stats poll.
+  // Falls back to the loaded manifest length until the first stats poll.
   const totalVisibleImages = pipelineStats
     ? Math.max(0, pipelineStats.total_images - pipelineStats.orphaned)
-    : (images.data?.length ?? 0);
+    : (manifest.data?.length ?? 0);
 
   // Re-shuffle whenever the user leaves a results view (search or
   // similar) back to the main feed. Launch is covered by the random
@@ -297,6 +323,18 @@ export default function Home() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
 
+  // Hydrated detail for the image the URL points at (tags + full-res URL
+  // for the inspector). Undefined path → query disabled. The selection
+  // effect below seeds synchronously from the grid entry and upgrades to
+  // this the moment it resolves.
+  const urlImageId = (() => {
+    const pathId = location.pathname.replace(/\//g, "");
+    if (!pathId) return undefined;
+    const n = Number(pathId);
+    return Number.isFinite(n) ? n : undefined;
+  })();
+  const selectedDetail = useImageDetail(urlImageId);
+
   // Prefetch an image's similar-set on hover so opening it is instant.
   // The first similarity query otherwise pays a one-time cosine-cache
   // warm + the fusion compute; react-query then caches the result per
@@ -308,6 +346,9 @@ export default function Home() {
         queryFn: () => fetchFusedSimilarImages(imageId, 30),
         staleTime: 5 * 60 * 1000,
       });
+      // Also hydrate the image's full detail (tags + full-res URL) so a
+      // click after hover selects a fully hydrated item synchronously.
+      prefetchImageDetails(queryClient, [imageId]).catch(() => {});
     },
     [queryClient, prefs.imageEncoder],
   );
@@ -355,19 +396,28 @@ export default function Home() {
 
   // Resolve the selected image from the URL.
   //
-  // Lookup order: the loaded catalogue (`images.data`) FIRST, then the
-  // active result list (`displayImages`) as a fallback. Catalogue-first
-  // means an on-screen image keeps its REAL tags in the inspector; the
-  // displayImages fallback still makes a semantic/similar result whose id
-  // isn't in the currently-filtered catalogue selectable.
+  // T3-1 changed the lookup: the compact manifest no longer carries tags
+  // or the full-resolution URL, so the hydrated per-id detail query
+  // (`useImageDetail`, fetched above as `selectedDetail`) is the
+  // authoritative source — it's what keeps the inspector's REAL tags.
+  // Because hydration is async (one small `WHERE id IN` IPC, and usually
+  // already cached by the click/hover prefetch), selection happens in two
+  // steps so the similar-view swap stays as instant as the old
+  // synchronous catalogue `find`:
+  //   1. SEED — synchronously select the clicked entry from the active
+  //      display list (thumbnail as the interim full-res URL, no tags);
+  //   2. UPGRADE — swap in the hydrated `ImageItem` the moment it lands.
   //
   // The early-return guard is load-bearing, not an optimisation. When a
   // tag/exclude filter is active and the clicked id falls OUTSIDE it, the
-  // id is absent from `images.data`; and because `displayImages` flips with
+  // id is absent from the manifest; and because `displayImages` flips with
   // `selectedItem` (selecting an image swaps the grid to its similar-set,
   // which never contains the image itself), the naive lookup oscillated the
   // selection null↔id forever — "Maximum update depth exceeded". Once
-  // `selectedItem` already matches the URL, we stop re-deriving it.
+  // `selectedItem` already matches the URL, we stop re-deriving it — the
+  // ONLY same-id transition allowed through is seed→hydrated (and
+  // hydrated→refreshed-hydrated after a detail refetch), which converges
+  // because `selectedDetail.data` is referentially stable between fetches.
   useEffect(() => {
     const pathId = location.pathname.replace(/\//g, "");
     if (!pathId) {
@@ -378,15 +428,19 @@ export default function Home() {
       setSimTrail([]);
       return;
     }
-    if (selectedItem?.id.toString() === pathId) return;
-    const fromCatalogue = images.data?.find((i) => i.id.toString() === pathId);
+    const detail = selectedDetail.data ?? null;
+    if (selectedItem?.id.toString() === pathId) {
+      // Same id: upgrade the seed (or a stale hydration) in place.
+      if (detail && selectedItem !== detail) setSelectedItem(detail);
+      return;
+    }
     const fromDisplay = displayImages?.find((i) => i.id.toString() === pathId);
-    const item = fromCatalogue ?? fromDisplay ?? null;
+    const item = detail ?? (fromDisplay ? seedSelectionItem(fromDisplay) : null);
     setSelectedItem(item);
     if (!item) {
       setIsInspecting(false);
     }
-  }, [location, displayImages, images.data, selectedItem]);
+  }, [location, displayImages, selectedDetail.data, selectedItem]);
 
   // Determine if we're in a loading state
   const isSearchLoading = shouldUseSemanticSearch && semanticSearchResults.isFetching;
@@ -459,9 +513,8 @@ export default function Home() {
     // Otherwise pressing "next" on a semantic-search result jumps to
     // a random catalogue tile that has nothing to do with the search.
     // displayImages is the active list (similar-images > semantic >
-    // catalogue); fall back to images.data only if displayImages is
-    // empty (initial load).
-    const navList = displayImages ?? images.data;
+    // feed); it is always an array, so it IS the walk list.
+    const navList = displayImages;
     if (!navList || navList.length === 0) return;
     const currentIndex = navList.findIndex((i) => i.id === selectedItem.id);
     if (currentIndex === -1) return;
@@ -479,24 +532,47 @@ export default function Home() {
 
   // The modal predecodes its arrow-nav neighbours so next/prev is instant.
   // Same wrap-around walk as handleNavigate, over the same active list.
+  // A feed neighbour (compact manifest entry) has no full-res URL yet —
+  // predecode its thumbnail instead, and batch-hydrate both neighbours'
+  // details below so the full-res URL is there by the time an arrow
+  // lands on them.
   const modalNeighbourUrls = useMemo(() => {
     if (!selectedItem) return undefined;
-    const navList = displayImages ?? images.data;
+    const navList = displayImages;
     if (!navList || navList.length === 0) return undefined;
     const currentIndex = navList.findIndex((i) => i.id === selectedItem.id);
     if (currentIndex === -1) return undefined;
+    const prev = navList[currentIndex > 0 ? currentIndex - 1 : navList.length - 1];
+    const next = navList[currentIndex < navList.length - 1 ? currentIndex + 1 : 0];
     return {
-      prev: navList[currentIndex > 0 ? currentIndex - 1 : navList.length - 1]?.url,
-      next: navList[currentIndex < navList.length - 1 ? currentIndex + 1 : 0]?.url,
+      prev: prev?.url ?? prev?.thumbnailUrl,
+      next: next?.url ?? next?.thumbnailUrl,
+      prevId: prev?.id,
+      nextId: next?.id,
     };
-  }, [selectedItem, displayImages, images.data]);
+  }, [selectedItem, displayImages]);
+
+  // Hydrate the two arrow-nav neighbours while the modal is up (one
+  // batched IPC, cache-deduped) so navigating to them selects a fully
+  // hydrated item synchronously.
+  useEffect(() => {
+    if (!isInspecting || !modalNeighbourUrls) return;
+    const ids = [modalNeighbourUrls.prevId, modalNeighbourUrls.nextId].filter(
+      (id): id is number => id !== undefined,
+    );
+    if (ids.length > 0) {
+      prefetchImageDetails(queryClient, ids).catch(() => {
+        // Non-fatal — arrow-nav falls back to seed-then-upgrade.
+      });
+    }
+  }, [isInspecting, modalNeighbourUrls, queryClient]);
 
   // Handle clicking on an image in the grid. Memoised so the grid's tile
   // memo holds; its identity only changes when the selection context it reads
   // (selectedItem / shouldUseSemanticSearch) changes — never on an indexing
   // event — so the render storm can't reach the tiles through it.
   const handleImageClick = useCallback(
-    (item: ImageItem) => {
+    (item: FeedItem) => {
       if (selectedItem && selectedItem.id === item.id) {
         // Clicking on the already-selected image → open inspect modal
         recordAction("image_inspect", { id: item.id });
@@ -504,6 +580,9 @@ export default function Home() {
       } else {
         // Clicking on a different image → select it
         recordAction("image_click", { id: item.id });
+        // Kick the detail hydration now (no-op if the hover prefetch
+        // already cached it) so the seed→hydrated upgrade is immediate.
+        prefetchImageDetails(queryClient, [item.id]).catch(() => {});
         // Diving deeper into a similarity cascade (already viewing an
         // image's similar-set, now clicking one of those) → remember the
         // current image so "back one hop" can return to it.
@@ -513,7 +592,7 @@ export default function Home() {
         navigate(`/${item.id}/`);
       }
     },
-    [selectedItem, shouldUseSemanticSearch, navigate],
+    [selectedItem, shouldUseSemanticSearch, navigate, queryClient],
   );
 
   // Back one similarity hop — return to the previous image in the trail.
@@ -730,7 +809,7 @@ export default function Home() {
         {!selectedItem &&
           !shouldUseSemanticSearch &&
           feed.length === 0 &&
-          (isIndexing || (images.data && images.data.length > 0) ? (
+          (isIndexing || (manifest.data && manifest.data.length > 0) ? (
             <section className="mx-auto mb-12 flex min-h-[340px] max-w-2xl flex-col items-center justify-center text-center">
               <div className="mb-7 flex h-24 items-end gap-2.5" aria-hidden="true">
                 <div className="skeleton-tile h-16 w-16 rounded-[10px]" />
@@ -746,7 +825,7 @@ export default function Home() {
                 background.
               </p>
             </section>
-          ) : images.data && images.data.length === 0 ? (
+          ) : manifest.data && manifest.data.length === 0 ? (
             <section className="mx-auto mb-12 flex min-h-[340px] max-w-2xl flex-col items-center justify-center text-center">
               <div className="mb-6 grid size-14 place-items-center rounded-[14px] border border-border bg-surface text-muted-foreground shadow-[var(--shadow-soft)]">
                 <FolderPlus className="h-5 w-5" strokeWidth={1.6} />

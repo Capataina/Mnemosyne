@@ -6,6 +6,13 @@ import {
   type QueryClient,
 } from "@tanstack/react-query";
 import { getPipelineStats, type PipelineStats } from "../services/stats";
+import {
+  mergeFeedDeltaRows,
+  UNFILTERED_MANIFEST_KEY,
+  type FeedDeltaBatch,
+  type FeedDeltaRowDTO,
+} from "../services/feedDelta";
+import type { FeedItem } from "../types";
 
 /**
  * Indexing pipeline phases — matches the kebab-case Phase enum in
@@ -110,8 +117,71 @@ let listenerStarted = false;
 let queryClientRef: QueryClient | null = null;
 
 // Grid-refresh bookkeeping — module-level now that a single listener owns it.
-let lastImagesInvalidatedAt = 0;
+let lastDeltaAppliedAt = 0;
 let readyInvalidatedFor: string | null = null;
+
+/* ---------------------------------------------------------------------------
+ * T3-1 feed-delta path.
+ *
+ * During the thumbnail phase the backend emits batched `feed-delta` events —
+ * compact rows for each newly-thumbnailed image — instead of the frontend
+ * refetching the whole catalogue every ~5s. Rows buffer here and are applied
+ * on the same ~5s cadence the eye already knew:
+ *   - the UNFILTERED `["feed-manifest"]` cache is patched in place
+ *     (`mergeFeedDeltaRows`: identity-preserving upsert, id-sorted inserts,
+ *     spans preserved) — no IPC, no re-materialise;
+ *   - any *filtered* manifest queries are invalidated instead of patched
+ *     (a delta row's tag membership is unknown here), so a filtered view
+ *     refreshes via the compact no-join query and "a filter acts on what
+ *     you can see" stays honest;
+ *   - the buffer force-flushes on any phase transition away from
+ *     `thumbnail` (the backend emits its terminal delta flush BEFORE the
+ *     terminal Thumbnail progress event), so no tail of deltas is stranded
+ *     while the encode phase runs for minutes.
+ * Reconciliation fallback: `ready` still drops the whole
+ * `["feed-manifest"]` prefix for a full refetch, so any drift (orphan
+ * flips, scan-only rows, a lost event) self-heals at end of run.
+ * ------------------------------------------------------------------------- */
+let deltaBuffer: FeedDeltaRowDTO[] = [];
+
+function applyBufferedDeltas(queryClient: QueryClient) {
+  if (deltaBuffer.length === 0) return;
+  const rows = deltaBuffer;
+  deltaBuffer = [];
+  lastDeltaAppliedAt = Date.now();
+
+  queryClient.setQueryData<FeedItem[]>(
+    [...UNFILTERED_MANIFEST_KEY],
+    (current) => mergeFeedDeltaRows(current, rows),
+  );
+  // Filtered manifests refetch (compact query) rather than merge.
+  queryClient.invalidateQueries({
+    predicate: (query) => {
+      const key = query.queryKey;
+      if (key[0] !== "feed-manifest") return false;
+      const tagIds = key[1] as number[] | undefined;
+      const matchAll = key[2] as boolean | undefined;
+      const excludeIds = key[3] as number[] | undefined;
+      const isUnfiltered =
+        Array.isArray(tagIds) &&
+        tagIds.length === 0 &&
+        matchAll === false &&
+        Array.isArray(excludeIds) &&
+        excludeIds.length === 0;
+      return !isUnfiltered;
+    },
+  });
+}
+
+function handleFeedDelta(payload: FeedDeltaBatch) {
+  if (!payload?.rows?.length) return;
+  deltaBuffer.push(...payload.rows);
+  const queryClient = queryClientRef;
+  if (!queryClient) return;
+  if (Date.now() - lastDeltaAppliedAt > 5000) {
+    applyBufferedDeltas(queryClient);
+  }
+}
 
 function notify() {
   for (const cb of subscribers) cb();
@@ -121,14 +191,19 @@ function notify() {
  * Handle one `indexing-progress` event: update the event-derived state and run
  * the cache-invalidation policy once.
  *
- * Grid-refresh policy (preserved from the previous useIndexingStatus):
- * - `thumbnail` phase: invalidate `["images"]` every ~5s so newly thumbnailed
- *   images pop into the feed as they land.
- * - `encode` phase: never invalidate `["images"]` — encoders populate
+ * Grid-refresh policy (T3-1 — deltas replace the thumbnail-phase refetch):
+ * - `thumbnail` phase: NO catalogue invalidation. Newly thumbnailed images
+ *   reach the feed as `feed-delta` patches (see handleFeedDelta above) —
+ *   the old "invalidate `["images"]` every ~5s → refetch the whole
+ *   library → re-shuffle → re-pack" amplification cycle is dead.
+ * - any transition away from `thumbnail` (encode/ready/error): flush the
+ *   delta buffer so the last partial batch lands.
+ * - `encode` phase: never touch the grid — encoders populate
  *   search-readiness, not the visible grid, and full grid refetches contended
  *   with SigLIP-2 inference (the ~22s stalls in performance-analysis.md).
- * - `ready`: invalidate `["images"]` once so final metadata lands, plus drop
- *   similarity/search caches computed against the mid-index state.
+ * - `ready`: invalidate `["feed-manifest"]` once as the delta protocol's
+ *   full reconciliation (orphan flips, scan-only rows, final metadata),
+ *   plus drop similarity/search caches computed against the mid-index state.
  */
 function handleEvent(payload: IndexingProgressEvent) {
   const { phase, message, processed, total } = payload;
@@ -145,21 +220,25 @@ function handleEvent(payload: IndexingProgressEvent) {
   // numbers track reality closely between polls.
   queryClient.invalidateQueries({ queryKey: ["pipelineStats"] });
 
+  // Leaving the thumbnail phase strands any <5s tail in the delta buffer;
+  // the backend flushes its own terminal delta batch BEFORE the terminal
+  // thumbnail progress emit, so by the time a non-thumbnail phase arrives
+  // every row is client-side. Apply them now.
+  if (phase !== "thumbnail" && deltaBuffer.length > 0) {
+    applyBufferedDeltas(queryClient);
+  }
+
   if (phase === "scan") {
     // New run starting — re-arm the ready de-dupe.
     readyInvalidatedFor = null;
-  } else if (phase === "thumbnail") {
-    const now = Date.now();
-    if (now - lastImagesInvalidatedAt > 5000) {
-      lastImagesInvalidatedAt = now;
-      queryClient.invalidateQueries({ queryKey: ["images"] });
-    }
   } else if (phase === "ready") {
-    lastImagesInvalidatedAt = 0;
+    lastDeltaAppliedAt = 0;
     const runKey = message ?? "ready";
     if (readyInvalidatedFor !== runKey) {
       readyInvalidatedFor = runKey;
-      queryClient.invalidateQueries({ queryKey: ["images"] });
+      // Full-manifest refetch — the delta protocol's reconciliation
+      // fallback, and the moment scan-added / orphaned rows resolve.
+      queryClient.invalidateQueries({ queryKey: ["feed-manifest"] });
       // Indexing completing means embeddings just landed. Any similarity /
       // semantic result cached DURING indexing was computed against an
       // incomplete index and, with its 5-minute staleTime, would otherwise be
@@ -193,6 +272,12 @@ function subscribe(cb: () => void): () => void {
       // Registration failed — allow a later mount to retry.
       listenerStarted = false;
     });
+    // Companion feed-delta stream (T3-1). Registration failure is
+    // non-fatal: without deltas the feed simply stays static until the
+    // `ready` reconciliation refetch — stale for the run, never wrong.
+    listen<FeedDeltaBatch>("feed-delta", (event) =>
+      handleFeedDelta(event.payload),
+    ).catch(() => {});
   }
   return () => {
     subscribers.delete(cb);

@@ -58,7 +58,7 @@ export function useDeleteTag() {
 
     onMutate: async (tagId) => {
       await queryClient.cancelQueries({ queryKey: ["tags"] });
-      await queryClient.cancelQueries({ queryKey: ["images"] });
+      await queryClient.cancelQueries({ queryKey: ["image-detail"] });
 
       const prevTags = queryClient.getQueryData<Tag[]>(["tags"]);
 
@@ -67,16 +67,17 @@ export function useDeleteTag() {
         old.filter((t) => t.id !== tagId)
       );
 
-      // Also strip the tag from any image that has it (the DB does this
-      // via ON DELETE CASCADE on images_tags; we mirror it in the cache so
-      // the UI doesn't show ghost tags until the next refetch).
-      queryClient.setQueriesData<ImageItem[]>(
-        { queryKey: ["images"], exact: false },
-        (old = []) =>
-          old.map((img) => ({
-            ...img,
-            tags: img.tags.filter((t) => t.id !== tagId),
-          }))
+      // Also strip the tag from any hydrated image entity that has it
+      // (the DB does this via ON DELETE CASCADE on images_tags; we mirror
+      // it in the cache so the inspector doesn't show ghost tags until
+      // the next refetch). The compact manifest carries no tags, so
+      // there's nothing to strip grid-side.
+      queryClient.setQueriesData<ImageItem | null>(
+        { queryKey: ["image-detail"], exact: false },
+        (old) =>
+          old
+            ? { ...old, tags: old.tags.filter((t) => t.id !== tagId) }
+            : old
       );
 
       return { prevTags };
@@ -86,9 +87,10 @@ export function useDeleteTag() {
       if (context?.prevTags) {
         queryClient.setQueryData(["tags"], context.prevTags);
       }
-      // Image cache will self-correct on next refetch; we don't snapshot
-      // every image query because there can be many cache keys.
-      queryClient.invalidateQueries({ queryKey: ["images"] });
+      // Entity + manifest caches self-correct on refetch; we don't
+      // snapshot every per-id entity because there can be many keys.
+      queryClient.invalidateQueries({ queryKey: ["image-detail"] });
+      queryClient.invalidateQueries({ queryKey: ["feed-manifest"] });
     },
 
     // The deleted tag's folder (and its count row) vanishes from the drawer.

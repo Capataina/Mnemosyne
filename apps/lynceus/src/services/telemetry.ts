@@ -444,6 +444,48 @@ export function initTelemetry(queryClient: QueryClient): void {
   let grabbedId: number | null = null;
   let lastDragSample = 0;
 
+  // Continuous per-frame motion capture for the LIFE of a drag. The
+  // reorder that teleports happens MID-drag (the grid re-packs live as the
+  // held tile crosses another), not on drop — so a drop-only sampler sees
+  // nothing move. This rAF loop watches every non-dragged tile each frame
+  // and flags a TELEPORT: a tile that jumped a big distance in a single
+  // frame (a CSS slide moves a few px/frame over ~400ms; a jump of >28px in
+  // one frame means nothing animated it). Each tile is reported once per
+  // drag, with direction — so an up-move-teleports / down-move-slides split
+  // reads straight out of the timeline.
+  const JUMP_PX = 28;
+  let dragRaf: number | null = null;
+  const dragPrev = new Map<number, { x: number; y: number }>();
+  const dragTeleported = new Set<number>();
+  let dragTeleports: Array<Record<string, unknown>> = [];
+
+  const dragMotionStep = () => {
+    for (const el of document.querySelectorAll<HTMLElement>("[data-masonry-id]")) {
+      const id = Number(el.dataset.masonryId);
+      if (id === grabbedId) continue; // the held tile follows the cursor
+      const r = el.getBoundingClientRect();
+      const pos = { x: r.left, y: r.top };
+      const p = dragPrev.get(id);
+      if (p) {
+        const dx = pos.x - p.x;
+        const dy = pos.y - p.y;
+        const dist = Math.hypot(dx, dy);
+        if (dist > JUMP_PX && !dragTeleported.has(id)) {
+          dragTeleported.add(id);
+          dragTeleports.push({
+            id,
+            dx: Math.round(dx),
+            dy: Math.round(dy),
+            dist: Math.round(dist),
+            dir: dy < -2 ? "up" : dy > 2 ? "down" : "sideways",
+          });
+        }
+      }
+      dragPrev.set(id, pos);
+    }
+    dragRaf = requestAnimationFrame(dragMotionStep);
+  };
+
   document.addEventListener(
     "pointerdown",
     (e) => {
@@ -457,6 +499,11 @@ export function initTelemetry(queryClient: QueryClient): void {
         button: e.button,
         grid: captureGridGeometry(),
       });
+      // Arm the per-frame drag-motion capture.
+      dragPrev.clear();
+      dragTeleported.clear();
+      dragTeleports = [];
+      if (dragRaf === null) dragRaf = requestAnimationFrame(dragMotionStep);
     },
     { capture: true, passive: true },
   );
@@ -485,15 +532,26 @@ export function initTelemetry(queryClient: QueryClient): void {
       if (!pointerDown) return;
       pointerDown = false;
       const under = tileUnderPoint(e.clientX, e.clientY);
+      // Stop the per-frame drag capture and emit what jumped DURING the drag.
+      if (dragRaf !== null) {
+        cancelAnimationFrame(dragRaf);
+        dragRaf = null;
+      }
+      const upJumps = dragTeleports.filter((t) => t.dir === "up").length;
+      const downJumps = dragTeleports.filter((t) => t.dir === "down").length;
       recordAction("pointer_up", {
         x: Math.round(e.clientX),
         y: Math.round(e.clientY),
         over: under.label,
         grabbed: grabbedId,
         grid: captureGridGeometry(),
+        // The mid-drag teleport summary: tiles that jumped in a single frame
+        // while the drag was live, split by direction.
+        dragTeleports,
+        teleportUp: upJumps,
+        teleportDown: downJumps,
       });
-      // A drop triggers a reflow (the reorder commits + the grid re-packs).
-      // Watch the settle to catch the teleport: which tiles jumped vs slid.
+      // A drop also triggers a settle reflow — sample it too (this one slides).
       sampleReflowMotion("after_drop");
       grabbedId = null;
     },

@@ -28,8 +28,8 @@ pub struct EncoderInfo {
 const ENCODERS: &[EncoderInfo] = &[
     EncoderInfo {
         id: "clip_vit_b_32",
-        display_name: "CLIP ViT-B/32 (OpenAI)",
-        description: "OpenAI's English-only CLIP via Xenova's ONNX export. Both text and image branches in the same 512-dim space (separate vision_model.onnx + text_model.onnx). The reliable baseline for both text-to-image and image-to-image search. Lower-quality text alignment than SigLIP-2 but extremely battle-tested.",
+        display_name: "CLIP ViT-B/32 (OpenCLIP)",
+        description: "OpenCLIP ViT-B/32 trained on LAION-2B — the MIT-licensed open reproduction of CLIP (immich-app ONNX export; commercially redistributable, unlike OpenAI's original weights). Both text and image branches in the same 512-dim space. The reliable baseline for both text-to-image and image-to-image search. Lower-quality text alignment than SigLIP-2 but extremely battle-tested.",
         dim: 512,
         supports_text: true,
         supports_image: true,
@@ -45,7 +45,7 @@ const ENCODERS: &[EncoderInfo] = &[
     EncoderInfo {
         id: "dinov2_base",
         display_name: "DINOv2 Base",
-        description: "Meta's self-supervised image encoder (768-dim, upgraded from the previous 384-dim Small variant). No text branch — image-only. Dominates CLIP/SigLIP at finding visually similar images: same person across photos, same character, similar pose, similar art style. Recommended for the 'View Similar' (image-clicked) feature where text queries don't apply.",
+        description: "Meta's self-supervised image encoder (768-dim). No text branch — image-only. Dominates CLIP/SigLIP at finding visually similar images: same person across photos, same character, similar pose, similar art style. Recommended for the 'View Similar' (image-clicked) feature where text queries don't apply.",
         dim: 768,
         supports_text: false,
         supports_image: true,

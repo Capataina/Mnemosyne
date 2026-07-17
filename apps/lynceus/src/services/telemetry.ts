@@ -472,12 +472,23 @@ export function initTelemetry(queryClient: QueryClient): void {
         const dist = Math.hypot(dx, dy);
         if (dist > JUMP_PX && !dragTeleported.has(id)) {
           dragTeleported.add(id);
+          // Was the anchor's position transition actually ACTIVE at the
+          // instant it jumped? If duration is 0s / property excludes
+          // transform, something disabled it; if it's on (0.4s transform)
+          // yet the tile still jumped a whole column in one frame, the
+          // change bypassed the transition (a re-mount or a paint-skip on
+          // the worker-result swap) — different bug, different fix. This is
+          // the datum that decides which.
+          const anchor = el.parentElement;
+          const cs = anchor ? getComputedStyle(anchor) : null;
           dragTeleports.push({
             id,
             dx: Math.round(dx),
             dy: Math.round(dy),
             dist: Math.round(dist),
             dir: dy < -2 ? "up" : dy > 2 ? "down" : "sideways",
+            transProp: cs?.transitionProperty ?? "?",
+            transDur: cs?.transitionDuration ?? "?",
           });
         }
       }

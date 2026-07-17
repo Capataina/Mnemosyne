@@ -3,14 +3,14 @@ use tracing::{debug, info};
 
 use crate::perf;
 
-use crate::commands::{resolve_image_id_for_cosine_path, ApiError, ImageSearchResult};
+use crate::commands::{hydrate_search_results, ApiError, ImageSearchResult};
 use crate::db::ImageDatabase;
 use crate::paths;
 use crate::similarity_and_semantic_search::encoder_siglip2::{
     Siglip2TextEncoder, SIGLIP2_TEXT_MODEL_FILENAME, SIGLIP2_TOKENIZER_FILENAME,
 };
 use crate::similarity_and_semantic_search::encoder_text::ClipTextEncoder;
-use crate::{CosineIndexState, TextEncoderState};
+use crate::{FusionIndexState, TextEncoderState};
 
 /// Stable encoder ids for the text-side picker. Must match the values
 /// in `commands::encoders::ENCODERS` and the frontend `imageEncoder` /
@@ -36,10 +36,10 @@ pub const SIGLIP2_TEXT_ENCODER_ID: &str = "siglip2_base";
 /// `ensure_loaded_for` call below guarantees the right cache is
 /// resident before we touch it.
 #[tauri::command]
-#[tracing::instrument(name = "ipc.semantic_search", skip(db, cosine_state, text_encoder_state), fields(query_len = query.len(), top_n, text_encoder_id))]
+#[tracing::instrument(name = "ipc.semantic_search", skip(db, fusion_state, text_encoder_state), fields(query_len = query.len(), top_n, text_encoder_id))]
 pub fn semantic_search(
     db: State<'_, ImageDatabase>,
-    cosine_state: State<'_, CosineIndexState>,
+    fusion_state: State<'_, FusionIndexState>,
     text_encoder_state: State<'_, TextEncoderState>,
     query: String,
     top_n: usize,
@@ -80,31 +80,20 @@ pub fn semantic_search(
         text_embedding.len()
     );
 
-    // Force the cosine cache to hold image embeddings from the matching
-    // encoder family. Without this, a previous "View Similar" call with
-    // DINOv2 (768-d) selected would leave the cache as DINOv2 — a CLIP
-    // text query (512-d) would crash the dot product on dim mismatch.
-    cosine_state
-        .ensure_loaded_for(&db, cosine_cache_id)
-        .map_err(ApiError::Cosine)?;
-    // Write lock: the empty-cache fallback below repopulates in place.
-    // Semantic text search is not the concurrent-burst path (the user
-    // types one query at a time), so serialising here costs nothing.
-    let mut index = cosine_state.index.write()?;
-
-    if index.cached_images.is_empty() {
-        debug!("Populating cosine index from database (cache was empty)...");
-        index.populate_from_db_for_encoder(&db, cosine_cache_id);
-        debug!(
-            "Cosine index populated with {} images",
-            index.cached_images.len()
-        );
-    }
-
-    // Find similar images using cosine similarity.
+    // Borrow the warm fusion slot for the MATCHING image-encoder family
+    // (T3-2/#8) — CLIP text vectors score against CLIP image vectors, etc.
+    // `with_encoder_index` maps/populates the slot for `cosine_cache_id`
+    // if cold, which also removes the dim-mismatch crash the old shared
+    // primary cache could hit after a cross-encoder "View Similar".
     let query_array = Array1::from_vec(text_embedding.clone());
-    let cache_size = index.cached_images.len();
-    let raw_results = index.get_similar_images_sorted(&query_array, top_n, None);
+    let (raw_results, cache_size) = fusion_state
+        .with_encoder_index(&db, cosine_cache_id, |idx| {
+            (
+                idx.get_similar_images_sorted(&query_array, top_n, None),
+                idx.cached_images.len(),
+            )
+        })
+        .map_err(ApiError::Cosine)?;
     let raw_scores: Vec<f32> = raw_results.iter().map(|(_, s)| *s).collect();
     debug!(
         "Found {} similar images for query '{}'",
@@ -112,39 +101,12 @@ pub fn semantic_search(
         query
     );
 
-    let all_images = db.get_all_images().ok();
-
-    let mut resolution_misses: Vec<String> = Vec::new();
-    let mut thumb_misses: u32 = 0;
-    let results: Vec<ImageSearchResult> = raw_results
-        .iter()
-        .cloned()
-        .filter_map(|(path, score)| {
-            let image_info =
-                resolve_image_id_for_cosine_path(&db, &path, all_images.as_deref());
-            if image_info.is_none() {
-                resolution_misses.push(path.to_string_lossy().into_owned());
-            }
-            image_info.map(|(id, final_path)| {
-                let thumbnail_info = db.get_image_thumbnail_info(id).ok().flatten();
-                if thumbnail_info.is_none() {
-                    thumb_misses += 1;
-                }
-                let (thumbnail_path, width, height) = thumbnail_info
-                    .map(|(tp, w, h)| (Some(tp), Some(w), Some(h)))
-                    .unwrap_or((None, None, None));
-
-                ImageSearchResult {
-                    id,
-                    path: final_path,
-                    score,
-                    thumbnail_path,
-                    width,
-                    height,
-                }
-            })
-        })
-        .collect();
+    // Batch-hydrate ids → ImageSearchResult in one WHERE id IN (...)
+    // query, preserving descending-score order (T3-2/#6).
+    let hydrated = hydrate_search_results(&db, &raw_results);
+    let results = hydrated.results;
+    let resolution_misses = hydrated.missed_ids;
+    let thumb_misses = hydrated.thumbnail_misses;
 
     // Query-embedding health stats.
     let q_norm: f32 = text_embedding.iter().map(|x| x * x).sum::<f32>().sqrt();
@@ -178,8 +140,8 @@ pub fn semantic_search(
                     "Non-normalised — cosine still works since math divides by norms"
                 },
             },
-            "raw_results": raw_results.iter().map(|(p, s)| serde_json::json!({
-                "path": p.to_string_lossy(),
+            "raw_results": raw_results.iter().map(|(id, s)| serde_json::json!({
+                "image_id": id,
                 "score": *s,
             })).collect::<Vec<_>>(),
             "raw_result_count": raw_results.len(),
@@ -190,7 +152,7 @@ pub fn semantic_search(
                 "resolved_count": results.len(),
                 "missed_count": resolution_misses.len(),
                 "thumbnail_misses": thumb_misses,
-                "missed_paths_sample": resolution_misses.iter().take(10).cloned().collect::<Vec<_>>(),
+                "missed_ids_sample": resolution_misses.iter().take(10).copied().collect::<Vec<_>>(),
             },
         }),
     );

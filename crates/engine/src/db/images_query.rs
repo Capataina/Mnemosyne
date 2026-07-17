@@ -16,6 +16,21 @@ use serde::Serialize;
 use super::{ID, ImageDatabase};
 use crate::{image_struct::ImageData, tag_struct::Tag};
 
+/// Minimal per-image metadata the similarity/semantic commands need to
+/// assemble an `ImageSearchResult`, batch-hydrated by
+/// `get_images_metadata_for_ids` (T3-2/#6). Deliberately NOT `ImageData`
+/// — result assembly needs only these five fields, not the tags array
+/// or manual-layout columns, so the batch query skips the tags JOIN
+/// entirely.
+#[derive(Debug, Clone)]
+pub struct ImageResultMeta {
+    pub id: ID,
+    pub path: String,
+    pub thumbnail_path: Option<String>,
+    pub width: Option<u32>,
+    pub height: Option<u32>,
+}
+
 /// Pipeline progress snapshot — counts of images at each stage.
 ///
 /// Returned by `get_pipeline_stats` and exposed to the frontend via
@@ -505,6 +520,112 @@ impl ImageDatabase {
         }
     }
 
+    /// Batch-hydrate result metadata for a set of image ids in ONE
+    /// query (T3-2/#6). The similarity/semantic commands used to run
+    /// `get_all_images()` (the whole-library LEFT JOIN) plus a
+    /// per-result `get_image_thumbnail_info` + path→id resolution — an
+    /// N+1 fired 20–30× per settled viewport by the prefetch burst.
+    /// Now the cosine index returns ids directly, so one
+    /// `WHERE id IN (...)` fetch replaces the join and the N+1.
+    ///
+    /// Returns exactly what `ImageSearchResult` assembly needs. The
+    /// thumbnail triple is all-or-nothing, matching the old
+    /// `get_image_thumbnail_info` bundle semantics: a row missing its
+    /// thumbnail path or dimensions hydrates to `(None, None, None)`
+    /// rather than a partial. Ids with no matching row are silently
+    /// dropped (same as an old resolution miss); the caller re-orders
+    /// by the ranked-result order, so the SQL row order is irrelevant.
+    pub fn get_images_metadata_for_ids(
+        &self,
+        ids: &[ID],
+    ) -> rusqlite::Result<Vec<ImageResultMeta>> {
+        if ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        // R2 — foreground IPC read, route through the reader connection.
+        let conn = self.read_lock();
+        // ids are our own i64 primary keys — safe to interpolate as
+        // placeholders and bind via params_from_iter (no injection
+        // surface, and it keeps SQLite's parameter cache effective).
+        let placeholders = vec!["?"; ids.len()].join(",");
+        let sql = format!(
+            "SELECT id, path, thumbnail_path, width, height \
+             FROM images WHERE id IN ({placeholders})"
+        );
+        let mut stmt = conn.prepare(&sql)?;
+        let rows = stmt.query_map(params_from_iter(ids.iter()), |row| {
+            let id: ID = row.get(0)?;
+            let path: String = row.get(1)?;
+            let thumbnail_path: Option<String> = row.get(2)?;
+            let width: Option<i64> = row.get(3)?;
+            let height: Option<i64> = row.get(4)?;
+            // All-or-nothing bundle: identical to get_image_thumbnail_info
+            // + the command's `.unwrap_or((None, None, None))`.
+            let (thumbnail_path, width, height) = match (
+                thumbnail_path.filter(|p| !p.is_empty()),
+                width,
+                height,
+            ) {
+                (Some(tp), Some(w), Some(h)) => {
+                    (Some(tp), Some(w as u32), Some(h as u32))
+                }
+                _ => (None, None, None),
+            };
+            Ok(ImageResultMeta {
+                id,
+                path,
+                thumbnail_path,
+                width,
+                height,
+            })
+        })?;
+        rows.collect()
+    }
+
+    /// Generation token for one encoder's flat embedding store (T3-2/#8).
+    ///
+    /// Derived from the EXACT filtered population the store holds — the
+    /// same `enabled/orphaned` JOIN as `get_all_embeddings_for` — so the
+    /// token moves whenever that population changes, which is strictly
+    /// more than "the embeddings table changed": a root enable/disable
+    /// toggle changes which rows pass the filter without touching the
+    /// embeddings rows at all. `(count, sum(rowid), max(rowid))` folded
+    /// to a u64 catches insertions (max/sum/count↑), deletions
+    /// (sum/count↓), and rows entering/leaving the enabled/orphaned set.
+    /// This is the replacement for `cache.rs`'s bare-mtime freshness
+    /// check, which cannot survive at 100k scale.
+    pub fn embedding_generation_token(
+        &self,
+        encoder_id: &str,
+    ) -> rusqlite::Result<u64> {
+        let conn = self.read_lock();
+        let mut stmt = conn.prepare(
+            "SELECT COUNT(*), COALESCE(SUM(e.rowid), 0), COALESCE(MAX(e.rowid), 0)
+             FROM embeddings e
+             JOIN images i ON i.id = e.image_id
+             WHERE e.encoder_id = ?1
+               AND i.orphaned = 0
+               AND (
+                   i.root_id IS NULL
+                   OR i.root_id IN (SELECT id FROM roots WHERE enabled = 1)
+               )",
+        )?;
+        let (count, sum, max): (i64, i64, i64) =
+            stmt.query_row([encoder_id], |r| {
+                Ok((r.get(0)?, r.get(1)?, r.get(2)?))
+            })?;
+        // FNV-1a over the three little-endian i64s. Collisions on a
+        // monotonic-rowid table are astronomically unlikely for this use.
+        let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+        for field in [count, sum, max] {
+            for byte in field.to_le_bytes() {
+                hash ^= byte as u64;
+                hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+            }
+        }
+        Ok(hash)
+    }
+
     /// Everything the `get_thumbnail` command needs to resolve (and, if
     /// necessary, generate) a thumbnail for an image id in one read:
     /// its original file `path`, its `root_id` (which per-root folder the
@@ -624,6 +745,95 @@ impl ImageDatabase {
 mod tests {
     use super::super::test_helpers::fresh_db;
     use super::*;
+
+    #[test]
+    fn metadata_for_ids_hydrates_and_bundles_thumbnail() {
+        // T3-2/#6 batch hydration: one WHERE id IN (...) returns exactly
+        // the five fields result assembly needs, with the thumbnail
+        // triple all-or-nothing.
+        let db = fresh_db();
+        db.add_image("/a.jpg".into(), None).unwrap();
+        db.add_image("/b.jpg".into(), None).unwrap();
+        let id_a = db.get_image_id_by_path("/a.jpg").unwrap();
+        let id_b = db.get_image_id_by_path("/b.jpg").unwrap();
+        // Only /a.jpg gets a thumbnail; /b.jpg stays bundle-less.
+        db.update_image_thumbnail(id_a, std::path::Path::new("/t_a.jpg"), 640, 480)
+            .unwrap();
+
+        let metas = db.get_images_metadata_for_ids(&[id_a, id_b]).unwrap();
+        let by_id: std::collections::HashMap<ID, ImageResultMeta> =
+            metas.into_iter().map(|m| (m.id, m)).collect();
+
+        let a = &by_id[&id_a];
+        assert_eq!(a.path, "/a.jpg");
+        assert_eq!(a.thumbnail_path.as_deref(), Some("/t_a.jpg"));
+        assert_eq!(a.width, Some(640));
+        assert_eq!(a.height, Some(480));
+
+        let b = &by_id[&id_b];
+        assert_eq!(b.path, "/b.jpg");
+        // No thumbnail row → the whole bundle is None, never a partial.
+        assert_eq!(b.thumbnail_path, None);
+        assert_eq!(b.width, None);
+        assert_eq!(b.height, None);
+    }
+
+    #[test]
+    fn metadata_for_ids_empty_and_missing() {
+        let db = fresh_db();
+        db.add_image("/a.jpg".into(), None).unwrap();
+        let id_a = db.get_image_id_by_path("/a.jpg").unwrap();
+
+        // Empty request short-circuits to an empty vec (no malformed SQL).
+        assert!(db.get_images_metadata_for_ids(&[]).unwrap().is_empty());
+
+        // A non-existent id is silently dropped (an old "resolution miss");
+        // present ids still hydrate.
+        let metas = db
+            .get_images_metadata_for_ids(&[id_a, 999_999])
+            .unwrap();
+        assert_eq!(metas.len(), 1);
+        assert_eq!(metas[0].id, id_a);
+    }
+
+    #[test]
+    fn generation_token_moves_on_population_change() {
+        // The token must change whenever the store's filtered population
+        // changes — including a root toggle that touches no embedding row.
+        let db = fresh_db();
+        let root = db.add_root("/r".into(), None).unwrap();
+        db.add_image("/r/a.jpg".into(), Some(root.id)).unwrap();
+        db.add_image("/r/b.jpg".into(), Some(root.id)).unwrap();
+        let id_a = db.get_image_id_by_path("/r/a.jpg").unwrap();
+        let id_b = db.get_image_id_by_path("/r/b.jpg").unwrap();
+
+        let enc = "clip_vit_b_32";
+        let empty = db.embedding_generation_token(enc).unwrap();
+
+        db.upsert_embedding(id_a, enc, &[0.1, 0.2, 0.3]).unwrap();
+        let after_a = db.embedding_generation_token(enc).unwrap();
+        assert_ne!(empty, after_a, "adding an embedding must move the token");
+
+        db.upsert_embedding(id_b, enc, &[0.4, 0.5, 0.6]).unwrap();
+        let after_b = db.embedding_generation_token(enc).unwrap();
+        assert_ne!(after_a, after_b, "a second embedding must move the token");
+
+        // Disabling the root removes both rows from the filtered set
+        // without deleting any embedding — the token must still move.
+        db.set_root_enabled(root.id, false).unwrap();
+        let disabled = db.embedding_generation_token(enc).unwrap();
+        assert_ne!(after_b, disabled, "a root toggle must move the token");
+        // With every row filtered out, the token returns to the empty value.
+        assert_eq!(empty, disabled, "no filtered rows ⇒ empty-population token");
+
+        // Re-enabling restores the exact prior token (deterministic).
+        db.set_root_enabled(root.id, true).unwrap();
+        assert_eq!(
+            after_b,
+            db.embedding_generation_token(enc).unwrap(),
+            "re-enabling restores the identical population token"
+        );
+    }
 
     #[test]
     fn test_database_operations() {

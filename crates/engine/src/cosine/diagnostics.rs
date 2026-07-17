@@ -17,11 +17,10 @@
 //!   encoder isn't discriminating; if there's a wide spread, it is)
 //! - "Is the encoder deterministic?" (self-similarity should be 1.0)
 
-use ndarray::Array1;
 use serde_json::{json, Value};
-use std::path::PathBuf;
 
-use super::math::cosine_similarity;
+use super::math::cosine_similarity_slice;
+use super::store::FlatStore;
 
 /// Maximum number of embeddings to sample for the pairwise-distance
 /// histogram. C(50, 2) = 1225 pair computations — fast even on CPU.
@@ -41,13 +40,13 @@ const PAIRWISE_SAMPLE_SIZE: usize = 50;
 ///
 /// Called once per encoder at populate time. ~few ms for a 1842
 /// embedding library.
-pub fn embedding_stats(cached_images: &[(PathBuf, Array1<f32>)]) -> Value {
-    if cached_images.is_empty() {
+pub fn embedding_stats(store: &FlatStore) -> Value {
+    if store.is_empty() {
         return json!({ "count": 0, "note": "cache empty — encoder has no embeddings" });
     }
 
-    let count = cached_images.len();
-    let dim = cached_images[0].1.len();
+    let count = store.len();
+    let dim = store.dim();
 
     // L2 norms — should be ~1.0 for normalised CLIP-family encoders.
     // If image encoder norms differ wildly from text encoder norms,
@@ -56,10 +55,11 @@ pub fn embedding_stats(cached_images: &[(PathBuf, Array1<f32>)]) -> Value {
     let mut norms: Vec<f32> = Vec::with_capacity(count);
     let mut nan_count = 0usize;
     let mut inf_count = 0usize;
-    for (_, emb) in cached_images {
+    for r in 0..count {
+        let emb = store.row(r);
         let norm: f32 = emb.iter().map(|x| x * x).sum::<f32>().sqrt();
         norms.push(norm);
-        for x in emb.iter() {
+        for x in emb {
             if x.is_nan() {
                 nan_count += 1;
             } else if x.is_infinite() {
@@ -75,8 +75,8 @@ pub fn embedding_stats(cached_images: &[(PathBuf, Array1<f32>)]) -> Value {
     // degenerate spaces (e.g., all dims have mean ≈ 0 std ≈ 0 →
     // encoder is producing constant outputs).
     let mut dim_means: Vec<f32> = vec![0.0; dim];
-    for (_, emb) in cached_images {
-        for (j, x) in emb.iter().enumerate() {
+    for r in 0..count {
+        for (j, x) in store.row(r).iter().enumerate() {
             dim_means[j] += x;
         }
     }
@@ -84,8 +84,8 @@ pub fn embedding_stats(cached_images: &[(PathBuf, Array1<f32>)]) -> Value {
         *d /= count as f32;
     }
     let mut dim_vars: Vec<f32> = vec![0.0; dim];
-    for (_, emb) in cached_images {
-        for (j, x) in emb.iter().enumerate() {
+    for r in 0..count {
+        for (j, x) in store.row(r).iter().enumerate() {
             let diff = x - dim_means[j];
             dim_vars[j] += diff * diff;
         }
@@ -99,13 +99,12 @@ pub fn embedding_stats(cached_images: &[(PathBuf, Array1<f32>)]) -> Value {
     // Sample embeddings for human inspection. First 3 images, first 8
     // dims of each. Lets the user eyeball "are these random-looking
     // numbers, or all zero, or all 0.5?"
-    let samples: Vec<Value> = cached_images
-        .iter()
-        .take(3)
-        .map(|(path, emb)| {
+    let samples: Vec<Value> = (0..count.min(3))
+        .map(|r| {
+            let emb = store.row(r);
             let take = 8.min(emb.len());
             json!({
-                "path": path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default(),
+                "image_id": store.ids()[r],
                 "first_8_dims": emb.iter().take(take).copied().collect::<Vec<f32>>(),
             })
         })
@@ -148,13 +147,11 @@ pub fn embedding_stats(cached_images: &[(PathBuf, Array1<f32>)]) -> Value {
 ///   - Wide spread [0.0, 1.0] → encoder discriminates well
 ///   - All mass in [0.95, 1.0] → likely a bug (every embedding
 ///     identical or near-identical)
-pub fn pairwise_distance_distribution(
-    cached_images: &[(PathBuf, Array1<f32>)],
-) -> Value {
-    if cached_images.len() < 2 {
+pub fn pairwise_distance_distribution(store: &FlatStore) -> Value {
+    if store.len() < 2 {
         return json!({ "note": "need at least 2 embeddings for pairwise — skipping" });
     }
-    let n = cached_images.len().min(PAIRWISE_SAMPLE_SIZE);
+    let n = store.len().min(PAIRWISE_SAMPLE_SIZE);
     // 11 buckets: [-1.0, -0.0] then [0.0, 0.1] [0.1, 0.2] ... [0.9, 1.0]
     let mut buckets: [u32; 11] = [0; 11];
     let mut pair_count = 0u32;
@@ -163,7 +160,7 @@ pub fn pairwise_distance_distribution(
     let mut max_seen = f32::NEG_INFINITY;
     for i in 0..n {
         for j in (i + 1)..n {
-            let s = cosine_similarity(&cached_images[i].1, &cached_images[j].1);
+            let s = cosine_similarity_slice(store.row(i), store.row(j));
             pair_count += 1;
             sum += s as f64;
             min_seen = min_seen.min(s);
@@ -217,14 +214,12 @@ pub fn pairwise_distance_distribution(
 /// 1.0 for any embedding. If it's not, something is fundamentally
 /// wrong with either the cosine_similarity math or the embedding
 /// itself (NaN, all zeros, etc.).
-pub fn self_similarity_check(
-    cached_images: &[(PathBuf, Array1<f32>)],
-) -> Value {
-    if cached_images.is_empty() {
+pub fn self_similarity_check(store: &FlatStore) -> Value {
+    if store.is_empty() {
         return json!({ "note": "cache empty — skipped" });
     }
-    let (_, emb) = &cached_images[0];
-    let s = cosine_similarity(emb, emb);
+    let emb = store.row(0);
+    let s = cosine_similarity_slice(emb, emb);
     json!({
         "embedding_norm": (emb.iter().map(|x| x * x).sum::<f32>()).sqrt(),
         "self_cosine": s,

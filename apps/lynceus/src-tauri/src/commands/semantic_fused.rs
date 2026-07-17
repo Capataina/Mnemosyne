@@ -35,12 +35,11 @@
 //!   "Fused" rather than "Cosine similarity" if surfaced in tooltips.
 
 use ndarray::Array1;
-use std::path::PathBuf;
 use tauri::State;
 use tracing::{info, warn};
 
 use crate::commands::semantic::{CLIP_TEXT_ENCODER_ID, SIGLIP2_TEXT_ENCODER_ID};
-use crate::commands::{resolve_image_id_for_cosine_path, ApiError, ImageSearchResult};
+use crate::commands::{hydrate_search_results, ApiError, ImageSearchResult};
 use crate::db::ImageDatabase;
 use crate::paths;
 use crate::similarity_and_semantic_search::cosine::rrf::{
@@ -111,7 +110,6 @@ pub fn get_fused_semantic_search(
          text_encoders={text_encoders:?}"
     );
 
-    let all_images = db.get_all_images()?;
     let mut ranked_lists: Vec<RankedList> = Vec::with_capacity(text_encoders.len());
     let mut per_encoder_diag: Vec<serde_json::Value> = Vec::new();
 
@@ -157,8 +155,8 @@ pub fn get_fused_semantic_search(
             "encoder_id": enc,
             "status": "ok",
             "ranked_count": count,
-            "top5_paths": ranked.iter().take(5)
-                .map(|(p, s)| serde_json::json!({"path": p.to_string_lossy(), "score": *s}))
+            "top5_ids": ranked.iter().take(5)
+                .map(|(id, s)| serde_json::json!({"image_id": id, "score": *s}))
                 .collect::<Vec<_>>(),
             "elapsed_ms": enc_started.elapsed().as_millis() as u64,
         }));
@@ -171,38 +169,13 @@ pub fn get_fused_semantic_search(
 
     let fused = reciprocal_rank_fusion(&ranked_lists, DEFAULT_K_RRF, top_n);
 
-    // Resolve fused paths → ImageSearchResult, same shape as the other
-    // similarity commands.
-    let mut resolution_misses: Vec<String> = Vec::new();
-    let mut thumb_misses: u32 = 0;
-    let results: Vec<ImageSearchResult> = fused
-        .iter()
-        .filter_map(|f| {
-            match resolve_image_id_for_cosine_path(&db, &f.path, Some(&all_images)) {
-                Some((id, final_path)) => {
-                    let thumb_info = db.get_image_thumbnail_info(id).ok().flatten();
-                    if thumb_info.is_none() {
-                        thumb_misses += 1;
-                    }
-                    let (thumbnail_path, width, height) = thumb_info
-                        .map(|(tp, w, h)| (Some(tp), Some(w), Some(h)))
-                        .unwrap_or((None, None, None));
-                    Some(ImageSearchResult {
-                        id,
-                        path: final_path,
-                        score: f.fused_score,
-                        thumbnail_path,
-                        width,
-                        height,
-                    })
-                }
-                None => {
-                    resolution_misses.push(f.path.to_string_lossy().into_owned());
-                    None
-                }
-            }
-        })
-        .collect();
+    // Batch-hydrate fused ids → ImageSearchResult in one WHERE id IN (...)
+    // query, preserving fused-score order.
+    let ranked: Vec<(i64, f32)> = fused.iter().map(|f| (f.image_id, f.fused_score)).collect();
+    let hydrated = hydrate_search_results(&db, &ranked);
+    let results = hydrated.results;
+    let resolution_misses = hydrated.missed_ids;
+    let thumb_misses = hydrated.thumbnail_misses;
 
     perf::record_diagnostic(
         "search_query",
@@ -220,11 +193,11 @@ pub fn get_fused_semantic_search(
             "fused_result_count": fused.len(),
             "resolved_count": results.len(),
             "thumbnail_misses": thumb_misses,
-            "missed_paths_sample":
-                resolution_misses.iter().take(10).cloned().collect::<Vec<_>>(),
+            "missed_ids_sample":
+                resolution_misses.iter().take(10).copied().collect::<Vec<_>>(),
             "per_encoder": per_encoder_diag,
             "fused_top10_with_evidence": fused.iter().take(10).map(|f| serde_json::json!({
-                "path": f.path.to_string_lossy(),
+                "image_id": f.image_id,
                 "fused_score": f.fused_score,
                 "per_encoder_evidence": f.per_encoder.iter().map(|(e, r, s)| serde_json::json!({
                     "encoder_id": e,
@@ -296,12 +269,4 @@ fn encode_query(
         }
         other => Err(format!("Unknown text encoder id: {other}").into()),
     }
-}
-
-// Force a path-based PathBuf import so rustc doesn't complain about
-// the unused-import warning if we ever drop the per_encoder_diag
-// thumbnail-miss reporting. (Cheap belt-and-braces.)
-#[allow(dead_code)]
-fn _force_pathbuf_used() -> PathBuf {
-    PathBuf::new()
 }

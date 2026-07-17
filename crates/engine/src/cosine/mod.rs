@@ -2,12 +2,14 @@
 //!
 //! - `math`  — pure helpers: the `cosine_similarity` formula and the
 //!   `score_cmp_desc` comparator shared by all retrieval methods.
+//! - `store` — the `FlatStore`: contiguous id / inverse-norm / row-major
+//!   f32 arrays, heap-owned or mmap-backed (T3-2 / #8 + #20).
 //! - `index` — the `CosineIndex` struct, embedding ingestion
 //!   (`add_image`, `populate_from_db`), and the three retrieval
 //!   methods (`get_similar_images`, `get_similar_images_sorted`,
 //!   `get_tiered_similar_images`).
-//! - `cache` — disk persistence: `save_to_disk` / `save_to_path` and
-//!   `load_from_disk_if_fresh` / `load_from_path_if_fresh`.
+//! - `cache` — the persisted flat store: `save_to_disk` / `save_store_to`
+//!   and `load_from_disk_if_fresh` / `load_store_if_valid`.
 //!
 //! The struct lives in `index` and the cache impl block lives in
 //! `cache`; both contribute to the same `CosineIndex` inherent impl,
@@ -24,5 +26,7 @@ pub mod diagnostics;
 pub mod index;
 pub(crate) mod math;
 pub mod rrf;
+pub mod store;
 
 pub use index::CosineIndex;
+pub use store::FlatStore;

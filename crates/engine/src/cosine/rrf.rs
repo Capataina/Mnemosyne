@@ -52,7 +52,6 @@
 //!   SIGIR '09. <https://plg.uwaterloo.ca/~gvcormac/cormacksigir09-rrf.pdf>
 
 use std::collections::HashMap;
-use std::path::PathBuf;
 
 /// Standard RRF constant from the original paper. Trade-off:
 ///
@@ -72,9 +71,9 @@ pub const DEFAULT_K_RRF: usize = 60;
 #[derive(Debug, Clone)]
 pub struct RankedList {
     pub encoder_id: String,
-    /// `(path, encoder_specific_cosine_score)` in descending score
+    /// `(image_id, encoder_specific_cosine_score)` in descending score
     /// order. Index = 0-based rank.
-    pub items: Vec<(PathBuf, f32)>,
+    pub items: Vec<(i64, f32)>,
 }
 
 /// Output of fusion. Each entry carries:
@@ -87,7 +86,7 @@ pub struct RankedList {
 /// items are filtered out before this struct is built.
 #[derive(Debug, Clone)]
 pub struct FusedItem {
-    pub path: PathBuf,
+    pub image_id: i64,
     pub fused_score: f32,
     /// `(encoder_id, 1-based-rank, encoder_score)` for every encoder
     /// that ranked this image in its top-K input list.
@@ -114,16 +113,16 @@ pub fn reciprocal_rank_fusion(
     // evidence vector (so the diagnostic shows encoders in
     // ranked_lists order) — a Vec inside the value rather than another
     // HashMap.
-    let mut agg: HashMap<PathBuf, FusedItem> = HashMap::new();
+    let mut agg: HashMap<i64, FusedItem> = HashMap::new();
     for list in ranked_lists {
-        for (rank0, (path, score)) in list.items.iter().enumerate() {
+        for (rank0, (image_id, score)) in list.items.iter().enumerate() {
             // 1-indexed rank for the formula.
             let rank1 = rank0 + 1;
             let contrib = 1.0 / (k + rank1 as f32);
             let entry = agg
-                .entry(path.clone())
+                .entry(*image_id)
                 .or_insert_with(|| FusedItem {
-                    path: path.clone(),
+                    image_id: *image_id,
                     fused_score: 0.0,
                     per_encoder: Vec::new(),
                 });
@@ -146,9 +145,14 @@ pub fn reciprocal_rank_fusion(
 mod tests {
     use super::*;
 
-    fn p(s: &str) -> PathBuf {
-        PathBuf::from(s)
-    }
+    // Symbolic ids used across the tests below. RRF is keyed by
+    // `image_id: i64` now (T3-2/#6), so the fixtures use distinct
+    // integers where the old suite used distinct paths.
+    const CLIP_ONLY: i64 = 1;
+    const CONSENSUS: i64 = 2;
+    const DINO_FIRST: i64 = 3;
+    const SIGLIP_FIRST: i64 = 4;
+    const LONE: i64 = 5;
 
     #[test]
     fn empty_lists_produce_empty_output() {
@@ -159,7 +163,7 @@ mod tests {
     fn top_n_zero_produces_empty_output() {
         let list = RankedList {
             encoder_id: "clip".into(),
-            items: vec![(p("/a.jpg"), 0.9)],
+            items: vec![(10, 0.9)],
         };
         assert!(reciprocal_rank_fusion(&[list], DEFAULT_K_RRF, 0).is_empty());
     }
@@ -171,57 +175,40 @@ mod tests {
         // order is preserved.
         let list = RankedList {
             encoder_id: "clip".into(),
-            items: vec![
-                (p("/best.jpg"), 0.95),
-                (p("/middle.jpg"), 0.85),
-                (p("/worst.jpg"), 0.50),
-            ],
+            items: vec![(100, 0.95), (200, 0.85), (300, 0.50)],
         };
         let fused = reciprocal_rank_fusion(&[list], DEFAULT_K_RRF, 5);
         assert_eq!(fused.len(), 3);
-        assert_eq!(fused[0].path, p("/best.jpg"));
-        assert_eq!(fused[1].path, p("/middle.jpg"));
-        assert_eq!(fused[2].path, p("/worst.jpg"));
+        assert_eq!(fused[0].image_id, 100);
+        assert_eq!(fused[1].image_id, 200);
+        assert_eq!(fused[2].image_id, 300);
     }
 
     #[test]
     fn consensus_image_outranks_one_encoder_winner() {
-        // The user's specific scenario. CLIP loves /clip_only.jpg (its
-        // #1), but DINOv2 and SigLIP don't see it at all. /consensus.jpg
-        // is #2 in all three encoders. Fusion should rank /consensus.jpg
-        // first because the cumulative evidence is stronger than one
-        // encoder's lone enthusiasm.
+        // The user's specific scenario. CLIP loves CLIP_ONLY (its #1),
+        // but DINOv2 and SigLIP don't see it at all. CONSENSUS is #2 in
+        // all three encoders. Fusion should rank CONSENSUS first because
+        // the cumulative evidence is stronger than one encoder's lone
+        // enthusiasm.
         let clip = RankedList {
             encoder_id: "clip".into(),
-            items: vec![
-                (p("/clip_only.jpg"), 0.95),
-                (p("/consensus.jpg"), 0.85),
-            ],
+            items: vec![(CLIP_ONLY, 0.95), (CONSENSUS, 0.85)],
         };
         let dinov2 = RankedList {
             encoder_id: "dinov2".into(),
-            items: vec![
-                (p("/dino_first.jpg"), 0.90),
-                (p("/consensus.jpg"), 0.85),
-            ],
+            items: vec![(DINO_FIRST, 0.90), (CONSENSUS, 0.85)],
         };
         let siglip = RankedList {
             encoder_id: "siglip".into(),
-            items: vec![
-                (p("/siglip_first.jpg"), 0.92),
-                (p("/consensus.jpg"), 0.84),
-            ],
+            items: vec![(SIGLIP_FIRST, 0.92), (CONSENSUS, 0.84)],
         };
-        let fused = reciprocal_rank_fusion(
-            &[clip, dinov2, siglip],
-            DEFAULT_K_RRF,
-            10,
-        );
-        assert_eq!(fused[0].path, p("/consensus.jpg"));
+        let fused = reciprocal_rank_fusion(&[clip, dinov2, siglip], DEFAULT_K_RRF, 10);
+        assert_eq!(fused[0].image_id, CONSENSUS);
         // The consensus image carries evidence from all three encoders.
         assert_eq!(fused[0].per_encoder.len(), 3);
         // Each lone-encoder winner gets evidence from one encoder only.
-        let clip_only = fused.iter().find(|f| f.path == p("/clip_only.jpg")).unwrap();
+        let clip_only = fused.iter().find(|f| f.image_id == CLIP_ONLY).unwrap();
         assert_eq!(clip_only.per_encoder.len(), 1);
     }
 
@@ -238,13 +225,13 @@ mod tests {
         // unstable sort would pick either as fused[0] — flaky. Asserting
         // the SCORE directly avoids the tie-break dependency.
         //
-        //   /lone.jpg     — only in clip at rank 1.   score = 1/(k+1)
-        //   /consensus.jpg — in clip rank 5 + dinov2 rank 1.
+        //   LONE      — only in clip at rank 1.   score = 1/(k+1)
+        //   CONSENSUS — in clip rank 5 + dinov2 rank 1.
         //                   score = 1/(k+5) + 1/(k+1)
         //
         // At k=1:    lone = 0.5     consensus = 1/6 + 1/2 = 0.667
         //            ratio consensus/lone = 1.333 → consensus already winning
-        //            (because dinov2's only entry is at rank 1; /consensus
+        //            (because dinov2's only entry is at rank 1; CONSENSUS
         //            collects a rank-1 contribution from dinov2)
         // At k=60:   lone = 1/61 ≈ 0.01639
         //            consensus = 1/65 + 1/61 ≈ 0.03177
@@ -252,36 +239,30 @@ mod tests {
         //
         // The thing that changes with k is the RATIO between the two
         // scores. Larger k flattens the curve — dinov2's rank-1 hit on
-        // /consensus and clip's rank-5 hit on /consensus both contribute
+        // CONSENSUS and clip's rank-5 hit on CONSENSUS both contribute
         // more equally, magnifying the consensus advantage.
         let clip = RankedList {
             encoder_id: "clip".into(),
             items: vec![
-                (p("/lone.jpg"), 0.99),
-                (p("/_a.jpg"), 0.10),
-                (p("/_b.jpg"), 0.10),
-                (p("/_c.jpg"), 0.10),
-                (p("/consensus.jpg"), 0.10),
+                (LONE, 0.99),
+                (91, 0.10),
+                (92, 0.10),
+                (93, 0.10),
+                (CONSENSUS, 0.10),
             ],
         };
         let dinov2 = RankedList {
             encoder_id: "dinov2".into(),
-            items: vec![(p("/consensus.jpg"), 0.5)],
+            items: vec![(CONSENSUS, 0.5)],
         };
 
         let small = reciprocal_rank_fusion(&[clip.clone(), dinov2.clone()], 1, 10);
         let large = reciprocal_rank_fusion(&[clip, dinov2], 60, 10);
 
-        let lone_small = small.iter().find(|f| f.path == p("/lone.jpg")).unwrap();
-        let consensus_small = small
-            .iter()
-            .find(|f| f.path == p("/consensus.jpg"))
-            .unwrap();
-        let lone_large = large.iter().find(|f| f.path == p("/lone.jpg")).unwrap();
-        let consensus_large = large
-            .iter()
-            .find(|f| f.path == p("/consensus.jpg"))
-            .unwrap();
+        let lone_small = small.iter().find(|f| f.image_id == LONE).unwrap();
+        let consensus_small = small.iter().find(|f| f.image_id == CONSENSUS).unwrap();
+        let lone_large = large.iter().find(|f| f.image_id == LONE).unwrap();
+        let consensus_large = large.iter().find(|f| f.image_id == CONSENSUS).unwrap();
 
         // The consensus advantage grows as k grows — that's the whole
         // point of the k_rrf knob.
@@ -299,11 +280,11 @@ mod tests {
     fn truncation_returns_top_n() {
         let list = RankedList {
             encoder_id: "clip".into(),
-            items: (0..20).map(|i| (p(&format!("/{i}.jpg")), 1.0 - i as f32 * 0.01)).collect(),
+            items: (0..20).map(|i| (i as i64, 1.0 - i as f32 * 0.01)).collect(),
         };
         let fused = reciprocal_rank_fusion(&[list], DEFAULT_K_RRF, 5);
         assert_eq!(fused.len(), 5);
-        assert_eq!(fused[0].path, p("/0.jpg"));
-        assert_eq!(fused[4].path, p("/4.jpg"));
+        assert_eq!(fused[0].image_id, 0);
+        assert_eq!(fused[4].image_id, 4);
     }
 }

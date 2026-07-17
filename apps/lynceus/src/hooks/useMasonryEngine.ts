@@ -32,9 +32,10 @@ interface MasonryEngineInput {
   tileScale?: number;
   /** id → rounded span, for the resize footprint. */
   spanOverrides?: Record<number, number>;
-  /** The tile under an active resize, pinned to its column so it grows in
-   *  place instead of wrapping to a new row. */
-  resizeAnchor?: { id: number; startCol: number };
+  /** The one tile under an active gesture, pinned to a start column: a
+   *  resizing tile grows in place instead of wrapping to a new row; a dragged
+   *  tile's reserved slot tracks the pointer's column instead of drifting. */
+  columnAnchor?: { id: number; startCol: number };
   /** The tile currently being drag-reordered — never culled. */
   dragItemId: number | null;
   /** True while any tile gesture (drag or resize) is live. Freezes the
@@ -185,7 +186,7 @@ export function useMasonryEngine(input: MasonryEngineInput): MasonryEngine {
     columnCountOverride,
     tileScale,
     spanOverrides,
-    resizeAnchor,
+    columnAnchor,
     dragItemId,
     gestureActive,
     containerRef,
@@ -276,7 +277,7 @@ export function useMasonryEngine(input: MasonryEngineInput): MasonryEngine {
       columnCountOverride,
       tileScale,
       spanOverrides,
-      resizeAnchor,
+      columnAnchor,
     };
     const sel = selectedItem ?? null;
     const gen = ++genRef.current;
@@ -316,7 +317,7 @@ export function useMasonryEngine(input: MasonryEngineInput): MasonryEngine {
     columnCountOverride,
     tileScale,
     spanOverrides,
-    resizeAnchor,
+    columnAnchor,
     containerRef,
     commit,
   ]);

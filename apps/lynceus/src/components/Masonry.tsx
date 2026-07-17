@@ -90,6 +90,8 @@ export default function Masonry(props: MasonryProps) {
     placementsRef,
     placementByIdRef,
     tileElementsRef,
+    columnWidthRef,
+    columnGap: props.columnGap,
     onReorder: props.onReorder,
     suppressClick,
   });
@@ -123,14 +125,25 @@ export default function Masonry(props: MasonryProps) {
     return Object.keys(overrides).length > 0 ? overrides : undefined;
   }, [rs?.id, rs?.previewSpan, rs?.baseSpan, dragId, dragSpan]);
 
-  // The tile under an active resize is pinned to this column so it grows in
-  // place instead of the packer relocating it (a right-edge tile grown wider
-  // used to wrap onto a new row). Stable between column crossings because it
-  // only changes when the resize state's span/anchor does.
-  const resizeAnchor = useMemo(() => {
-    if (!rs || rs.previewSpan === rs.baseSpan) return undefined;
-    return { id: rs.id, startCol: rs.anchorStartCol };
-  }, [rs?.id, rs?.previewSpan, rs?.baseSpan, rs?.anchorStartCol]);
+  // The one tile under an active gesture is pinned to a column so the packer
+  // places it there instead of running its shortest-column search. A resize
+  // pins the growing tile so it grows in place (a right-edge tile grown wider
+  // used to wrap onto a new row); a drag pins the dragged tile so its reserved
+  // slot tracks the pointer's column instead of drifting to the greedy-
+  // shortest one (the "open space appears a column over" reorder artefact).
+  // Drag and resize never run at once, so a single pin covers both — resize
+  // takes precedence if somehow both are set. Stable between column crossings
+  // because it only changes when the gesture's pinned column does.
+  const dragAnchorCol = drag.dragAnchorCol;
+  const columnAnchor = useMemo(() => {
+    if (rs && rs.previewSpan !== rs.baseSpan) {
+      return { id: rs.id, startCol: rs.anchorStartCol };
+    }
+    if (dragId != null && dragAnchorCol != null) {
+      return { id: dragId, startCol: dragAnchorCol };
+    }
+    return undefined;
+  }, [rs?.id, rs?.previewSpan, rs?.baseSpan, rs?.anchorStartCol, dragId, dragAnchorCol]);
 
   const gestureActive = dragId != null || rs != null;
 
@@ -143,7 +156,7 @@ export default function Masonry(props: MasonryProps) {
     columnCountOverride: props.columnCountOverride,
     tileScale: props.tileScale,
     spanOverrides,
-    resizeAnchor,
+    columnAnchor,
     dragItemId: drag.dragItemId,
     gestureActive,
     containerRef,

@@ -110,14 +110,19 @@ export interface MasonryPackInput {
   selectedWidth: number;
   selectedHeight: number;
   /**
-   * Resize re-anchor. The feed index of the tile under an active resize is
-   * placed at `resizeAnchorStartCol` (clamped so its span fits the grid)
-   * instead of the shortest-column search, so a widening tile stays in
-   * place — shifting its start column left as needed to fit — rather than
-   * wrapping to a fresh row. `-1` when no resize is active.
+   * Column pin for the one tile under an active gesture. The feed index at
+   * `anchorIndex` is placed at `anchorStartCol` (clamped so its span fits the
+   * grid) instead of the shortest-column search. A resize uses it so a
+   * widening tile stays in place (shifting its start column left as needed to
+   * fit) instead of wrapping to a fresh row; a drag-reorder uses it so the
+   * dragged tile's reserved slot sits in the column under the pointer instead
+   * of drifting to whatever column the greedy search finds shortest (with
+   * slightly-varying tile heights the greedy choice can land a column off the
+   * cursor — the "hole appears one column over" reorder artefact). `-1` when
+   * no gesture is pinning a tile.
    */
-  resizeAnchorIndex: number;
-  resizeAnchorStartCol: number;
+  anchorIndex: number;
+  anchorStartCol: number;
 }
 
 export interface MasonryHeroGeometry {
@@ -179,8 +184,8 @@ export function computeMasonryGeometry(
     selectedIndex,
     selectedWidth,
     selectedHeight,
-    resizeAnchorIndex,
-    resizeAnchorStartCol,
+    anchorIndex,
+    anchorStartCol,
   } = input;
 
   const n = widths.length;
@@ -251,19 +256,22 @@ export function computeMasonryGeometry(
 
     let bestStart: number;
     let bestMax: number;
-    if (i === resizeAnchorIndex) {
-      // The tile under an active resize keeps its column anchor rather than
+    if (i === anchorIndex) {
+      // The tile under an active gesture keeps its column anchor rather than
       // jumping to the shortest window: pin it to its start column, shifted
-      // left only as far as needed to fit its (grown) span. That makes a
-      // widening right-edge tile displace its neighbours and grow in place
-      // instead of wrapping onto a new row. It still sits flush below the
-      // tallest column in its pinned window, so nothing overlaps above it.
-      bestStart = Math.max(0, Math.min(resizeAnchorStartCol, colCount - span));
+      // left only as far as needed to fit its span. A resize uses this so a
+      // widening right-edge tile displaces its neighbours and grows in place
+      // instead of wrapping onto a new row; a drag-reorder uses it so the
+      // dragged tile's reserved slot stays under the pointer instead of
+      // drifting a column. It still sits flush below the tallest column in
+      // its pinned window, so nothing overlaps above it.
+      bestStart = Math.max(0, Math.min(anchorStartCol, colCount - span));
       bestMax = colHeights[bestStart];
       for (let k = bestStart + 1; k < bestStart + span; k++) {
         bestMax = Math.max(bestMax, colHeights[k]);
       }
     } else {
+      // Shortest-column search (single tile) or shortest span-wide window.
       bestStart = 0;
       bestMax = Infinity;
       for (let start = 0; start <= colCount - span; start++) {
@@ -317,10 +325,12 @@ export interface MasonryPackParams {
   columnCountOverride?: number;
   tileScale?: number;
   spanOverrides?: Record<number, number>;
-  /** The tile under an active resize, pinned to `startCol` (see
-   *  `MasonryPackInput.resizeAnchorIndex`) so it grows in place instead of
-   *  wrapping to a new row. Absent when nothing is being resized. */
-  resizeAnchor?: { id: number; startCol: number };
+  /** The one tile under an active gesture, pinned to `startCol` (see
+   *  `MasonryPackInput.anchorIndex`). A resize pins the growing tile so it
+   *  grows in place instead of wrapping to a new row; a drag pins the dragged
+   *  tile so its reserved slot tracks the pointer's column. Drag and resize
+   *  never run at once, so one pin covers both. Absent when idle. */
+  columnAnchor?: { id: number; startCol: number };
 }
 
 /** Flatten a feed slice into the numeric pack input. Resolves each item's
@@ -338,9 +348,9 @@ export function buildPackInput(
   const spans = new Int32Array(n);
   const overrides = params.spanOverrides;
   const selectedId = selectedItem ? selectedItem.id : -1;
-  const anchorId = params.resizeAnchor?.id ?? -1;
+  const anchorId = params.columnAnchor?.id ?? -1;
   let selectedIndex = -1;
-  let resizeAnchorIndex = -1;
+  let anchorIndex = -1;
 
   for (let i = 0; i < n; i++) {
     const item = items[i];
@@ -348,7 +358,7 @@ export function buildPackInput(
     heights[i] = item.height;
     spans[i] = overrides?.[item.id] ?? item.manualColSpan ?? 1;
     if (selectedItem && item.id === selectedId) selectedIndex = i;
-    if (item.id === anchorId) resizeAnchorIndex = i;
+    if (item.id === anchorId) anchorIndex = i;
   }
 
   return {
@@ -365,8 +375,8 @@ export function buildPackInput(
     selectedIndex,
     selectedWidth: selectedItem ? selectedItem.width : 0,
     selectedHeight: selectedItem ? selectedItem.height : 0,
-    resizeAnchorIndex,
-    resizeAnchorStartCol: params.resizeAnchor?.startCol ?? 0,
+    anchorIndex,
+    anchorStartCol: params.columnAnchor?.startCol ?? 0,
   };
 }
 

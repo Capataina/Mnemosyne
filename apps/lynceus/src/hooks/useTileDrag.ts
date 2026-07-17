@@ -13,6 +13,11 @@ interface UseTileDragInput {
   placementsRef: RefObject<MasonryItemPlacement[]>;
   placementByIdRef: RefObject<Map<number, MasonryItemPlacement>>;
   tileElementsRef: RefObject<Map<number, HTMLElement>>;
+  /** Live column width + gap, so a hover-swap can map the hovered tile's x to
+   *  a column index for the pack pin (keeps the dragged tile's reserved slot
+   *  under the pointer instead of drifting to the greedy-shortest column). */
+  columnWidthRef: RefObject<number>;
+  columnGap: number;
   /** Fired once on drop with the complete new id ordering. */
   onReorder?: (orderedIds: number[]) => void;
   /** Called on release so the click that follows a drag doesn't select. */
@@ -37,9 +42,17 @@ export function useTileDrag(input: UseTileDragInput) {
     placementsRef,
     placementByIdRef,
     tileElementsRef,
+    columnWidthRef,
+    columnGap,
   } = input;
 
   const [dragItemId, setDragItemId] = useState<number | null>(null);
+  // The column the dragged tile's reserved slot is pinned to — the column of
+  // the tile the footprint currently hovers. Fed to the pack as a column
+  // anchor so the open slot tracks the pointer instead of drifting to whatever
+  // column the greedy search finds shortest (a col of drift telemetry caught).
+  // Null until the first hover-swap, and reset on drop.
+  const [dragAnchorCol, setDragAnchorCol] = useState<number | null>(null);
   // The dragged tile's committed column span, captured at grab. Fed back
   // into the preview pack as an explicit span override so a multi-span tile
   // keeps its footprint for the whole drag — independent of whether the
@@ -148,6 +161,18 @@ export function useTileDrag(input: UseTileDragInput) {
       if (hoveredId === lastHoveredIdRef.current) return;
       lastHoveredIdRef.current = hoveredId;
 
+      // Pin the dragged tile's reserved slot to the hovered tile's column
+      // (read from its current placement, pre-repack), so the open slot sits
+      // under the pointer. Without it the greedy pack drops the dragged tile
+      // into the shortest column, which — with slightly-varying tile heights —
+      // can land a column off the cursor (the "hole appears bottom-right" of
+      // where you're dragging).
+      const hoveredPlacement = placementByIdRef.current.get(hoveredId);
+      const colWidth = columnWidthRef.current ?? 0;
+      if (hoveredPlacement && colWidth > 0) {
+        setDragAnchorCol(Math.round(hoveredPlacement.x / (colWidth + columnGap)));
+      }
+
       const base = workingOrderRef.current ?? itemsRef.current ?? [];
       // Build the id→index map lazily on the first swap (not at pointer-down:
       // a plain click never pays for it, and the drag threshold means the
@@ -169,7 +194,7 @@ export function useTileDrag(input: UseTileDragInput) {
       workingOrderRef.current = next;
       setWorkingOrder(next);
     },
-    [],
+    [columnGap, columnWidthRef, placementByIdRef, tileElementsRef],
   );
 
   const processPointer = useCallback(
@@ -235,6 +260,7 @@ export function useTileDrag(input: UseTileDragInput) {
       workingOrderRef.current = null;
       idToIndexRef.current = null;
       indexMapBaseRef.current = null;
+      setDragAnchorCol(null);
       setDragItemSpan(placement?.colSpan ?? 1);
       setDragItemId(id);
     },
@@ -278,6 +304,7 @@ export function useTileDrag(input: UseTileDragInput) {
       clearTileVisual(dragItemId);
       setDragItemId(null);
       setWorkingOrder(null);
+      setDragAnchorCol(null);
       workingOrderRef.current = null;
       idToIndexRef.current = null;
       indexMapBaseRef.current = null;
@@ -318,6 +345,7 @@ export function useTileDrag(input: UseTileDragInput) {
   return {
     dragItemId,
     dragItemSpan,
+    dragAnchorCol,
     workingOrder,
     onDragHandlePointerDown,
     syncVisual,

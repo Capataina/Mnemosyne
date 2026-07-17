@@ -10,6 +10,7 @@ import {
   type MasonryLayoutInput,
 } from "./masonryPacking";
 import { isCurrentGeneration } from "../hooks/useMasonryEngine";
+import { buildIndexMap, reorderWithinList } from "../hooks/masonryReorder";
 import type { FeedItem } from "../types";
 
 /**
@@ -296,7 +297,7 @@ describe("resize re-anchor keeps a widening tile in place (no row-wrap)", () => 
       buildPackInput(items, null, {
         ...params,
         spanOverrides: { 13: 2 },
-        resizeAnchor: { id: 13, startCol: 3 },
+        columnAnchor: { id: 13, startCol: 3 },
       }),
     );
     const startCol = Math.round(geo.xs[anchorIdx] / (geo.columnWidth + 16));
@@ -304,6 +305,53 @@ describe("resize re-anchor keeps a widening tile in place (no row-wrap)", () => 
     // stays flush against column 4.
     expect(startCol).toBe(2);
     expect(startCol + geo.spans[anchorIdx]).toBe(geo.columnCount);
+  });
+});
+
+describe("drag re-anchor keeps the dragged tile's slot under the pointer", () => {
+  // The reorder artefact, reproduced: a 6-column grid of near-uniform tiles
+  // whose placed heights alternate 126/132px (the 6px aspect jitter a real
+  // feed has). On a longer downward reorder the accumulated height imbalance
+  // makes the greedy shortest-column search land the dragged tile's reserved
+  // slot one column right of the tile it was dropped onto — the "empty space
+  // appears bottom-right of where I'm dragging" report. The column anchor,
+  // pinned to the hovered tile's column, cancels the drift.
+  const params = {
+    containerWidth: 1440,
+    columnGap: 16,
+    verticalGap: 16,
+    minItemWidth: 224,
+  };
+  const feed: FeedItem[] = Array.from({ length: 66 }, (_, i) =>
+    feedTile(1000 + i, 224, i % 3 === 0 ? 126 : 132),
+  );
+  const geo0 = computeMasonryGeometry(buildPackInput(feed, null, params));
+  const colOf = (geo: MasonryGeometry, index: number) =>
+    Math.round(geo.xs[index] / (geo.columnWidth + params.columnGap));
+
+  // Drag the tile at index 20 down onto the tile at index 27.
+  const draggedId = feed[20].id;
+  const hoveredId = feed[27].id;
+  const hoveredCol = colOf(geo0, 27);
+  const map = buildIndexMap(feed);
+  const reordered = reorderWithinList(feed, map, draggedId, hoveredId)!;
+  const newDraggedIdx = reordered.findIndex((it) => it.id === draggedId);
+
+  it("without the anchor, the dragged slot drifts a column off the drop target", () => {
+    const geo = computeMasonryGeometry(buildPackInput(reordered, null, params));
+    // Greedy places it in the shortest column, which the height jitter has
+    // pushed one column right of where the pointer is.
+    expect(colOf(geo, newDraggedIdx)).not.toBe(hoveredCol);
+  });
+
+  it("with the anchor, the dragged slot lands exactly on the hovered column", () => {
+    const geo = computeMasonryGeometry(
+      buildPackInput(reordered, null, {
+        ...params,
+        columnAnchor: { id: draggedId, startCol: hoveredCol },
+      }),
+    );
+    expect(colOf(geo, newDraggedIdx)).toBe(hoveredCol);
   });
 });
 

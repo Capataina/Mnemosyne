@@ -304,7 +304,26 @@ export function useMasonryEngine(input: MasonryEngineInput): MasonryEngine {
     prevGestureActiveRef.current = gestureActive;
     if (justEnded) {
       const prev = layoutRef.current;
-      if (prev && prev.geometry.columnCount > 0 && ordersAligned(prev.items, items)) {
+      // Adopt only when the committed geometry still describes the current
+      // render: same order (ordersAligned) AND same selection. The hero is
+      // baked into the geometry (its selectedIndex is skipped in the flow and
+      // it is placed separately), so re-pairing a geometry built for one
+      // selection with a different `sel` would drop or duplicate the selected
+      // tile. A selection change landing on the same tick as gesture-end falls
+      // through to a normal pack, which places the new hero correctly.
+      const selId = sel?.id ?? -1;
+      const prevSelId = prev?.selectedItem?.id ?? -1;
+      if (
+        prev &&
+        prev.geometry.columnCount > 0 &&
+        selId === prevSelId &&
+        ordersAligned(prev.items, items)
+      ) {
+        // Invalidate any gesture pack still in flight so its late result or
+        // failure cannot recommit a gesture-shaped (anchored / prevCols-seeded)
+        // layout over this adopted one — onResult's generation check and
+        // onFailure's (below) both drop a request older than genRef.
+        genRef.current++;
         commit(prev.geometry, items, sel, false);
         return;
       }
@@ -407,9 +426,12 @@ export function useMasonryEngine(input: MasonryEngineInput): MasonryEngine {
     packer.onFailure(() => {
       // A live worker died mid-flight: re-run the latest pack synchronously
       // from the source items the engine still holds. The grid must never
-      // depend on worker availability.
+      // depend on worker availability. Skip a request the engine has already
+      // moved past (a commit-adopt bumps genRef precisely so a stale gesture
+      // pack's failure can't overwrite the adopted layout) — mirrors the
+      // generation check onResult already applies.
       const ctx = packContextRef.current;
-      if (!ctx) return;
+      if (!ctx || ctx.gen !== genRef.current) return;
       commit(
         computeMasonryGeometry(
           buildPackInput(ctx.items, ctx.selectedItem, ctx.params),

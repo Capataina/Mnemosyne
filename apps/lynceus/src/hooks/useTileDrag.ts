@@ -157,21 +157,12 @@ export function useTileDrag(input: UseTileDragInput) {
         return;
       }
       // Once a tile has caused a swap, remaining over that same DOM target
-      // must not repeatedly swap the pair back and forth every frame.
+      // must not repeatedly swap the pair back and forth every frame. (The
+      // anchor column is tracked separately, every frame, in updateAnchorCol —
+      // this guard no longer gates it, so a wide footprint parked over one
+      // neighbour can't freeze the slot under the pointer.)
       if (hoveredId === lastHoveredIdRef.current) return;
       lastHoveredIdRef.current = hoveredId;
-
-      // Pin the dragged tile's reserved slot to the hovered tile's column
-      // (read from its current placement, pre-repack), so the open slot sits
-      // under the pointer. Without it the greedy pack drops the dragged tile
-      // into the shortest column, which — with slightly-varying tile heights —
-      // can land a column off the cursor (the "hole appears bottom-right" of
-      // where you're dragging).
-      const hoveredPlacement = placementByIdRef.current.get(hoveredId);
-      const colWidth = columnWidthRef.current ?? 0;
-      if (hoveredPlacement && colWidth > 0) {
-        setDragAnchorCol(Math.round(hoveredPlacement.x / (colWidth + columnGap)));
-      }
 
       const base = workingOrderRef.current ?? itemsRef.current ?? [];
       // Build the id→index map lazily on the first swap (not at pointer-down:
@@ -197,16 +188,41 @@ export function useTileDrag(input: UseTileDragInput) {
     [columnGap, columnWidthRef, placementByIdRef, tileElementsRef],
   );
 
+  // Track the anchor column from the dragged tile's CENTRE every frame,
+  // decoupled from the hover-swap. The old path set the anchor only inside
+  // reorderOverPoint, after its `lastHovered` guard — so a wide footprint that
+  // kept voting the same neighbour (or its own vacated hole) starved the
+  // setter and the anchor froze for the rest of the drag (the "3×3 completely
+  // broken" freeze; telemetry logged 0 tiles moving for 5.37s). Here it is
+  // pure pointer arithmetic — the tile's live local centre → its column — so
+  // it can neither self-occlude nor freeze, and works identically for span
+  // 1/2/3. The packer reads this as a CENTRE anchor (edge=2), spreading the
+  // footprint around the pointer.
+  const updateAnchorCol = useCallback(
+    (id: number, pointer: { x: number; y: number }) => {
+      const base = dragBaseRef.current;
+      const placement = placementByIdRef.current.get(id);
+      const colWidth = columnWidthRef.current ?? 0;
+      if (!base || !placement || colWidth <= 0) return;
+      const desiredX = base.x0 + (pointer.x - base.startX); // live local left
+      const centreX = desiredX + placement.width / 2;
+      const stride = colWidth + columnGap;
+      const centreCol = Math.max(0, Math.floor(centreX / stride));
+      setDragAnchorCol((prev) => (prev === centreCol ? prev : centreCol));
+    },
+    [columnGap, columnWidthRef, placementByIdRef],
+  );
+
   const processPointer = useCallback(
     (id: number, pointer: { x: number; y: number }) => {
       latestPointerRef.current = pointer;
       writeDragVisual(id, pointer);
+      updateAnchorCol(id, pointer);
       // reorderOverPoint samples the dragged tile's whole footprint (span×span
-      // dots), so it needs no cursor coordinate — it reads the tile's current
-      // rendered box directly.
+      // dots) to pick the swap target; it no longer touches the anchor.
       reorderOverPoint(id);
     },
-    [reorderOverPoint, writeDragVisual],
+    [reorderOverPoint, updateAnchorCol, writeDragVisual],
   );
 
   const cancelScheduledFrame = useCallback(() => {

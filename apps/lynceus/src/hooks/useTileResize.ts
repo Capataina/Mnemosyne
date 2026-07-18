@@ -121,27 +121,24 @@ export function useTileResize(input: UseTileResizeInput) {
       if (!node || !placement || !base) return;
 
       // The packed anchor owns the rounded footprint. The child wrapper owns
-      // only the continuous difference. A left grip translates by that
-      // difference so the packed footprint's right edge remains anchored.
+      // only the continuous horizontal difference: a left grip translates by
+      // the preview/packed width delta so the packed footprint's RIGHT edge
+      // stays anchored while the tile grows leftward.
       const offsetX = isLeftCorner(base.corner)
         ? placement.width - previewPx
         : 0;
-      // Upward-growth illusion for the two TOP corners. Height is
-      // aspect-derived from width, so widening the tile makes it taller —
-      // by default the top edge stays pinned and the tile grows DOWNWARD,
-      // which feels wrong when you grabbed a top corner. Translating up by
-      // the height delta pins the BOTTOM edge instead, so the grabbed top
-      // corner appears to rise: a top-corner drag now resizes from that
-      // corner like any window/image handle. This is a gesture-time visual
-      // only — masonry is top-down packed, so on release the tile settles to
-      // its real packed row (the framer layout spring smooths the drop). The
-      // horizontal axis stays real (offsetX + the committed re-anchor).
-      const isTopCorner = base.corner === "tl" || base.corner === "tr";
-      const aspect =
-        placement.width > 0 ? placement.height / placement.width : 0;
-      const offsetY = isTopCorner ? -(previewPx - placement.width) * aspect : 0;
+      // The vertical axis is honest top-down growth. Height is aspect-derived
+      // from width, so a wider tile is taller — and being top-anchored (no Y
+      // translate) it grows DOWNWARD from its packed top, which is exactly
+      // where the pack commits it, so release never snaps. Top corners once
+      // faked upward growth with a negative translateY that was cleared
+      // transition-less on release and dropped the tile ~2 rows; masonry packs
+      // top-down, so that risen top edge could never be committed without
+      // shoving the tiles above off-grid — the illusion is removed, and all
+      // four corners now grow into the free space below, the corner choosing
+      // only grow-left vs grow-right.
       node.style.width = `${previewPx}px`;
-      node.style.transform = `translate3d(${offsetX}px, ${offsetY}px, 0)`;
+      node.style.transform = `translate3d(${offsetX}px, 0, 0)`;
     },
     [placementByIdRef, tileElementsRef],
   );

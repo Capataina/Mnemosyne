@@ -123,6 +123,29 @@ export interface MasonryPackInput {
    */
   anchorIndex: number;
   anchorStartCol: number;
+  /**
+   * How `anchorStartCol` names the pinned tile's horizontal position, so one
+   * numeric anchor covers every gesture without the caller pre-resolving a
+   * left column. `0` (left edge) = `anchorStartCol` is the left column, grow
+   * right (a right-corner resize, or the idle default); `1` (right edge) =
+   * `anchorStartCol` is the right edge, so the left column walks left as the
+   * span grows (a left-corner resize); `2` (centre) = `anchorStartCol` is the
+   * column under the pointer and the footprint centres on it (a drag, so a
+   * 2×2/3×3 tile reaches its true edges instead of losing `(span-1)/colCount`
+   * of range to the old left-only clamp). Inert when `anchorIndex < 0`.
+   */
+  anchorEdge: number;
+  /**
+   * Coherence seed: the column each feed-index tile held in the PREVIOUS
+   * gesture pack (`-1` for the dragged tile and for newcomers with no prior
+   * placement), or `null` when no gesture is live. Used only as a tie-break —
+   * when two candidate windows are within a sub-pixel epsilon, the tile keeps
+   * its previous column, so a resting tile can't shimmer between equal columns
+   * on float noise. It never overrides a decisively-shorter column, so a real
+   * cascade is untouched. `null` in steady state → the search is byte-identical
+   * to the pre-anchor greedy pack.
+   */
+  prevCols: Int32Array | null;
 }
 
 export interface MasonryHeroGeometry {
@@ -167,6 +190,42 @@ export interface MasonryPackResponse {
   geometry: MasonryGeometry;
 }
 
+/**
+ * Sub-pixel width within which two candidate columns count as tied for the
+ * coherence tie-break. Small enough that it never overrides a visible
+ * height difference (a real cascade), large enough to absorb the float noise
+ * that would otherwise flip a resting tile between two equal-height columns.
+ */
+const COHERENCE_EPS = 0.5;
+
+/**
+ * Resolve a gesture anchor's `startCol` + edge mode into the tile's actual
+ * left column, then clamp it into `[0, colCount - span]` so the footprint
+ * always fits. This is the single place the "meaning of anchorStartCol"
+ * lives, so a drag, a left-corner resize, and a right-corner resize all feed
+ * one numeric anchor and differ only by `edge`:
+ *   0 (left)   → startCol is the left column; grow right (right-corner resize / default).
+ *   1 (right)  → startCol is the right edge; left column walks left as span grows (left-corner resize).
+ *   2 (centre) → startCol is the pointer column; centre the footprint on it (drag).
+ * The clamp is unchanged from the old single-anchor path — it now only bites
+ * at the true geometric edge, so a span-3 drag reaches its full range instead
+ * of losing `(span-1)/colCount` of it to a left-only interpretation.
+ */
+export function resolveAnchorLeft(
+  startCol: number,
+  edge: number,
+  span: number,
+  colCount: number,
+): number {
+  const raw =
+    edge === 1
+      ? startCol - (span - 1) // right edge pinned
+      : edge === 2
+        ? startCol - (span >> 1) // centred on the pointer column
+        : startCol; // left edge pinned (default)
+  return Math.max(0, Math.min(raw, colCount - span));
+}
+
 export function computeMasonryGeometry(
   input: MasonryPackInput,
 ): MasonryGeometry {
@@ -186,6 +245,8 @@ export function computeMasonryGeometry(
     selectedHeight,
     anchorIndex,
     anchorStartCol,
+    anchorEdge,
+    prevCols,
   } = input;
 
   const n = widths.length;
@@ -258,22 +319,29 @@ export function computeMasonryGeometry(
     let bestMax: number;
     if (i === anchorIndex) {
       // The tile under an active gesture keeps its column anchor rather than
-      // jumping to the shortest window: pin it to its start column, shifted
-      // left only as far as needed to fit its span. A resize uses this so a
-      // widening right-edge tile displaces its neighbours and grows in place
-      // instead of wrapping onto a new row; a drag-reorder uses it so the
-      // dragged tile's reserved slot stays under the pointer instead of
-      // drifting a column. It still sits flush below the tallest column in
-      // its pinned window, so nothing overlaps above it.
-      bestStart = Math.max(0, Math.min(anchorStartCol, colCount - span));
+      // jumping to the shortest window: `resolveAnchorLeft` turns its
+      // startCol + edge into the left column (span-aware, so a wide footprint
+      // reaches its true edges), shifted left only as far as needed to fit.
+      // A resize grows in place instead of wrapping onto a new row; a drag
+      // keeps its reserved slot under the pointer. It sits flush below the
+      // tallest column in its pinned window, so nothing overlaps above it.
+      bestStart = resolveAnchorLeft(anchorStartCol, anchorEdge, span, colCount);
       bestMax = colHeights[bestStart];
       for (let k = bestStart + 1; k < bestStart + span; k++) {
         bestMax = Math.max(bestMax, colHeights[k]);
       }
     } else {
-      // Shortest-column search (single tile) or shortest span-wide window.
+      // Shortest-column search (single tile) or shortest span-wide window. The
+      // primary comparison is unchanged (strict `<`), so with `prevCols` null
+      // this loop is byte-identical to the pre-anchor greedy pack. The added
+      // else-if is the coherence tie-break: only when a gesture supplies
+      // `prevCols` AND this window ties (within a sub-pixel epsilon) the
+      // window the tile held last frame, keep it there — a resting tile can't
+      // shimmer between equal-height columns on float noise, but a decisively
+      // shorter column still wins, so a real cascade is never suppressed.
       bestStart = 0;
       bestMax = Infinity;
+      const prevCol = prevCols ? prevCols[i] : -1;
       for (let start = 0; start <= colCount - span; start++) {
         let windowMax = colHeights[start];
         for (let k = start + 1; k < start + span; k++) {
@@ -282,6 +350,15 @@ export function computeMasonryGeometry(
         if (windowMax < bestMax) {
           bestMax = windowMax;
           bestStart = start;
+        } else if (
+          prevCol === start &&
+          windowMax <= bestMax + COHERENCE_EPS
+        ) {
+          // Adopt the previous column and its real frontier — using `bestMax`
+          // here would seat the tile above this (equal-or-taller) column's
+          // top and overlap it; the sub-pixel delta is invisible.
+          bestStart = start;
+          bestMax = windowMax;
         }
       }
     }
@@ -325,12 +402,17 @@ export interface MasonryPackParams {
   columnCountOverride?: number;
   tileScale?: number;
   spanOverrides?: Record<number, number>;
-  /** The one tile under an active gesture, pinned to `startCol` (see
-   *  `MasonryPackInput.anchorIndex`). A resize pins the growing tile so it
-   *  grows in place instead of wrapping to a new row; a drag pins the dragged
-   *  tile so its reserved slot tracks the pointer's column. Drag and resize
-   *  never run at once, so one pin covers both. Absent when idle. */
-  columnAnchor?: { id: number; startCol: number };
+  /** The one tile under an active gesture, pinned so the packer places it
+   *  instead of running its shortest-column search. `edge` says how `startCol`
+   *  names the tile's horizontal position (0=left/default, 1=right edge,
+   *  2=centred — see `MasonryPackInput.anchorEdge`). Drag and resize never run
+   *  at once, so one pin covers both. Absent when idle. */
+  columnAnchor?: { id: number; startCol: number; edge?: number };
+  /** Per-feed-index coherence seed — the column each tile held in the previous
+   *  gesture pack (`-1` = none), or absent when no gesture is live. Feeds the
+   *  packer's tie-break (see `MasonryPackInput.prevCols`); absent in steady
+   *  state keeps the pack byte-identical to the greedy reference. */
+  prevCols?: Int32Array;
 }
 
 /** Flatten a feed slice into the numeric pack input. Resolves each item's
@@ -377,6 +459,8 @@ export function buildPackInput(
     selectedHeight: selectedItem ? selectedItem.height : 0,
     anchorIndex,
     anchorStartCol: params.columnAnchor?.startCol ?? 0,
+    anchorEdge: params.columnAnchor?.edge ?? 0,
+    prevCols: params.prevCols ?? null,
   };
 }
 

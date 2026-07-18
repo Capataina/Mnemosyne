@@ -134,13 +134,19 @@ export default function Masonry(props: MasonryProps) {
   // Drag and resize never run at once, so a single pin covers both — resize
   // takes precedence if somehow both are set. Stable between column crossings
   // because it only changes when the gesture's pinned column does.
+  // `edge` tells the packer how `startCol` names the pinned tile's horizontal
+  // position (see `resolveAnchorLeft`): a resize already resolves its own left
+  // column per corner (`anchorStartColFor`), so it pins the left edge (0); a
+  // drag pins the pointer's column as the footprint CENTRE (2) so a 2×2/3×3
+  // tile spreads around the cursor and reaches its true edges instead of
+  // losing range to a left-only reading.
   const dragAnchorCol = drag.dragAnchorCol;
   const columnAnchor = useMemo(() => {
     if (rs && rs.previewSpan !== rs.baseSpan) {
-      return { id: rs.id, startCol: rs.anchorStartCol };
+      return { id: rs.id, startCol: rs.anchorStartCol, edge: 0 };
     }
     if (dragId != null && dragAnchorCol != null) {
-      return { id: dragId, startCol: dragAnchorCol };
+      return { id: dragId, startCol: dragAnchorCol, edge: 2 };
     }
     return undefined;
   }, [rs?.id, rs?.previewSpan, rs?.baseSpan, rs?.anchorStartCol, dragId, dragAnchorCol]);

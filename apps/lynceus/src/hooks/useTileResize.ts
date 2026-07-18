@@ -1,27 +1,22 @@
 import { useCallback, useEffect, useRef, useState, type RefObject } from "react";
-import type { MasonryItemPlacement } from "../components/masonryPacking";
+import type {
+  MasonryGestureFootprint,
+  MasonryItemPlacement,
+} from "../components/masonryPacking";
 
-/** Which corner of a tile a resize drag started from. */
 export type ResizeCorner = "tl" | "tr" | "bl" | "br";
+const GESTURE_SETTLE_MS = 400;
 
-function isLeftCorner(c: ResizeCorner): boolean {
-  return c === "tl" || c === "bl";
+export function isLeftCorner(corner: ResizeCorner): boolean {
+  return corner === "tl" || corner === "bl";
 }
 
-/** Left corners invert the drag-delta sign so dragging "away from the
- *  tile" always grows it, regardless of which corner was grabbed. */
-function signForCorner(c: ResizeCorner): 1 | -1 {
-  return isLeftCorner(c) ? -1 : 1;
+export function isTopCorner(corner: ResizeCorner): boolean {
+  return corner === "tl" || corner === "tr";
 }
 
-/**
- * The column the packer should pin the tile's left edge to for a given
- * span, given the corner grabbed and the footprint at grab. A right-corner
- * drag keeps the original left edge (`startCol`) and grows rightward; a
- * left-corner drag keeps the original right edge (`startCol + baseSpan`) so
- * the left edge walks leftward as the tile grows. The packer clamps the
- * result into `[0, colCount - span]`.
- */
+/** Resolve the physical left column while preserving the opposite horizontal
+ * edge: right grips keep left fixed; left grips keep right fixed. */
 export function anchorStartColFor(
   corner: ResizeCorner,
   startCol: number,
@@ -31,55 +26,171 @@ export function anchorStartColFor(
   return isLeftCorner(corner) ? startCol + baseSpan - span : startCol;
 }
 
-export interface ResizeState {
+export interface ResizeBaseGeometry {
+  id: number;
+  startCol: number;
+  baseSpan: number;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+export interface ResizePreview {
+  footprint: MasonryGestureFootprint;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  span: number;
+}
+
+export interface ResizeVisual {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+/** Pure corner geometry used by the hook and regression tests. The opposite
+ * corner is invariant on both axes. Top grips genuinely move the top upward;
+ * no CSS-only offset is involved. */
+export function resizePreviewForSpan(
+  corner: ResizeCorner,
+  base: ResizeBaseGeometry,
+  requestedSpan: number,
+  columnWidth: number,
+  columnGap: number,
+  columnCount: number,
+): ResizePreview {
+  const horizontalMax = isLeftCorner(corner)
+    ? base.startCol + base.baseSpan
+    : columnCount - base.startCol;
+  let span = Math.max(1, Math.min(Math.round(requestedSpan), horizontalMax));
+  const aspect = base.width > 0 ? base.height / base.width : 1;
+  const widthFor = (value: number) =>
+    columnWidth * value + columnGap * (value - 1);
+  const heightFor = (value: number) => widthFor(value) * aspect;
+
+  // A top grip cannot keep the bottom fixed while growing through y=0.
+  // Clamp to the largest whole span that still fits above the fixed bottom.
+  if (isTopCorner(corner)) {
+    const fixedBottom = base.y + base.height;
+    while (span > 1 && heightFor(span) > fixedBottom) span -= 1;
+  }
+
+  const width = widthFor(span);
+  const height = heightFor(span);
+  const startCol = anchorStartColFor(
+    corner,
+    base.startCol,
+    base.baseSpan,
+    span,
+  );
+  const x = startCol * (columnWidth + columnGap);
+  const y = isTopCorner(corner)
+    ? base.y + base.height - height
+    : base.y;
+
+  return {
+    footprint: {
+      id: base.id,
+      span,
+      startCol,
+      top: Math.max(0, y),
+      edge: 0,
+    },
+    x,
+    y: Math.max(0, y),
+    width,
+    height,
+    span,
+  };
+}
+
+/** Exact active-tile rectangle for a pointer delta. Unlike the footprint,
+ * this never rounds to a column. It is the cosmetic ghost the user directly
+ * manipulates while neighbours reserve the nearest whole-span rectangle. */
+export function resizeVisualForPointer(
+  corner: ResizeCorner,
+  base: ResizeBaseGeometry,
+  deltaX: number,
+  deltaY: number,
+  columnWidth: number,
+  columnGap: number,
+  columnCount: number,
+): ResizeVisual {
+  const signedX = deltaX * (isLeftCorner(corner) ? -1 : 1);
+  const signedY = deltaY * (isTopCorner(corner) ? -1 : 1);
+  const aspect = base.width > 0 ? base.height / base.width : 1;
+  const widthFromX = base.width + signedX;
+  const widthFromY = base.width + signedY / Math.max(aspect, 1e-9);
+  const desiredWidth =
+    Math.abs(widthFromX - base.width) >= Math.abs(widthFromY - base.width)
+      ? widthFromX
+      : widthFromY;
+  const horizontalSpan = isLeftCorner(corner)
+    ? base.startCol + base.baseSpan
+    : columnCount - base.startCol;
+  const horizontalMax =
+    columnWidth * horizontalSpan + columnGap * (horizontalSpan - 1);
+  const verticalMax = isTopCorner(corner)
+    ? (base.y + base.height) / Math.max(aspect, 1e-9)
+    : Infinity;
+  const maxWidth = Math.max(
+    columnWidth,
+    Math.min(horizontalMax, verticalMax),
+  );
+  const width = Math.max(columnWidth, Math.min(desiredWidth, maxWidth));
+  const height = width * aspect;
+  return {
+    x: isLeftCorner(corner)
+      ? base.x + base.width - width
+      : base.x,
+    y: isTopCorner(corner)
+      ? Math.max(0, base.y + base.height - height)
+      : base.y,
+    width,
+    height,
+  };
+}
+
+export interface ResizeState extends ResizePreview {
   id: number;
   corner: ResizeCorner;
-  /** Span at pointer-down, used to avoid a no-op pack at gesture start. */
   baseSpan: number;
-  /** Rounded span - the footprint the packer reflows the grid around. */
-  previewSpan: number;
-  leftAnchored: boolean;
-  /**
-   * Column the packer should pin the tile's left edge to for the current
-   * `previewSpan`, so a widening tile grows in place instead of wrapping to
-   * a new row. Right-corner drags hold the tile's original start column;
-   * left-corner drags hold its right edge, so the start walks left as it
-   * grows. The packer clamps this into range.
-   */
-  anchorStartCol: number;
+  phase: "active" | "committing" | "settling";
 }
 
 interface UseTileResizeInput {
+  enabled: boolean;
   columnWidthRef: RefObject<number>;
   columnCountRef: RefObject<number>;
   columnGap: number;
   placementsRef: RefObject<MasonryItemPlacement[]>;
   placementByIdRef: RefObject<Map<number, MasonryItemPlacement>>;
   tileElementsRef: RefObject<Map<number, HTMLElement>>;
-  onResizeCommit?: (id: number, colSpan: number | null) => void;
-  /** Called on release so the click that follows a drag doesn't select. */
+  /** Resolves only after the durable/optimistic span is authoritative. The
+   * local footprint remains live until then, eliminating the 1×1 gap render. */
+  onResizeCommit?: (
+    id: number,
+    colSpan: number | null,
+  ) => void | Promise<unknown>;
   suppressClick: () => void;
 }
 
-interface LiveResize {
-  id: number;
-  previewPx: number;
-  previewSpan: number;
+interface ResizePointerBase extends ResizeBaseGeometry {
+  corner: ResizeCorner;
+  pointerX: number;
+  pointerY: number;
 }
 
-/**
- * Drag-to-resize as a smooth pixel gesture that snaps to a whole column
- * span only on release.
- *
- * Continuous pointer positions deliberately never enter React state. Each
- * pointermove only stores the latest x coordinate and schedules at most one
- * requestAnimationFrame. That frame writes width + translate3d to the one
- * active tile wrapper. React sees a state update only when the rounded span
- * crosses a column boundary, which is the only moment the rest of the grid's
- * footprint actually changes and an O(n) pack is warranted.
- */
+/** Four-corner, opposite-corner-fixed resize transaction. The footprint is
+ * discrete structural geometry for neighbours; one imperative inner wrapper
+ * renders the exact pixel preview without putting pointer values in React. */
 export function useTileResize(input: UseTileResizeInput) {
   const {
+    enabled,
     columnWidthRef,
     columnCountRef,
     columnGap,
@@ -87,234 +198,386 @@ export function useTileResize(input: UseTileResizeInput) {
     placementByIdRef,
     tileElementsRef,
   } = input;
-
   const [resizeState, setResizeState] = useState<ResizeState | null>(null);
 
-  // Geometry captured at pointer-down. Live placements are read from the
-  // id map after discrete packs so rebasing the active wrapper stays O(1).
-  const baseRef = useRef<{
-    id: number;
-    corner: ResizeCorner;
-    startX: number;
-    basePx: number;
-    /** The tile's start column at grab, derived from its packed x. */
-    startCol: number;
-    /** The tile's span at grab — the right-edge reference for left grips. */
-    baseSpan: number;
-  } | null>(null);
-  const liveRef = useRef<LiveResize | null>(null);
-  const pendingClientXRef = useRef<number | null>(null);
-  const animationFrameRef = useRef<number | null>(null);
-
-  // Callbacks via refs so a parent render cannot tear down the active
-  // window listeners or make pointerup commit a stale callback.
+  const baseRef = useRef<ResizePointerBase | null>(null);
+  const liveRef = useRef<ResizeState | null>(null);
+  const liveVisualRef = useRef<ResizeVisual | null>(null);
+  const pendingPointerRef = useRef<{ x: number; y: number } | null>(null);
+  const frameRef = useRef<number | null>(null);
+  const sequenceRef = useRef(0);
+  const settlePendingRef = useRef(false);
+  const settleReadyRef = useRef(false);
+  const settleTimerRef = useRef<number | null>(null);
   const commitRef = useRef(input.onResizeCommit);
   commitRef.current = input.onResizeCommit;
   const suppressRef = useRef(input.suppressClick);
   suppressRef.current = input.suppressClick;
 
   const writeTileVisual = useCallback(
-    (id: number, previewPx: number) => {
+    (id: number, visual: ResizeVisual) => {
       const node = tileElementsRef.current.get(id);
       const placement = placementByIdRef.current.get(id);
-      const base = baseRef.current;
-      if (!node || !placement || !base) return;
-
-      // The packed anchor owns the rounded footprint. The child wrapper owns
-      // only the continuous horizontal difference: a left grip translates by
-      // the preview/packed width delta so the packed footprint's RIGHT edge
-      // stays anchored while the tile grows leftward.
-      const offsetX = isLeftCorner(base.corner)
-        ? placement.width - previewPx
-        : 0;
-      // The vertical axis is honest top-down growth. Height is aspect-derived
-      // from width, so a wider tile is taller — and being top-anchored (no Y
-      // translate) it grows DOWNWARD from its packed top, which is exactly
-      // where the pack commits it, so release never snaps. Top corners once
-      // faked upward growth with a negative translateY that was cleared
-      // transition-less on release and dropped the tile ~2 rows; masonry packs
-      // top-down, so that risen top edge could never be committed without
-      // shoving the tiles above off-grid — the illusion is removed, and all
-      // four corners now grow into the free space below, the corner choosing
-      // only grow-left vs grow-right.
-      node.style.width = `${previewPx}px`;
-      node.style.transform = `translate3d(${offsetX}px, 0, 0)`;
+      if (!node || !placement) return;
+      node.style.transition = "none";
+      node.style.willChange = "transform, width, height";
+      node.style.width = `${visual.width}px`;
+      node.style.height = `${visual.height}px`;
+      node.style.transform = `translate3d(${visual.x - placement.x}px, ${
+        visual.y - placement.y
+      }px, 0)`;
     },
     [placementByIdRef, tileElementsRef],
-  );
-
-  const applyPointerX = useCallback(
-    (clientX: number) => {
-      const base = baseRef.current;
-      if (!base) return;
-
-      const colWidth = columnWidthRef.current || 1;
-      const colCount = Math.max(1, columnCountRef.current || 1);
-      const fullWidth = colWidth * colCount + columnGap * (colCount - 1);
-      const dx = (clientX - base.startX) * signForCorner(base.corner);
-      const previewPx = Math.max(
-        colWidth,
-        Math.min(base.basePx + dx, fullWidth),
-      );
-      const previewSpan = Math.max(
-        1,
-        Math.min(
-          Math.round((previewPx + columnGap) / (colWidth + columnGap)),
-          colCount,
-        ),
-      );
-
-      const previousSpan = liveRef.current?.previewSpan;
-      liveRef.current = { id: base.id, previewPx, previewSpan };
-      writeTileVisual(base.id, previewPx);
-
-      // This is the sole React update in the move path. It happens only at a
-      // rounded column boundary, not for every physical pointer pixel. The
-      // re-anchor column is recomputed here so the reflow pins the grown
-      // tile in place rather than letting the packer relocate it.
-      if (previewSpan !== previousSpan) {
-        const anchorStartCol = anchorStartColFor(
-          base.corner,
-          base.startCol,
-          base.baseSpan,
-          previewSpan,
-        );
-        setResizeState((previous) =>
-          previous
-            ? { ...previous, previewSpan, anchorStartCol }
-            : previous,
-        );
-      }
-    },
-    [columnCountRef, columnGap, columnWidthRef, writeTileVisual],
-  );
-
-  const cancelScheduledFrame = useCallback(() => {
-    if (animationFrameRef.current !== null) {
-      cancelAnimationFrame(animationFrameRef.current);
-      animationFrameRef.current = null;
-    }
-  }, []);
-
-  const schedulePointerX = useCallback(
-    (clientX: number) => {
-      pendingClientXRef.current = clientX;
-      if (animationFrameRef.current !== null) return;
-      animationFrameRef.current = requestAnimationFrame(() => {
-        animationFrameRef.current = null;
-        const pendingX = pendingClientXRef.current;
-        pendingClientXRef.current = null;
-        if (pendingX !== null) applyPointerX(pendingX);
-      });
-    },
-    [applyPointerX],
-  );
-
-  const flushPointerX = useCallback(
-    (clientX: number) => {
-      cancelScheduledFrame();
-      pendingClientXRef.current = null;
-      applyPointerX(clientX);
-    },
-    [applyPointerX, cancelScheduledFrame],
   );
 
   const clearTileVisual = useCallback(
     (id: number) => {
       const node = tileElementsRef.current.get(id);
       if (!node) return;
+      node.style.transition = "";
       node.style.width = "";
+      node.style.height = "";
       node.style.transform = "";
       node.style.willChange = "";
     },
     [tileElementsRef],
   );
 
+  const applyPointer = useCallback(
+    (pointer: { x: number; y: number }): ResizeState | null => {
+      const base = baseRef.current;
+      const columnWidth = columnWidthRef.current;
+      const columnCount = columnCountRef.current;
+      if (!base || columnWidth <= 0 || columnCount <= 0) return null;
+
+      const visual = resizeVisualForPointer(
+        base.corner,
+        base,
+        pointer.x - base.pointerX,
+        pointer.y - base.pointerY,
+        columnWidth,
+        columnGap,
+        columnCount,
+      );
+      const requestedSpan = Math.max(
+        1,
+        Math.round(
+          (visual.width + columnGap) /
+            (columnWidth + columnGap),
+        ),
+      );
+      const preview = resizePreviewForSpan(
+        base.corner,
+        base,
+        requestedSpan,
+        columnWidth,
+        columnGap,
+        columnCount,
+      );
+      const next: ResizeState = {
+        ...preview,
+        id: base.id,
+        corner: base.corner,
+        baseSpan: base.baseSpan,
+        phase: "active",
+      };
+      liveRef.current = next;
+      liveVisualRef.current = visual;
+      writeTileVisual(base.id, visual);
+      setResizeState((previous) =>
+        previous &&
+        previous.span === next.span &&
+        previous.footprint.startCol === next.footprint.startCol &&
+        previous.footprint.top === next.footprint.top &&
+        previous.phase === next.phase
+          ? previous
+          : next,
+      );
+      return next;
+    },
+    [
+      columnCountRef,
+      columnGap,
+      columnWidthRef,
+      writeTileVisual,
+    ],
+  );
+
+  const cancelFrame = useCallback(() => {
+    if (frameRef.current !== null) {
+      cancelAnimationFrame(frameRef.current);
+      frameRef.current = null;
+    }
+  }, []);
+
+  const schedulePointer = useCallback(
+    (pointer: { x: number; y: number }) => {
+      pendingPointerRef.current = pointer;
+      if (frameRef.current !== null) return;
+      frameRef.current = requestAnimationFrame(() => {
+        frameRef.current = null;
+        const pending = pendingPointerRef.current;
+        pendingPointerRef.current = null;
+        if (pending) applyPointer(pending);
+      });
+    },
+    [applyPointer],
+  );
+
+  const flushPointer = useCallback(
+    (pointer: { x: number; y: number }) => {
+      cancelFrame();
+      pendingPointerRef.current = null;
+      return applyPointer(pointer);
+    },
+    [applyPointer, cancelFrame],
+  );
+
+  const cancelResize = useCallback(
+    (sequence: number) => {
+      if (sequence !== sequenceRef.current) return;
+      const id = baseRef.current?.id;
+      if (id != null) clearTileVisual(id);
+      settlePendingRef.current = false;
+      settleReadyRef.current = false;
+      baseRef.current = null;
+      liveRef.current = null;
+      liveVisualRef.current = null;
+      pendingPointerRef.current = null;
+      setResizeState(null);
+    },
+    [clearTileVisual],
+  );
+
+  const beginSettling = useCallback((sequence: number) => {
+    if (sequence !== sequenceRef.current) return;
+    const live = liveRef.current;
+    if (!live) return;
+    const settling: ResizeState = { ...live, phase: "settling" };
+    liveRef.current = settling;
+    settlePendingRef.current = true;
+    settleReadyRef.current = false;
+    // Keep the active id and ghost alive, but stop publishing its structural
+    // footprint. This is the exact edge that requests the dense release pack.
+    setResizeState(settling);
+  }, []);
+
+  // Selection/search can disable gestures independently of the pointer
+  // lifecycle. If that view gate closes mid-resize, cancel immediately so a
+  // stale footprint can never coexist with (and displace) the hero.
+  useEffect(() => {
+    if (enabled || !baseRef.current) return;
+    const sequence = ++sequenceRef.current;
+    cancelFrame();
+    cancelResize(sequence);
+  }, [cancelFrame, cancelResize, enabled]);
+
   const onResizeHandlePointerDown = useCallback(
     (
       id: number,
       corner: ResizeCorner,
-      e: React.PointerEvent<HTMLDivElement>,
+      event: React.PointerEvent<HTMLDivElement>,
     ) => {
+      if (!enabled || baseRef.current || settlePendingRef.current) return;
       const placement =
         placementByIdRef.current.get(id) ??
         placementsRef.current.find((candidate) => candidate.itemData.id === id);
-      const basePx = placement?.width ?? columnWidthRef.current ?? 1;
-      const baseSpan = placement?.colSpan ?? 1;
-      // Recover the tile's start column from its packed x. The stride is one
-      // column plus the gap; rounding absorbs sub-pixel drift.
-      const colStride = (columnWidthRef.current ?? 0) + columnGap;
-      const startCol =
-        colStride > 0 && placement
-          ? Math.round(placement.x / colStride)
-          : 0;
-      baseRef.current = { id, corner, startX: e.clientX, basePx, startCol, baseSpan };
-      liveRef.current = { id, previewPx: basePx, previewSpan: baseSpan };
-
-      const node = tileElementsRef.current.get(id);
-      if (node) node.style.willChange = "width, transform";
-
-      setResizeState({
+      const columnWidth = columnWidthRef.current;
+      const columnCount = columnCountRef.current;
+      if (
+        !placement ||
+        placement.isSelected ||
+        columnWidth <= 0 ||
+        columnCount <= 0
+      ) {
+        return;
+      }
+      const stride = columnWidth + columnGap;
+      const startCol = Math.round(placement.x / stride);
+      const base: ResizePointerBase = {
         id,
         corner,
-        baseSpan,
-        previewSpan: baseSpan,
-        leftAnchored: isLeftCorner(corner),
-        anchorStartCol: startCol,
-      });
+        pointerX: event.clientX,
+        pointerY: event.clientY,
+        startCol,
+        baseSpan: placement.colSpan,
+        x: placement.x,
+        y: placement.y,
+        width: placement.width,
+        height: placement.height,
+      };
+      baseRef.current = base;
+      const initial = resizePreviewForSpan(
+        corner,
+        base,
+        base.baseSpan,
+        columnWidth,
+        columnGap,
+        columnCount,
+      );
+      const next: ResizeState = {
+        ...initial,
+        id,
+        corner,
+        baseSpan: base.baseSpan,
+        phase: "active",
+      };
+      liveRef.current = next;
+      liveVisualRef.current = {
+        x: base.x,
+        y: base.y,
+        width: base.width,
+        height: base.height,
+      };
+      const node = tileElementsRef.current.get(id);
+      if (node) node.style.willChange = "transform, width, height";
+      setResizeState(next);
     },
-    [columnGap, columnWidthRef, placementByIdRef, placementsRef, tileElementsRef],
+    [
+      enabled,
+      columnCountRef,
+      columnGap,
+      columnWidthRef,
+      placementByIdRef,
+      placementsRef,
+      tileElementsRef,
+    ],
   );
 
   const resizingId = resizeState?.id ?? null;
-
   useEffect(() => {
     if (resizingId === null) return;
 
-    const handleMove = (e: PointerEvent) => schedulePointerX(e.clientX);
+    const handleMove = (event: PointerEvent) => {
+      if (liveRef.current?.phase !== "active") return;
+      schedulePointer({ x: event.clientX, y: event.clientY });
+    };
 
-    const handleUp = (e: PointerEvent) => {
-      // Pointerup may beat the scheduled frame. Flush its exact coordinate so
-      // the committed span and final visual both reflect the release point.
-      flushPointerX(e.clientX);
-      const live = liveRef.current;
-      if (live) {
-        commitRef.current?.(
+    const handleUp = (event: PointerEvent) => {
+      const live =
+        flushPointer({ x: event.clientX, y: event.clientY }) ?? liveRef.current;
+      if (!live) return;
+      const sequence = ++sequenceRef.current;
+      const committing: ResizeState = { ...live, phase: "committing" };
+      liveRef.current = committing;
+      setResizeState(committing);
+      suppressRef.current();
+
+      let result: void | Promise<unknown>;
+      try {
+        result = commitRef.current?.(
           live.id,
-          live.previewSpan === 1 ? null : live.previewSpan,
+          live.span === 1 ? null : live.span,
         );
-        // The click that naturally follows this pointerup must not reach the
-        // tile's onClick (which would select the image).
-        suppressRef.current();
-        clearTileVisual(live.id);
+      } catch {
+        cancelResize(sequence);
+        return;
       }
-      baseRef.current = null;
-      liveRef.current = null;
-      setResizeState(null);
+      void Promise.resolve(result)
+        .catch(() => undefined)
+        .finally(() => beginSettling(sequence));
+    };
+
+    const handleCancel = () => {
+      const sequence = ++sequenceRef.current;
+      cancelFrame();
+      cancelResize(sequence);
     };
 
     window.addEventListener("pointermove", handleMove);
     window.addEventListener("pointerup", handleUp, { once: true });
+    window.addEventListener("pointercancel", handleCancel, { once: true });
     return () => {
       window.removeEventListener("pointermove", handleMove);
       window.removeEventListener("pointerup", handleUp);
-      cancelScheduledFrame();
-      pendingClientXRef.current = null;
+      window.removeEventListener("pointercancel", handleCancel);
+      cancelFrame();
+      pendingPointerRef.current = null;
     };
   }, [
-    cancelScheduledFrame,
-    clearTileVisual,
-    flushPointerX,
+    beginSettling,
+    cancelFrame,
+    cancelResize,
+    flushPointer,
     resizingId,
-    schedulePointerX,
+    schedulePointer,
   ]);
 
-  // Called by the shell after a discrete pack. It adjusts the child wrapper
-  // against its new packed anchor before paint, without changing React state.
+  const onGestureSettled = useCallback(() => {
+    if (settlePendingRef.current) settleReadyRef.current = true;
+  }, []);
+
   const syncVisual = useCallback(() => {
-    const live = liveRef.current;
-    if (live) writeTileVisual(live.id, live.previewPx);
+    const base = baseRef.current;
+    const visual = liveVisualRef.current;
+    if (base && visual) writeTileVisual(base.id, visual);
   }, [writeTileVisual]);
 
-  return { resizeState, onResizeHandlePointerDown, syncVisual };
+  const finishSettlingVisual = useCallback(() => {
+    if (!settlePendingRef.current || !settleReadyRef.current) return;
+    const base = baseRef.current;
+    const visual = liveVisualRef.current;
+    if (!base || !visual) return;
+
+    settlePendingRef.current = false;
+    settleReadyRef.current = false;
+    const id = base.id;
+    const node = tileElementsRef.current.get(id);
+    const placement = placementByIdRef.current.get(id);
+
+    const finish = () => {
+      if (settleTimerRef.current !== null) {
+        window.clearTimeout(settleTimerRef.current);
+        settleTimerRef.current = null;
+      }
+      clearTileVisual(id);
+      baseRef.current = null;
+      liveRef.current = null;
+      liveVisualRef.current = null;
+      pendingPointerRef.current = null;
+      setResizeState(null);
+    };
+
+    if (!node || !placement) {
+      finish();
+      return;
+    }
+
+    writeTileVisual(id, visual);
+    void node.offsetWidth;
+    node.style.transition = [
+      `transform ${GESTURE_SETTLE_MS}ms ease-in-out`,
+      `width ${GESTURE_SETTLE_MS}ms ease-in-out`,
+      `height ${GESTURE_SETTLE_MS}ms ease-in-out`,
+    ].join(", ");
+    node.style.width = `${placement.width}px`;
+    node.style.height = `${placement.height}px`;
+    node.style.transform = "translate3d(0px, 0px, 0)";
+    settleTimerRef.current = window.setTimeout(
+      finish,
+      GESTURE_SETTLE_MS + 50,
+    );
+  }, [clearTileVisual, placementByIdRef, tileElementsRef, writeTileVisual]);
+
+  useEffect(
+    () => () => {
+      if (settleTimerRef.current !== null) {
+        window.clearTimeout(settleTimerRef.current);
+      }
+    },
+    [],
+  );
+
+  return {
+    resizeState,
+    activeItemId: resizeState?.id ?? null,
+    gestureFootprint:
+      resizeState && resizeState.phase !== "settling"
+        ? resizeState.footprint
+        : undefined,
+    onResizeHandlePointerDown,
+    onGestureSettled,
+    syncVisual,
+    finishSettlingVisual,
+  };
 }

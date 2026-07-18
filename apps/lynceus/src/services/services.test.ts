@@ -182,6 +182,22 @@ describe("services/images", () => {
     expect(items[0].height).toBe(400);
   });
 
+  it("sanitises literal-zero manifest dimensions before they reach masonry", async () => {
+    const { fetchFeedManifest } = await import("./images");
+    mockInvoke.mockResolvedValueOnce([
+      {
+        id: 1,
+        name: "broken-metadata.jpg",
+        thumbnail_path: "/tmp/thumb.jpg",
+        width: 0,
+        height: 0,
+      },
+    ]);
+    const items = await fetchFeedManifest();
+    expect(items[0].width).toBe(400);
+    expect(items[0].height).toBe(400);
+  });
+
   it("fetchImageDetails hydrates a batch in one invoke and maps full detail", async () => {
     const { fetchImageDetails } = await import("./images");
     mockInvoke.mockResolvedValueOnce([

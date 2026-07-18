@@ -1,7 +1,8 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { QueryClient } from "@tanstack/react-query";
 import {
   classifyMove,
+  captureGridGeometry,
   describeElement,
   domPathFor,
   serialiseDomOutline,
@@ -30,6 +31,7 @@ describe("tilesOverlap", () => {
   const tile = (over: Partial<TileGeometry>): TileGeometry => ({
     id: 0,
     packW: 100,
+    packH: 100,
     packTransform: "",
     renderW: 100,
     renderH: 100,
@@ -56,6 +58,47 @@ describe("tilesOverlap", () => {
     const b = tile({ id: 2, x: 98, y: 0, renderW: 100, renderH: 100 });
     // 2px horizontal overlap ≤ slop → not counted
     expect(tilesOverlap(a, b)).toBe(0);
+  });
+});
+
+describe("captureGridGeometry", () => {
+  it("judges committed anchor geometry, not a live descendant transform", () => {
+    const host = build(
+      `<div data-masonry-id="42"
+            data-masonry-x="100" data-masonry-y="250"
+            data-masonry-width="200" data-masonry-height="120"
+            style="width:200px;height:120px;transform:translate(100px,250px)">
+         <div style="transform:translate3d(500px,-300px,0)"></div>
+       </div>`,
+    );
+    const anchor = host.firstElementChild as HTMLElement;
+    vi.spyOn(anchor, "getBoundingClientRect").mockReturnValue({
+      x: 600,
+      y: -50,
+      left: 600,
+      top: -50,
+      right: 800,
+      bottom: 70,
+      width: 200,
+      height: 120,
+      toJSON: () => ({}),
+    });
+
+    const snapshot = captureGridGeometry() as {
+      tiles: TileGeometry[];
+      mismatched: unknown[];
+    };
+    expect(snapshot.tiles[0]).toMatchObject({
+      id: 42,
+      x: 100,
+      y: 250,
+      packW: 200,
+      packH: 120,
+      renderW: 200,
+      renderH: 120,
+    });
+    expect(snapshot.mismatched).toEqual([]);
+    host.remove();
   });
 });
 

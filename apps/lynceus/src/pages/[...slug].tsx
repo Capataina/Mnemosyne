@@ -482,9 +482,13 @@ export default function Home() {
   const handleResizeCommit = useCallback(
     (itemId: number, colSpan: number | null) => {
       recordAction("masonry_resize", { id: itemId, colSpan });
-      setManualColSpanMutation.mutate({ imageId: itemId, colSpan });
+      // useTileResize retains the final footprint until this promise settles.
+      // The optimistic manifest stamp therefore becomes authoritative before
+      // the preview can clear; no intermediate render can repack the tile as
+      // its stale 1x1 span.
+      return setManualColSpanMutation.mutateAsync({ imageId: itemId, colSpan });
     },
-    [setManualColSpanMutation.mutate],
+    [setManualColSpanMutation.mutateAsync],
   );
 
   // Wordmark → back to the main library feed from anywhere: clear any

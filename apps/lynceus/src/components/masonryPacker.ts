@@ -2,30 +2,39 @@ import {
   computeMasonryGeometry,
   type MasonryGeometry,
   type MasonryPackInput,
+  type MasonryPackRequest,
   type MasonryPackResponse,
 } from "./masonryPacking";
 
-/**
- * Thin client over the masonry pack Web Worker (T3-3), with a synchronous
- * fallback that makes the grid independent of worker availability.
- *
- * `pack` transfers the input's typed arrays into the worker; the result is
- * delivered to the `onResult` handler tagged with the request's generation.
- * If the worker cannot be constructed (or fails at runtime), the packer
- * downgrades to computing `computeMasonryGeometry` inline on the calling
- * thread — the hard invariant is that a worker failure never leaves the
- * grid unpacked. `onFailure` lets the engine re-run the latest request
- * synchronously the moment a live worker dies mid-session (its in-flight
- * request's transferred buffers are gone, so only the caller, which still
- * holds the source `items`, can rebuild and recover).
- */
+/** Worker client with bounded queueing: one computation may be in flight and
+ * exactly one replaceable latest request may wait behind it. Catalogue arrays
+ * are transferred once per base revision; pointer frames reuse the worker's
+ * cached arrays and cross only the numeric gesture footprint. */
 export interface MasonryPacker {
-  pack(gen: number, input: MasonryPackInput): void;
+  pack(gen: number, revision: number, input: MasonryPackInput): void;
   onResult(handler: (gen: number, geometry: MasonryGeometry) => void): void;
   onFailure(handler: () => void): void;
-  /** True when a live worker backs the packer (packs run off-thread). */
   readonly offThread: boolean;
   dispose(): void;
+}
+
+interface PendingPack {
+  gen: number;
+  revision: number;
+  input: MasonryPackInput;
+}
+
+function cloneInputForTransfer(input: MasonryPackInput): MasonryPackInput {
+  return {
+    ...input,
+    ids: input.ids.slice(),
+    widths: input.widths.slice(),
+    heights: input.heights.slice(),
+    spans: input.spans.slice(),
+    gestureFootprint: input.gestureFootprint
+      ? { ...input.gestureFootprint }
+      : null,
+  };
 }
 
 export function createMasonryPacker(): MasonryPacker {
@@ -33,26 +42,70 @@ export function createMasonryPacker(): MasonryPacker {
     null;
   let failureHandler: (() => void) | null = null;
   let worker: Worker | null = null;
+  let disposed = false;
+  let inFlight = false;
+  let pending: PendingPack | null = null;
+  // Revision whose catalogue arrays have already been sent to the worker.
+  // It is safe to mark on dispatch: worker messages are FIFO and the next
+  // request is not dispatched until this one returns.
+  let workerRevision = -1;
+
+  const dispatch = (request: PendingPack) => {
+    const active = worker;
+    if (!active || disposed) return;
+    inFlight = true;
+
+    if (request.revision === workerRevision) {
+      const message: MasonryPackRequest = {
+        kind: "reuse",
+        gen: request.gen,
+        revision: request.revision,
+        gestureFootprint: request.input.gestureFootprint,
+      };
+      active.postMessage(message);
+      return;
+    }
+
+    const transferred = cloneInputForTransfer(request.input);
+    workerRevision = request.revision;
+    const message: MasonryPackRequest = {
+      kind: "full",
+      gen: request.gen,
+      revision: request.revision,
+      input: transferred,
+    };
+    active.postMessage(message, [
+      transferred.ids.buffer,
+      transferred.widths.buffer,
+      transferred.heights.buffer,
+      transferred.spans.buffer,
+    ]);
+  };
 
   try {
     worker = new Worker(new URL("./masonryWorker.ts", import.meta.url), {
       type: "module",
     });
     worker.onmessage = (event: MessageEvent<MasonryPackResponse>) => {
+      inFlight = false;
+      const next = pending;
+      pending = null;
       resultHandler?.(event.data.gen, event.data.geometry);
+
+      // Collapse every request that arrived during the computation to the
+      // newest one. A request synchronously queued by the result handler is
+      // newer still, so it wins and the captured pending work is discarded.
+      if (!inFlight && next) dispatch(next);
     };
     worker.onerror = () => {
-      // A construction/load/runtime worker failure downgrades to synchronous
-      // packing for the rest of the session. The in-flight request's inputs
-      // were transferred away and are gone; the engine's `onFailure` re-runs
-      // the latest pack from the source items it still holds.
       worker?.terminate();
       worker = null;
+      inFlight = false;
+      pending = null;
+      workerRevision = -1;
       failureHandler?.();
     };
   } catch {
-    // Environment without module-worker support (or a blocked construction):
-    // every pack runs synchronously from the start.
     worker = null;
   }
 
@@ -60,18 +113,19 @@ export function createMasonryPacker(): MasonryPacker {
     get offThread() {
       return worker !== null;
     },
-    pack(gen, input) {
+    pack(gen, revision, input) {
       const active = worker;
-      if (active) {
-        active.postMessage({ gen, input }, [
-          input.widths.buffer,
-          input.heights.buffer,
-          input.spans.buffer,
-        ]);
+      if (!active) {
+        resultHandler?.(gen, computeMasonryGeometry(input));
         return;
       }
-      // Synchronous fallback: compute inline and deliver on the same tick.
-      resultHandler?.(gen, computeMasonryGeometry(input));
+
+      const request = { gen, revision, input };
+      if (inFlight) {
+        pending = request;
+      } else {
+        dispatch(request);
+      }
     },
     onResult(handler) {
       resultHandler = handler;
@@ -80,8 +134,11 @@ export function createMasonryPacker(): MasonryPacker {
       failureHandler = handler;
     },
     dispose() {
+      disposed = true;
       worker?.terminate();
       worker = null;
+      inFlight = false;
+      pending = null;
       resultHandler = null;
       failureHandler = null;
     },

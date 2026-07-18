@@ -1,4 +1,10 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef } from "react";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+} from "react";
 import { FeedItem } from "../types";
 import { MasonryItem } from "./MasonryItem";
 import { MasonryAnchor } from "./MasonryAnchor";
@@ -41,7 +47,10 @@ interface MasonryProps {
    * Fired once, on release, with the tile's new column span (`null` =
    * back to single-column). Resize persists per-image (unlike reorder).
    */
-  onResizeCommit?: (itemId: number, colSpan: number | null) => void;
+  onResizeCommit?: (
+    itemId: number,
+    colSpan: number | null,
+  ) => void | Promise<unknown>;
   /** Fired when the pointer enters a tile — used to prefetch its
    *  similar-set so opening it is instant. */
   onItemHover?: (id: number) => void;
@@ -52,9 +61,9 @@ interface MasonryProps {
 
 /**
  * Thin composition shell over three focused hooks:
- *  - `useMasonryEngine`  — shortest-column packing + viewport virtualization
- *  - `useTileDrag`       — pointer-driven drag-to-reorder (live in-session)
- *  - `useTileResize`     — smooth pixel resize that snaps to a span on release
+ *  - `useMasonryEngine`  — dual-path packing + viewport virtualization
+ *  - `useTileDrag`       — stable-id spatial drag transaction
+ *  - `useTileResize`     — four-corner, opposite-corner-fixed resize
  *
  * The shell owns the shared refs (container + live layout) so the
  * interaction hooks read layout data without re-subscribing on every
@@ -64,9 +73,6 @@ export default function Masonry(props: MasonryProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const placementsRef = useRef<MasonryItemPlacement[]>([]);
   const placementByIdRef = useRef<Map<number, MasonryItemPlacement>>(new Map());
-  // Only visible tiles have DOM nodes. Gesture hooks address the one active
-  // tile through this registry, keeping continuous pointer motion completely
-  // outside React while virtualization remains free to mount/unmount the rest.
   const tileElementsRef = useRef<Map<number, HTMLElement>>(new Map());
   const columnWidthRef = useRef(0);
   const columnCountRef = useRef(0);
@@ -83,7 +89,6 @@ export default function Masonry(props: MasonryProps) {
     },
     [],
   );
-
   const drag = useTileDrag({
     enabled: !!props.reorderEnabled,
     items: props.items,
@@ -91,12 +96,14 @@ export default function Masonry(props: MasonryProps) {
     placementByIdRef,
     tileElementsRef,
     columnWidthRef,
+    columnCountRef,
     columnGap: props.columnGap,
     onReorder: props.onReorder,
     suppressClick,
   });
 
   const resize = useTileResize({
+    enabled: !!props.reorderEnabled,
     columnWidthRef,
     columnCountRef,
     columnGap: props.columnGap,
@@ -108,52 +115,18 @@ export default function Masonry(props: MasonryProps) {
   });
 
   const rs = resize.resizeState;
-  const effectiveItems = drag.workingOrder ?? props.items;
-  // The packer's resize input is deliberately keyed only by the rounded
-  // footprint. Pixel motion lives in useTileResize's imperative rAF path, so
-  // dozens of pointer events within one column keep this object's identity
-  // stable and cannot retrigger an O(n) pack. A live resize contributes its
-  // preview span; a live drag pins the dragged tile's committed span so a
-  // multi-span tile keeps its footprint the whole drag rather than collapsing
-  // to 1×1 in the preview pack.
-  const dragId = drag.dragItemId;
-  const dragSpan = drag.dragItemSpan;
-  const spanOverrides = useMemo(() => {
-    const overrides: Record<number, number> = {};
-    if (rs && rs.previewSpan !== rs.baseSpan) overrides[rs.id] = rs.previewSpan;
-    if (dragId != null && dragSpan > 1) overrides[dragId] = dragSpan;
-    return Object.keys(overrides).length > 0 ? overrides : undefined;
-  }, [rs?.id, rs?.previewSpan, rs?.baseSpan, dragId, dragSpan]);
+  const effectiveItems = drag.committedOrder ?? props.items;
+  // One transaction object replaces the old working-order + span-override +
+  // X-anchor composition. Resize takes precedence defensively; the UI cannot
+  // start both gestures at once.
+  const gestureFootprint =
+    resize.gestureFootprint ?? drag.gestureFootprint;
+  const handleGestureSettled = useCallback(() => {
+    drag.onGestureSettled();
+    resize.onGestureSettled();
+  }, [drag.onGestureSettled, resize.onGestureSettled]);
 
-  // The one tile under an active gesture is pinned to a column so the packer
-  // places it there instead of running its shortest-column search. A resize
-  // pins the growing tile so it grows in place (a right-edge tile grown wider
-  // used to wrap onto a new row); a drag pins the dragged tile so its reserved
-  // slot tracks the pointer's column instead of drifting to the greedy-
-  // shortest one (the "open space appears a column over" reorder artefact).
-  // Drag and resize never run at once, so a single pin covers both — resize
-  // takes precedence if somehow both are set. Stable between column crossings
-  // because it only changes when the gesture's pinned column does.
-  // `edge` tells the packer how `startCol` names the pinned tile's horizontal
-  // position (see `resolveAnchorLeft`): a resize already resolves its own left
-  // column per corner (`anchorStartColFor`), so it pins the left edge (0); a
-  // drag pins the pointer's column as the footprint CENTRE (2) so a 2×2/3×3
-  // tile spreads around the cursor and reaches its true edges instead of
-  // losing range to a left-only reading.
-  const dragAnchorCol = drag.dragAnchorCol;
-  const columnAnchor = useMemo(() => {
-    if (rs && rs.previewSpan !== rs.baseSpan) {
-      return { id: rs.id, startCol: rs.anchorStartCol, edge: 0 };
-    }
-    if (dragId != null && dragAnchorCol != null) {
-      return { id: dragId, startCol: dragAnchorCol, edge: 2 };
-    }
-    return undefined;
-  }, [rs?.id, rs?.previewSpan, rs?.baseSpan, rs?.anchorStartCol, dragId, dragAnchorCol]);
-
-  const gestureActive = dragId != null || rs != null;
-
-  const { visiblePlacements, height } = useMasonryEngine({
+  const { visiblePlacements, height, settling } = useMasonryEngine({
     items: effectiveItems,
     selectedItem: props.selectedItem ?? null,
     minItemWidth: props.minItemWidth,
@@ -161,10 +134,9 @@ export default function Masonry(props: MasonryProps) {
     verticalGap: props.verticalGap,
     columnCountOverride: props.columnCountOverride,
     tileScale: props.tileScale,
-    spanOverrides,
-    columnAnchor,
-    dragItemId: drag.dragItemId,
-    gestureActive,
+    gestureFootprint,
+    onGestureGeometryCommitted: drag.onGestureGeometryCommitted,
+    onGestureSettled: handleGestureSettled,
     containerRef,
     placementsRef,
     placementByIdRef,
@@ -172,15 +144,24 @@ export default function Masonry(props: MasonryProps) {
     columnCountRef,
   });
 
-  // A discrete pack can move the active tile's anchor beneath its imperative
-  // wrapper transform. Rebase that transform before paint so the resize edge
-  // or dragged tile remains exactly under the pointer through the reflow.
-  // This runs only after React work (span boundary, hover swap, viewport
-  // change), never for the continuous pointermove frames themselves.
+  // Packer commits move the active anchor underneath its floating wrapper.
+  // Rebase before paint to keep the ghost pointer-exact. Once the release's
+  // dense pack commits, animate that one visual delta back to the anchor.
   useLayoutEffect(() => {
     resize.syncVisual();
     drag.syncVisual();
-  }, [visiblePlacements, resize.syncVisual, drag.syncVisual]);
+    if (!settling) {
+      resize.finishSettlingVisual();
+      drag.finishSettlingVisual();
+    }
+  }, [
+    visiblePlacements,
+    settling,
+    resize.syncVisual,
+    resize.finishSettlingVisual,
+    drag.syncVisual,
+    drag.finishSettlingVisual,
+  ]);
 
   const handleItemClick = useCallback(
     (item: FeedItem) => {
@@ -226,7 +207,7 @@ export default function Masonry(props: MasonryProps) {
     return () => clearTimeout(t);
   }, [visiblePlacements, onItemHover, isIndexing]);
 
-  const resizingId = rs?.id ?? null;
+  const resizingId = resize.activeItemId;
   const resizingCorner = rs?.corner ?? null;
 
   // Render the anchors in a STABLE id order, decoupled from the visual/pack
@@ -271,10 +252,12 @@ export default function Masonry(props: MasonryProps) {
             // anchor+item subtree, dropping useAdaptiveThumbnail state and
             // re-firing the pop-in. The comparator on MasonryItem handles the
             // url change as a cheap prop update instead.
+            id={id}
             key={id}
             x={item.x}
             y={item.y}
             width={item.width}
+            height={item.height}
             onTop={item.isSelected || isDraggingThis || id === resizingId}
             snap={id === resizingId || isDraggingThis}
           >
@@ -285,7 +268,12 @@ export default function Masonry(props: MasonryProps) {
               onHover={gatedHover}
               renderedWidth={item.width}
               animationLevel={props.animationLevel}
-              reorderEnabled={props.reorderEnabled}
+              reorderEnabled={
+                props.reorderEnabled && resizingId === null
+              }
+              resizeEnabled={
+                props.reorderEnabled && drag.dragItemId === null
+              }
               isDragging={id === drag.dragItemId}
               onDragHandlePointerDown={drag.onDragHandlePointerDown}
               activeResizeCorner={id === resizingId ? resizingCorner : null}

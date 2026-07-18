@@ -46,6 +46,9 @@ interface MasonryItemProps {
   animationLevel?: "subtle" | "standard" | "off";
   /** True when drag-to-reorder is available (adds the grab affordance). */
   reorderEnabled?: boolean;
+  /** True when resize grips are available. Disabled with reorder while a
+   * hero/search/filter view is active so no gesture can displace the hero. */
+  resizeEnabled?: boolean;
   /** True while THIS tile is the one being drag-reordered. */
   isDragging?: boolean;
   /** Pointer went down on the tile body (drag-to-reorder start). */
@@ -64,7 +67,8 @@ interface MasonryItemProps {
   /** The tile's current rendered CSS width, so it can request a
    *  thumbnail resolution that matches (crisp when stretched). */
   renderedWidth?: number;
-  /** Registers the plain wrapper used for imperative gesture transforms. */
+  /** Registers the active-only cosmetic wrapper used for pointer-exact
+   * drag/resize visuals. Committed geometry remains on MasonryAnchor. */
   onTileElement?: (id: number, node: HTMLElement | null) => void;
   /** Rendered inside the selected hero's tile only (the quick-start timer
    *  pill). The host marks the tile `data-selected-hero`, whose hover /
@@ -75,9 +79,9 @@ interface MasonryItemProps {
 /**
  * A single grid tile. Deliberately dumb: it renders the image at whatever
  * size its packed placement gives it and exposes drag / resize affordances.
- * The plain wrapper applies the active tile's continuous gesture preview.
- * Framer Motion's `layout` animates every other tile sliding aside as a
- * newly-thumbnailed image pops into the feed, and during reorder reflow.
+ * MasonryAnchor owns committed geometry. The plain wrapper below may carry a
+ * temporary active-only transform/size delta so direct manipulation follows
+ * the pointer while the anchor continues to expose packed telemetry.
  *
  * The 3D-tilt hover gimmick and the amber corner-bracket handles from the
  * previous design are gone — the tilt caused the "yellow line" edge flare
@@ -97,10 +101,10 @@ interface MasonryItemProps {
  *  - item.{id,url,thumbnailUrl,hasThumbnail}  → displayUrl / adaptive bucket
  *  - item.{width,height}                       → packed footprint / aspect
  *  - item.name                                 → alt text + resize-grip aria
- *  - isSelected, animationLevel, reorderEnabled, isDragging,
+ *  - isSelected, animationLevel, reorderEnabled, resizeEnabled, isDragging,
  *    activeResizeCorner, renderedWidth         → scalar render inputs
  *  - onClick/onHover/onDragHandlePointerDown/onResizeHandlePointerDown/
- *    onTileElement                             → callbacks, stable by reference
+ *    onTileElement                              → callbacks, stable by reference
  *    once the route (T2-1 step 1) and Masonry useCallback them; a ref change is
  *    a genuine handler swap and correctly re-renders.
  *  - heroOverlay                               → by reference; the route
@@ -123,6 +127,7 @@ function propsAreEqual(prev: MasonryItemProps, next: MasonryItemProps): boolean 
     prev.isSelected === next.isSelected &&
     prev.animationLevel === next.animationLevel &&
     prev.reorderEnabled === next.reorderEnabled &&
+    prev.resizeEnabled === next.resizeEnabled &&
     prev.isDragging === next.isDragging &&
     prev.activeResizeCorner === next.activeResizeCorner &&
     prev.renderedWidth === next.renderedWidth &&
@@ -153,19 +158,15 @@ export const MasonryItem = memo(function MasonryItem(props: MasonryItemProps) {
 
   const animationLevel = props.animationLevel ?? "standard";
   // Whether THIS tile is under an active gesture (used to suppress the
-  // pop-in `initial`/`animate` motion while the imperative gesture wrapper
-  // drives it — see the motion.div below).
+  // pop-in `initial`/`animate` motion while its plain wrapper follows the
+  // pointer outside React; see the motion.div below.
   const gestureActive = props.isDragging || props.activeResizeCorner != null;
 
   return (
-    // The wrapper owns the imperative translate3d/width preview. Keeping it
-    // outside motion.div is essential: Framer Motion may use the inner
-    // element's transform for layout/scale, and two writers on one transform
-    // would make the active tile jump or lag. Only this one wrapper changes on
-    // continuous pointer frames; React and Motion keep owning everything else.
+    // Committed geometry lives on MasonryAnchor. During one active gesture,
+    // this wrapper alone carries the pointer-exact cosmetic delta.
     <div
       ref={registerTileElement}
-      data-masonry-id={itemId}
       // The hero overlay (quick-start pill) mounts on THIS wrapper, not the
       // inner tile: the tile is overflow-hidden and would clip the pill's
       // bottom-edge overhang. data-selected-hero drives the pill's CSS
@@ -174,33 +175,33 @@ export const MasonryItem = memo(function MasonryItem(props: MasonryItemProps) {
         props.isSelected && props.heroOverlay ? true : undefined
       }
       className={
-        props.isSelected && props.heroOverlay ? "relative w-full" : "w-full"
+        props.isSelected && props.heroOverlay
+          ? "relative h-full w-full"
+          : "h-full w-full"
       }
     >
       <motion.div
-        // NO `layout`. Grid POSITION is owned entirely by MasonryAnchor's CSS
-        // `transition-transform` — a single, symmetric animator. framer's
+        // NO `layout`. Committed grid position belongs to MasonryAnchor's CSS
+        // transition; active pointer delta belongs to the plain wrapper.
+        // framer's
         // `layout` here was a SECOND position animator: because this motion.div
         // sits inside the anchor, when the anchor's translate moved the tile,
         // framer measured a screen-position change it hadn't caused and
         // FLIP-animated it too, on a spring curve fighting the anchor's
         // ease-in-out. The two resolved asymmetrically — a move down blended,
         // a move up snapped ("teleport"). Dropping `layout` leaves the anchor
-        // as the sole position owner (fixes the teleport) and removes a
+        // as the sole committed-position owner and removes a
         // per-tile getBoundingClientRect every reflow (a perf win). This
         // motion.div now owns ONLY the pop-in / drag feedback (opacity+scale),
-        // which never conflicted. gestureActive skips the pop-in for the tile
-        // the imperative wrapper is driving.
+        // which never conflicts. gestureActive skips the pop-in for the tile
+        // whose wrapper is being driven imperatively.
         transition={
           animationLevel === "off"
             ? { duration: 0 }
             : { type: "spring", stiffness: 350, damping: 35, mass: 0.8 }
         }
         initial={gestureActive ? false : { opacity: 0, scale: 0.97 }}
-        animate={{
-          opacity: props.isDragging ? 0.6 : 1,
-          scale: props.isDragging ? 0.98 : 1,
-        }}
+        animate={{ opacity: props.isDragging ? 0.72 : 1, scale: 1 }}
         exit={{ opacity: 0, scale: 0.97 }}
         onClick={() => props.onClick(props.item)}
         onMouseEnter={() => props.onHover?.(props.item.id)}
@@ -210,7 +211,7 @@ export const MasonryItem = memo(function MasonryItem(props: MasonryItemProps) {
             : undefined
         }
         className={[
-          "masonry-tile group relative isolate overflow-hidden rounded-[14px] bg-surface-sunken",
+          "masonry-tile group relative isolate h-full overflow-hidden rounded-[14px] bg-surface-sunken",
           "ring-1 ring-inset ring-border transition-[box-shadow,filter] duration-300 ease-[cubic-bezier(0.16,1,0.3,1)]",
           "shadow-[var(--shadow-soft)] hover:shadow-[var(--shadow-float)]",
           props.isSelected
@@ -223,7 +224,7 @@ export const MasonryItem = memo(function MasonryItem(props: MasonryItemProps) {
         ].join(" ")}
       >
         <img
-          className="block w-full select-none transition-[filter] duration-300 ease-out group-hover:brightness-[1.025]"
+          className="block h-full w-full select-none object-cover transition-[filter] duration-300 ease-out group-hover:brightness-[1.025]"
           src={displayUrl}
           alt={props.item.name}
           loading={props.isSelected ? "eager" : "lazy"}
@@ -251,7 +252,8 @@ export const MasonryItem = memo(function MasonryItem(props: MasonryItemProps) {
         {/* Resize grips — all four corners. Neutral + functional; the v2
             visual pass owns the styling. Each stops propagation so it never
             starts a reorder drag or selects the image. */}
-        {!props.isSelected &&
+        {props.resizeEnabled &&
+          !props.isSelected &&
           RESIZE_CORNERS.map(({ corner, position, cursor, bracket }) => (
             <div
               key={corner}

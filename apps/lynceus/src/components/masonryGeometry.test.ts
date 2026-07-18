@@ -127,7 +127,7 @@ describe("computeMasonryGeometry — equivalence with the object pack", () => {
         selectedItem = feedTile(9999, 800, 400);
       }
 
-      // Live drag span overrides on a couple of ids.
+      // Compatibility span overrides on a couple of ids.
       let spanOverrides: Record<number, number> | undefined;
       if (n > 0 && rng() < 0.3) {
         spanOverrides = {};
@@ -219,12 +219,10 @@ describe("prefix pack — suffix-independence (first-paint seamless swap)", () =
   });
 });
 
-describe("drag preview keeps a multi-span tile's footprint", () => {
-  // A tile is dragged; the shell feeds its committed span back through
-  // `spanOverrides` so the preview pack keeps the tile's footprint even if the
-  // active feed slice no longer carries its `manualColSpan` (the similar/search
-  // feeds drop it). This is the explicit carry behind the "2×2 tile renders as
-  // 1×1 while dragging" fix.
+describe("compatibility span override", () => {
+  // The public object-pack surface still lets non-gesture callers override a
+  // persisted span. Live gestures carry span inside MasonryGestureFootprint;
+  // production no longer composes a second override state beside it.
   const params = {
     containerWidth: 1200,
     minItemWidth: 236,
@@ -262,7 +260,7 @@ describe("drag preview keeps a multi-span tile's footprint", () => {
   });
 });
 
-describe("resize re-anchor keeps a widening tile in place (no row-wrap)", () => {
+describe("resize footprint keeps a widening tile at its preview rectangle", () => {
   // Four columns; three tall tiles fill columns 0-2, a short tile sits alone
   // in the rightmost column 3. Growing that right-edge tile to span 2 must
   // shift its start column left just enough to fit (cols 2-3) instead of the
@@ -281,8 +279,9 @@ describe("resize re-anchor keeps a widening tile in place (no row-wrap)", () => 
     feedTile(13, 400, 200), //  col 3, short — the right-edge tile
   ];
   const anchorIdx = items.findIndex((it) => it.id === 13);
+  const before = computeMasonryGeometry(buildPackInput(items, null, params));
 
-  it("without the anchor, the grown tile jumps to the far-left window", () => {
+  it("without the footprint, the grown tile jumps to the far-left window", () => {
     const geo = computeMasonryGeometry(
       buildPackInput(items, null, { ...params, spanOverrides: { 13: 2 } }),
     );
@@ -292,12 +291,16 @@ describe("resize re-anchor keeps a widening tile in place (no row-wrap)", () => 
     expect(startCol).toBe(0);
   });
 
-  it("with the anchor, it stays at the right edge, shifted left to fit", () => {
+  it("with the 2D footprint, it stays at the right edge and exact top", () => {
     const geo = computeMasonryGeometry(
       buildPackInput(items, null, {
         ...params,
-        spanOverrides: { 13: 2 },
-        columnAnchor: { id: 13, startCol: 3 },
+        gestureFootprint: {
+          id: 13,
+          span: 2,
+          startCol: 3,
+          top: before.ys[anchorIdx],
+        },
       }),
     );
     const startCol = Math.round(geo.xs[anchorIdx] / (geo.columnWidth + 16));
@@ -305,17 +308,18 @@ describe("resize re-anchor keeps a widening tile in place (no row-wrap)", () => 
     // stays flush against column 4.
     expect(startCol).toBe(2);
     expect(startCol + geo.spans[anchorIdx]).toBe(geo.columnCount);
+    expect(geo.ys[anchorIdx]).toBe(before.ys[anchorIdx]);
   });
 });
 
-describe("drag re-anchor keeps the dragged tile's slot under the pointer", () => {
+describe("drag footprint keeps the dragged tile's slot under the pointer", () => {
   // The reorder artefact, reproduced: a 6-column grid of near-uniform tiles
   // whose placed heights alternate 126/132px (the 6px aspect jitter a real
   // feed has). On a longer downward reorder the accumulated height imbalance
   // makes the greedy shortest-column search land the dragged tile's reserved
   // slot one column right of the tile it was dropped onto — the "empty space
-  // appears bottom-right of where I'm dragging" report. The column anchor,
-  // pinned to the hovered tile's column, cancels the drift.
+  // appears bottom-right of where I'm dragging" report. The 2D footprint,
+  // pinned to the hovered tile's column and top, cancels the drift.
   const params = {
     containerWidth: 1440,
     columnGap: 16,
@@ -337,18 +341,23 @@ describe("drag re-anchor keeps the dragged tile's slot under the pointer", () =>
   const reordered = reorderWithinList(feed, map, draggedId, hoveredId)!;
   const newDraggedIdx = reordered.findIndex((it) => it.id === draggedId);
 
-  it("without the anchor, the dragged slot drifts a column off the drop target", () => {
+  it("without the footprint, the dragged slot drifts a column off the drop target", () => {
     const geo = computeMasonryGeometry(buildPackInput(reordered, null, params));
     // Greedy places it in the shortest column, which the height jitter has
     // pushed one column right of where the pointer is.
     expect(colOf(geo, newDraggedIdx)).not.toBe(hoveredCol);
   });
 
-  it("with the anchor, the dragged slot lands exactly on the hovered column", () => {
+  it("with the 2D footprint, the dragged slot lands exactly on the hovered column", () => {
     const geo = computeMasonryGeometry(
       buildPackInput(reordered, null, {
         ...params,
-        columnAnchor: { id: draggedId, startCol: hoveredCol },
+        gestureFootprint: {
+          id: draggedId,
+          span: 1,
+          startCol: hoveredCol,
+          top: geo0.ys[27],
+        },
       }),
     );
     expect(colOf(geo, newDraggedIdx)).toBe(hoveredCol);

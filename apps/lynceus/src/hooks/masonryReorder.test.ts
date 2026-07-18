@@ -1,12 +1,17 @@
 import { describe, it, expect } from "vitest";
-import { buildIndexMap, reorderWithinList } from "./masonryReorder";
+import {
+  buildIndexMap,
+  reorderAtSpatialTarget,
+  reorderWithinList,
+  spatialTargetId,
+} from "./masonryReorder";
 
 /**
- * T3-3 drag-swap reorder tests.
+ * Commit-time reorder tests.
  *
- * `reorderWithinList` replaces the two O(N) `findIndex` scans a hover-swap
- * used to pay with an O(1) map lookup, and patches the map incrementally so
- * a whole drag builds it once. These tests lock two things: the reordered
+ * `reorderWithinList` remains the insertion primitive. Gesture frames no
+ * longer call it; `reorderAtSpatialTarget` invokes it once at release from
+ * the final occupancy rectangle. These tests lock the reordered
  * output matches a `findIndex`-based reference, and the incrementally-patched
  * map stays correct across an arbitrary sequence of swaps (the property that
  * makes reusing it instead of rebuilding safe).
@@ -88,5 +93,68 @@ describe("reorderWithinList", () => {
       expect(freshMapMatches(next!, map)).toBe(true);
       order = next!;
     }
+  });
+});
+
+describe("spatial release target", () => {
+  const placements = [
+    { itemData: { id: 1 }, x: 0, y: 0, width: 100, height: 100 },
+    { itemData: { id: 2 }, x: 100, y: 0, width: 100, height: 100 },
+    { itemData: { id: 3 }, x: 0, y: 100, width: 100, height: 100 },
+  ];
+
+  it("uses maximum rectangle overlap, not feed-index distance", () => {
+    expect(
+      spatialTargetId(placements, 1, {
+        x: 115,
+        y: 10,
+        width: 80,
+        height: 80,
+      }),
+    ).toBe(2);
+  });
+
+  it("performs exactly one stable-id insertion at release", () => {
+    const base = list(3);
+    expect(
+      reorderAtSpatialTarget(base, placements, 1, {
+        x: 5,
+        y: 115,
+        width: 80,
+        height: 80,
+      })?.map((item) => item.id),
+    ).toEqual([2, 3, 1]);
+  });
+
+  it("keeps the order when the tile is dropped over its source slot", () => {
+    const base = list(3);
+    expect(
+      reorderAtSpatialTarget(base, placements, 1, {
+        x: 10,
+        y: 10,
+        width: 80,
+        height: 80,
+      }),
+    ).toBeNull();
+  });
+
+  it("targets the pre-gesture slot rather than a neighbour displaced by the reservation", () => {
+    const base = list(3);
+    const dropRect = { x: 130, y: 10, width: 80, height: 80 };
+    const displaced = [
+      placements[0],
+      { ...placements[1], x: 300 },
+      { ...placements[2], x: 200, y: 0 },
+    ];
+
+    expect(spatialTargetId(placements, 1, dropRect)).toBe(2);
+    // Once the obstacle moves id 2 away, scoring the preview geometry picks
+    // id 3 even though the user dropped on id 2's original slot.
+    expect(spatialTargetId(displaced, 1, dropRect)).toBe(3);
+    expect(
+      reorderAtSpatialTarget(base, placements, 1, dropRect)?.map(
+        (item) => item.id,
+      ),
+    ).toEqual([2, 1, 3]);
   });
 });

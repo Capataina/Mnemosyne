@@ -24,6 +24,12 @@ import { formatApiError } from "./apiError";
 const PLACEHOLDER_WIDTH = 400;
 const PLACEHOLDER_HEIGHT = 400;
 
+function positiveDimension(value: number | null | undefined, fallback: number) {
+  return typeof value === "number" && Number.isFinite(value) && value > 0
+    ? value
+    : fallback;
+}
+
 /**
  * Map one compact manifest wire row (from `get_feed_manifest` or a
  * `feed-delta` event) into the grid's `FeedItem` shape. Exported so the
@@ -44,8 +50,8 @@ export function mapFeedManifestRow(row: FeedManifestRowDTO): FeedItem {
       ? convertFileSrc(row.thumbnail_path as string)
       : undefined,
     hasThumbnail,
-    width: row.width ?? PLACEHOLDER_WIDTH,
-    height: row.height ?? PLACEHOLDER_HEIGHT,
+    width: positiveDimension(row.width, PLACEHOLDER_WIDTH),
+    height: positiveDimension(row.height, PLACEHOLDER_HEIGHT),
     manualColSpan: row.manual_col_span ?? null,
   };
 }
@@ -90,8 +96,8 @@ function mapImageDetail(img: ImageData): ImageItem {
       ? convertFileSrc(img.thumbnail_path as string)
       : undefined,
     hasThumbnail,
-    width: img.width ?? PLACEHOLDER_WIDTH,
-    height: img.height ?? PLACEHOLDER_HEIGHT,
+    width: positiveDimension(img.width, PLACEHOLDER_WIDTH),
+    height: positiveDimension(img.height, PLACEHOLDER_HEIGHT),
     tags: img.tags,
     manualColSpan: img.manual_col_span ?? null,
   };
@@ -269,8 +275,8 @@ function mapImageSearchResult(res: {
     thumbnailUrl: res.thumbnail_path
       ? convertFileSrc(res.thumbnail_path)
       : convertFileSrc(getThumbnailPath(res.id)),
-    width: res.width ?? PLACEHOLDER_WIDTH,
-    height: res.height ?? PLACEHOLDER_HEIGHT,
+    width: positiveDimension(res.width, PLACEHOLDER_WIDTH),
+    height: positiveDimension(res.height, PLACEHOLDER_HEIGHT),
     score: res.score,
     name: res.path.split(/[\\/]/).pop() ?? res.path,
   };

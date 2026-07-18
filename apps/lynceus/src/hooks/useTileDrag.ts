@@ -1,11 +1,18 @@
 import { useCallback, useEffect, useRef, useState, type RefObject } from "react";
 import type { FeedItem } from "../types";
-import type { MasonryItemPlacement } from "../components/masonryPacking";
-import { buildIndexMap, reorderWithinList } from "./masonryReorder";
+import {
+  type MasonryGestureFootprint,
+  type MasonryGeometry,
+  type MasonryItemPlacement,
+} from "../components/masonryPacking";
+import {
+  reorderAtSpatialTarget,
+  type SpatialPlacement,
+  type SpatialRect,
+} from "./masonryReorder";
 
-/** Pixels of movement before a pointer-down on a tile counts as a drag
- *  rather than a click - below this, releasing still fires onItemClick. */
 const DRAG_THRESHOLD_PX = 6;
+const GESTURE_SETTLE_MS = 400;
 
 interface UseTileDragInput {
   enabled: boolean;
@@ -13,27 +20,38 @@ interface UseTileDragInput {
   placementsRef: RefObject<MasonryItemPlacement[]>;
   placementByIdRef: RefObject<Map<number, MasonryItemPlacement>>;
   tileElementsRef: RefObject<Map<number, HTMLElement>>;
-  /** Live column width + gap, so a hover-swap can map the hovered tile's x to
-   *  a column index for the pack pin (keeps the dragged tile's reserved slot
-   *  under the pointer instead of drifting to the greedy-shortest column). */
   columnWidthRef: RefObject<number>;
+  columnCountRef: RefObject<number>;
   columnGap: number;
-  /** Fired once on drop with the complete new id ordering. */
   onReorder?: (orderedIds: number[]) => void;
-  /** Called on release so the click that follows a drag doesn't select. */
   suppressClick: () => void;
 }
 
+interface DragBase {
+  id: number;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  span: number;
+  pointerX: number;
+  pointerY: number;
+}
+
+function sameIdOrder(a: readonly FeedItem[], b: readonly FeedItem[]): boolean {
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) {
+    if (a[i].id !== b[i].id) return false;
+  }
+  return true;
+}
+
 /**
- * Drag-to-reorder as a pointer-event state machine (native HTML5 DnD
- * fights Framer Motion's `layout` animation).
- *
- * The dragged tile's continuous x/y is an imperative translate3d on its
- * wrapper, coalesced to one requestAnimationFrame write at most. React only
- * receives `workingOrder` when the pointer enters a different rendered tile,
- * because that discrete hover swap is the point where the pack must change.
- * DOM hit-testing replaces the old O(n) placement scan on every move, which
- * keeps the frame path independent of a 100k-image library's total size.
+ * Spatial drag transaction. Pointer frames publish one stable-id 2D obstacle
+ * for neighbour packing and imperatively translate only the active tile's
+ * inner wrapper. The wrapper is a cosmetic ghost; MasonryAnchor remains the
+ * committed-geometry and telemetry owner. A single array insertion is
+ * derived from the pre-gesture spatial snapshot on release.
  */
 export function useTileDrag(input: UseTileDragInput) {
   const {
@@ -43,327 +61,406 @@ export function useTileDrag(input: UseTileDragInput) {
     placementByIdRef,
     tileElementsRef,
     columnWidthRef,
+    columnCountRef,
     columnGap,
   } = input;
 
+  const [pressedId, setPressedId] = useState<number | null>(null);
   const [dragItemId, setDragItemId] = useState<number | null>(null);
-  // The column the dragged tile's reserved slot is pinned to — the column of
-  // the tile the footprint currently hovers. Fed to the pack as a column
-  // anchor so the open slot tracks the pointer instead of drifting to whatever
-  // column the greedy search finds shortest (a col of drift telemetry caught).
-  // Null until the first hover-swap, and reset on drop.
-  const [dragAnchorCol, setDragAnchorCol] = useState<number | null>(null);
-  // The dragged tile's committed column span, captured at grab. Fed back
-  // into the preview pack as an explicit span override so a multi-span tile
-  // keeps its footprint for the whole drag — independent of whether the
-  // active feed slice still carries the tile's `manualColSpan` (the
-  // similar/search feeds drop it; only reorder's gating hides that today).
-  const [dragItemSpan, setDragItemSpan] = useState(1);
-  const [workingOrder, setWorkingOrder] = useState<FeedItem[] | null>(null);
+  const [gestureFootprint, setGestureFootprint] =
+    useState<MasonryGestureFootprint | null>(null);
+  // Held only across the release render until the parent acknowledges the
+  // same stable-id ordering. It also gives an absent onReorder callback a
+  // useful in-component session reorder instead of an immediate snap-back.
+  const [committedOrder, setCommittedOrder] = useState<FeedItem[] | null>(null);
 
-  const dragStartPosRef = useRef<{ x: number; y: number } | null>(null);
-  // Packed slot position + pointer position captured at grab, so the
-  // pointer-to-tile offset stays fixed for the whole drag.
-  const dragBaseRef = useRef<{
-    x0: number;
-    y0: number;
-    startX: number;
-    startY: number;
-  } | null>(null);
-  const latestPointerRef = useRef<{ x: number; y: number } | null>(null);
+  const baseRef = useRef<DragBase | null>(null);
+  const movedRef = useRef(false);
+  const latestRectRef = useRef<SpatialRect | null>(null);
+  const latestFootprintRef = useRef<MasonryGestureFootprint | null>(null);
+  const dropTargetsRef = useRef<SpatialPlacement[]>([]);
+  const releasePendingRef = useRef(false);
+  const settlePendingRef = useRef(false);
+  const settleReadyRef = useRef(false);
+  const settleTimerRef = useRef<number | null>(null);
   const pendingPointerRef = useRef<{ x: number; y: number } | null>(null);
-  const animationFrameRef = useRef<number | null>(null);
-  const dragMovedRef = useRef(false);
-  const lastHoveredIdRef = useRef<number | null>(null);
-  const workingOrderRef = useRef<FeedItem[] | null>(null);
-  // id→index map over the working order, built once per drag and patched on
-  // each swap (see masonryReorder). Kills the two O(N) findIndex scans that
-  // a hover-swap used to pay. `indexMapBaseRef` is the array the live map
-  // describes, so a mid-drag base change (a delta) triggers a rebuild.
-  const idToIndexRef = useRef<Map<number, number> | null>(null);
-  const indexMapBaseRef = useRef<FeedItem[] | null>(null);
-  const itemsRef = useRef(items);
-  itemsRef.current = items;
+  const frameRef = useRef<number | null>(null);
+  const committedOrderRef = useRef<FeedItem[] | null>(null);
   const onReorderRef = useRef(input.onReorder);
   onReorderRef.current = input.onReorder;
   const suppressRef = useRef(input.suppressClick);
   suppressRef.current = input.suppressClick;
 
   const writeDragVisual = useCallback(
-    (id: number, pointer: { x: number; y: number }) => {
+    (id: number, rect: SpatialRect) => {
       const node = tileElementsRef.current.get(id);
       const placement = placementByIdRef.current.get(id);
-      const base = dragBaseRef.current;
-      if (!node || !placement || !base) return;
-
-      const desiredX = base.x0 + (pointer.x - base.startX);
-      const desiredY = base.y0 + (pointer.y - base.startY);
-      node.style.transform = `translate3d(${desiredX - placement.x}px, ${
-        desiredY - placement.y
+      if (!node || !placement) return;
+      node.style.transition = "none";
+      node.style.willChange = "transform";
+      node.style.transform = `translate3d(${rect.x - placement.x}px, ${
+        rect.y - placement.y
       }px, 0)`;
     },
     [placementByIdRef, tileElementsRef],
-  );
-
-  const reorderOverPoint = useCallback(
-    (id: number) => {
-      // Sample a span×span grid of points across the dragged tile's body —
-      // one dot per cell (a 2-wide tile is probed at 4 points, a 3-wide at 9,
-      // a 1-wide at its single centre). Hit-testing only the cursor pixel (or
-      // even the tile centre) fails for a big tile: telemetry showed the
-      // centre landed on EMPTY space 79% of a drag, so nothing displaced. Each
-      // cell that overlaps another tile votes for it; the MOST-overlapped tile
-      // wins, so the swap is driven by the tile's whole footprint, not a
-      // single point — and the pack then reflows to make room for the span.
-      const node = tileElementsRef.current.get(id);
-      const placement = placementByIdRef.current.get(id);
-      if (!node) {
-        lastHoveredIdRef.current = null;
-        return;
-      }
-      const rect = node.getBoundingClientRect();
-      const span = Math.max(1, placement?.colSpan ?? 1);
-
-      const votes = new Map<number, number>();
-      for (let cx = 0; cx < span; cx++) {
-        for (let cy = 0; cy < span; cy++) {
-          const px = rect.left + rect.width * ((cx + 0.5) / span);
-          const py = rect.top + rect.height * ((cy + 0.5) / span);
-          for (const hit of document.elementsFromPoint(px, py)) {
-            const tile = hit.closest<HTMLElement>("[data-masonry-id]");
-            if (!tile) continue;
-            const cand = Number(tile.dataset.masonryId);
-            if (Number.isFinite(cand) && cand !== id) {
-              votes.set(cand, (votes.get(cand) ?? 0) + 1);
-              break; // first real tile beneath this cell
-            }
-          }
-        }
-      }
-
-      // The tile the dragged footprint overlaps most; ties break to the
-      // first seen (Map preserves insertion = scan order, top-left first).
-      let hoveredId: number | null = null;
-      let bestVotes = 0;
-      for (const [cand, v] of votes) {
-        if (v > bestVotes) {
-          bestVotes = v;
-          hoveredId = cand;
-        }
-      }
-
-      if (hoveredId === null || hoveredId === id) {
-        lastHoveredIdRef.current = null;
-        return;
-      }
-      // Once a tile has caused a swap, remaining over that same DOM target
-      // must not repeatedly swap the pair back and forth every frame. (The
-      // anchor column is tracked separately, every frame, in updateAnchorCol —
-      // this guard no longer gates it, so a wide footprint parked over one
-      // neighbour can't freeze the slot under the pointer.)
-      if (hoveredId === lastHoveredIdRef.current) return;
-      lastHoveredIdRef.current = hoveredId;
-
-      const base = workingOrderRef.current ?? itemsRef.current ?? [];
-      // Build the id→index map lazily on the first swap (not at pointer-down:
-      // a plain click never pays for it, and the drag threshold means the
-      // tile hasn't moved yet, so the one-time O(N) build is invisible), or
-      // rebuild it if the base order changed identity beneath us (a mid-drag
-      // delta). Each swap then patches the map in O(window), replacing the two
-      // O(N) findIndex scans the hover path used to pay.
-      if (idToIndexRef.current === null || indexMapBaseRef.current !== base) {
-        idToIndexRef.current = buildIndexMap(base);
-        indexMapBaseRef.current = base;
-      }
-      const next = reorderWithinList(base, idToIndexRef.current, id, hoveredId);
-      if (!next) return;
-      // The map now describes `next`; track it as the base so the next swap
-      // reuses the patched map instead of rebuilding, and update the
-      // imperative ref before scheduling React so another pointer frame
-      // cannot derive a second reorder from stale item positions.
-      indexMapBaseRef.current = next;
-      workingOrderRef.current = next;
-      setWorkingOrder(next);
-    },
-    [columnGap, columnWidthRef, placementByIdRef, tileElementsRef],
-  );
-
-  // Track the anchor column from the dragged tile's CENTRE every frame,
-  // decoupled from the hover-swap. The old path set the anchor only inside
-  // reorderOverPoint, after its `lastHovered` guard — so a wide footprint that
-  // kept voting the same neighbour (or its own vacated hole) starved the
-  // setter and the anchor froze for the rest of the drag (the "3×3 completely
-  // broken" freeze; telemetry logged 0 tiles moving for 5.37s). Here it is
-  // pure pointer arithmetic — the tile's live local centre → its column — so
-  // it can neither self-occlude nor freeze, and works identically for span
-  // 1/2/3. The packer reads this as a CENTRE anchor (edge=2), spreading the
-  // footprint around the pointer.
-  const updateAnchorCol = useCallback(
-    (id: number, pointer: { x: number; y: number }) => {
-      const base = dragBaseRef.current;
-      const placement = placementByIdRef.current.get(id);
-      const colWidth = columnWidthRef.current ?? 0;
-      if (!base || !placement || colWidth <= 0) return;
-      const desiredX = base.x0 + (pointer.x - base.startX); // live local left
-      const centreX = desiredX + placement.width / 2;
-      const stride = colWidth + columnGap;
-      const centreCol = Math.max(0, Math.floor(centreX / stride));
-      setDragAnchorCol((prev) => (prev === centreCol ? prev : centreCol));
-    },
-    [columnGap, columnWidthRef, placementByIdRef],
-  );
-
-  const processPointer = useCallback(
-    (id: number, pointer: { x: number; y: number }) => {
-      latestPointerRef.current = pointer;
-      writeDragVisual(id, pointer);
-      updateAnchorCol(id, pointer);
-      // reorderOverPoint samples the dragged tile's whole footprint (span×span
-      // dots) to pick the swap target; it no longer touches the anchor.
-      reorderOverPoint(id);
-    },
-    [reorderOverPoint, updateAnchorCol, writeDragVisual],
-  );
-
-  const cancelScheduledFrame = useCallback(() => {
-    if (animationFrameRef.current !== null) {
-      cancelAnimationFrame(animationFrameRef.current);
-      animationFrameRef.current = null;
-    }
-  }, []);
-
-  const schedulePointer = useCallback(
-    (id: number, pointer: { x: number; y: number }) => {
-      pendingPointerRef.current = pointer;
-      if (animationFrameRef.current !== null) return;
-      animationFrameRef.current = requestAnimationFrame(() => {
-        animationFrameRef.current = null;
-        const pending = pendingPointerRef.current;
-        pendingPointerRef.current = null;
-        if (pending) processPointer(id, pending);
-      });
-    },
-    [processPointer],
   );
 
   const clearTileVisual = useCallback(
     (id: number) => {
       const node = tileElementsRef.current.get(id);
       if (!node) return;
+      node.style.transition = "";
       node.style.transform = "";
-      node.style.pointerEvents = "";
       node.style.willChange = "";
     },
     [tileElementsRef],
   );
 
+  // Reconcile the release bridge against the parent order and merge a
+  // concurrent feed delta by id. No gesture state ever holds an array index.
+  useEffect(() => {
+    const local = committedOrderRef.current;
+    if (!local || !items) return;
+    if (sameIdOrder(local, items)) {
+      committedOrderRef.current = null;
+      setCommittedOrder(null);
+      return;
+    }
+
+    const currentById = new Map(items.map((item) => [item.id, item]));
+    const localIds = new Set(local.map((item) => item.id));
+    const merged = local
+      .map((item) => currentById.get(item.id))
+      .filter((item): item is FeedItem => item !== undefined);
+    for (const item of items) {
+      if (!localIds.has(item.id)) merged.push(item);
+    }
+    const identityChanged =
+      merged.length !== local.length ||
+      merged.some((item, index) => item !== local[index]);
+    if (identityChanged) {
+      committedOrderRef.current = merged;
+      setCommittedOrder(merged);
+    }
+  }, [items]);
+
+  const processPointer = useCallback(
+    (pointer: { x: number; y: number }, force = false) => {
+      const base = baseRef.current;
+      const columnWidth = columnWidthRef.current;
+      const columnCount = columnCountRef.current;
+      if (!base || columnWidth <= 0 || columnCount <= 0) return;
+
+      const desiredX = base.x + (pointer.x - base.pointerX);
+      const desiredY = Math.max(0, base.y + (pointer.y - base.pointerY));
+      const rect: SpatialRect = {
+        x: desiredX,
+        y: desiredY,
+        width: base.width,
+        height: base.height,
+      };
+      latestRectRef.current = rect;
+      writeDragVisual(base.id, rect);
+      const stride = columnWidth + columnGap;
+      const centreCol = Math.floor((desiredX + base.width / 2) / stride);
+      const footprint: MasonryGestureFootprint = {
+        id: base.id,
+        span: base.span,
+        startCol: centreCol,
+        top: desiredY,
+        edge: 2,
+      };
+      latestFootprintRef.current = footprint;
+      setGestureFootprint((previous) =>
+        !force &&
+        previous &&
+        previous.id === footprint.id &&
+        previous.span === footprint.span &&
+        previous.startCol === footprint.startCol &&
+        previous.top === footprint.top
+          ? previous
+          : footprint,
+      );
+    },
+    [columnCountRef, columnGap, columnWidthRef, writeDragVisual],
+  );
+
+  const cancelFrame = useCallback(() => {
+    if (frameRef.current !== null) {
+      cancelAnimationFrame(frameRef.current);
+      frameRef.current = null;
+    }
+  }, []);
+
+  const schedulePointer = useCallback(
+    (pointer: { x: number; y: number }) => {
+      pendingPointerRef.current = pointer;
+      if (frameRef.current !== null) return;
+      frameRef.current = requestAnimationFrame(() => {
+        frameRef.current = null;
+        const pending = pendingPointerRef.current;
+        pendingPointerRef.current = null;
+        if (pending) processPointer(pending);
+      });
+    },
+    [processPointer],
+  );
+
+  const flushPointer = useCallback(
+    (pointer: { x: number; y: number }, force = false) => {
+      cancelFrame();
+      pendingPointerRef.current = null;
+      processPointer(pointer, force);
+    },
+    [cancelFrame, processPointer],
+  );
+
   const onDragHandlePointerDown = useCallback(
-    (id: number, e: React.PointerEvent<HTMLDivElement>) => {
-      if (!enabled) return;
+    (id: number, event: React.PointerEvent<HTMLDivElement>) => {
+      if (
+        !enabled ||
+        pressedId !== null ||
+        baseRef.current !== null ||
+        releasePendingRef.current ||
+        settlePendingRef.current
+      ) {
+        return;
+      }
       const placement =
         placementByIdRef.current.get(id) ??
         placementsRef.current.find((candidate) => candidate.itemData.id === id);
-      dragStartPosRef.current = { x: e.clientX, y: e.clientY };
-      dragBaseRef.current = {
-        x0: placement?.x ?? 0,
-        y0: placement?.y ?? 0,
-        startX: e.clientX,
-        startY: e.clientY,
+      if (!placement || placement.isSelected) return;
+      baseRef.current = {
+        id,
+        x: placement.x,
+        y: placement.y,
+        width: placement.width,
+        height: placement.height,
+        span: placement.colSpan,
+        pointerX: event.clientX,
+        pointerY: event.clientY,
       };
-      latestPointerRef.current = { x: e.clientX, y: e.clientY };
-      dragMovedRef.current = false;
-      lastHoveredIdRef.current = null;
-      workingOrderRef.current = null;
-      idToIndexRef.current = null;
-      indexMapBaseRef.current = null;
-      setDragAnchorCol(null);
-      setDragItemSpan(placement?.colSpan ?? 1);
-      setDragItemId(id);
+      movedRef.current = false;
+      latestRectRef.current = null;
+      latestFootprintRef.current = null;
+      dropTargetsRef.current = placementsRef.current.map((candidate) => ({
+        itemData: { id: candidate.itemData.id },
+        x: candidate.x,
+        y: candidate.y,
+        width: candidate.width,
+        height: candidate.height,
+      }));
+      setPressedId(id);
     },
-    [enabled, placementByIdRef, placementsRef],
+    [enabled, placementByIdRef, placementsRef, pressedId],
   );
 
   useEffect(() => {
-    if (dragItemId === null) return;
+    if (pressedId === null) return;
 
-    const handleMove = (e: PointerEvent) => {
-      const start = dragStartPosRef.current;
-      if (!start) return;
-
-      if (!dragMovedRef.current) {
-        const dx = e.clientX - start.x;
-        const dy = e.clientY - start.y;
-        if (Math.hypot(dx, dy) < DRAG_THRESHOLD_PX) return;
-        dragMovedRef.current = true;
-        const node = tileElementsRef.current.get(dragItemId);
-        if (node) {
-          // Exclude the active wrapper from elementFromPoint so the browser
-          // returns the rendered tile underneath it as the hover target.
-          node.style.pointerEvents = "none";
-          node.style.willChange = "transform";
-        }
+    const handleMove = (event: PointerEvent) => {
+      const base = baseRef.current;
+      if (!base) return;
+      if (!movedRef.current) {
+        const distance = Math.hypot(
+          event.clientX - base.pointerX,
+          event.clientY - base.pointerY,
+        );
+        if (distance < DRAG_THRESHOLD_PX) return;
+        movedRef.current = true;
+        const node = tileElementsRef.current.get(pressedId);
+        if (node) node.style.willChange = "transform";
+        setDragItemId(pressedId);
       }
-
-      schedulePointer(dragItemId, { x: e.clientX, y: e.clientY });
+      schedulePointer({ x: event.clientX, y: event.clientY });
     };
 
-    const handleUp = (e: PointerEvent) => {
-      if (dragMovedRef.current) {
-        cancelScheduledFrame();
-        pendingPointerRef.current = null;
-        processPointer(dragItemId, { x: e.clientX, y: e.clientY });
+    const finish = (event: PointerEvent) => {
+      if (movedRef.current) {
+        // Force a new object even if pointerup equals the last move. The
+        // engine must commit this exact obstacle generation before it may be
+        // cleared into the dense release pack.
+        flushPointer({ x: event.clientX, y: event.clientY }, true);
+        releasePendingRef.current = true;
         suppressRef.current();
-        const finalOrder = workingOrderRef.current;
-        if (finalOrder) onReorderRef.current?.(finalOrder.map((item) => item.id));
+        setPressedId(null);
+        pendingPointerRef.current = null;
+        return;
       }
 
-      clearTileVisual(dragItemId);
+      setGestureFootprint(null);
       setDragItemId(null);
-      setWorkingOrder(null);
-      setDragAnchorCol(null);
-      workingOrderRef.current = null;
-      idToIndexRef.current = null;
-      indexMapBaseRef.current = null;
-      dragStartPosRef.current = null;
-      dragBaseRef.current = null;
-      latestPointerRef.current = null;
-      lastHoveredIdRef.current = null;
-      dragMovedRef.current = false;
+      setPressedId(null);
+      baseRef.current = null;
+      movedRef.current = false;
+      latestRectRef.current = null;
+      latestFootprintRef.current = null;
+      dropTargetsRef.current = [];
+      pendingPointerRef.current = null;
+    };
+
+    const cancel = () => {
+      cancelFrame();
+      releasePendingRef.current = false;
+      settlePendingRef.current = false;
+      settleReadyRef.current = false;
+      const id = baseRef.current?.id;
+      if (id != null) clearTileVisual(id);
+      setGestureFootprint(null);
+      setDragItemId(null);
+      setPressedId(null);
+      baseRef.current = null;
+      movedRef.current = false;
+      latestRectRef.current = null;
+      latestFootprintRef.current = null;
+      dropTargetsRef.current = [];
+      pendingPointerRef.current = null;
     };
 
     window.addEventListener("pointermove", handleMove);
-    window.addEventListener("pointerup", handleUp, { once: true });
+    window.addEventListener("pointerup", finish, { once: true });
+    window.addEventListener("pointercancel", cancel, { once: true });
     return () => {
       window.removeEventListener("pointermove", handleMove);
-      window.removeEventListener("pointerup", handleUp);
-      cancelScheduledFrame();
+      window.removeEventListener("pointerup", finish);
+      window.removeEventListener("pointercancel", cancel);
+      cancelFrame();
       pendingPointerRef.current = null;
     };
   }, [
-    cancelScheduledFrame,
+    cancelFrame,
     clearTileVisual,
-    dragItemId,
-    processPointer,
+    flushPointer,
+    placementsRef,
+    pressedId,
     schedulePointer,
     tileElementsRef,
   ]);
 
-  // A hover swap changes the packed anchor. Rebase the imperative transform
-  // against that new slot before paint so the dragged tile never eases or
-  // jumps away from the pointer while the rest of the grid animates around it.
+  const onGestureGeometryCommitted = useCallback(
+    (
+      committedFootprint: MasonryGestureFootprint,
+      _geometry: MasonryGeometry,
+      committedItems: FeedItem[],
+    ) => {
+      const expected = latestFootprintRef.current;
+      const rect = latestRectRef.current;
+      if (
+        !releasePendingRef.current ||
+        !expected ||
+        !rect ||
+        committedFootprint.id !== expected.id ||
+        committedFootprint.span !== expected.span ||
+        committedFootprint.startCol !== expected.startCol ||
+        committedFootprint.top !== expected.top ||
+        (committedFootprint.edge ?? 0) !== (expected.edge ?? 0)
+      ) {
+        return;
+      }
+
+      // The committed obstacle geometry has already displaced every tile
+      // away from the reserved rect, so overlap scoring against it always
+      // degenerates to a nearest-displaced-neighbour guess. Target the stable
+      // pre-gesture snapshot instead: the tile under the drop rect maps back
+      // to the feed slot the user actually indicated.
+      const next = reorderAtSpatialTarget(
+        committedItems,
+        dropTargetsRef.current,
+        expected.id,
+        rect,
+      );
+      if (next) {
+        committedOrderRef.current = next;
+        setCommittedOrder(next);
+        onReorderRef.current?.(next.map((item) => item.id));
+      }
+
+      releasePendingRef.current = false;
+      settlePendingRef.current = true;
+      settleReadyRef.current = false;
+      setGestureFootprint(null);
+      latestFootprintRef.current = null;
+    },
+    [],
+  );
+
+  const onGestureSettled = useCallback(() => {
+    if (settlePendingRef.current) settleReadyRef.current = true;
+  }, []);
+
+  // A discrete obstacle/dense pack can move the active anchor beneath the
+  // floating wrapper. Rebase the wrapper against the latest committed anchor
+  // before paint so its screen-space rectangle remains pointer-exact.
   const syncVisual = useCallback(() => {
-    const pointer = latestPointerRef.current;
-    if (dragItemId !== null && dragMovedRef.current && pointer) {
-      writeDragVisual(dragItemId, pointer);
+    const base = baseRef.current;
+    const rect = latestRectRef.current;
+    if (base && rect && movedRef.current) writeDragVisual(base.id, rect);
+  }, [writeDragVisual]);
+
+  // Once the dense release pack is committed, snap the hidden anchor behind
+  // the ghost, then animate the one cosmetic delta back to zero. The tile
+  // therefore slides from the literal drop rectangle to its committed slot;
+  // it never exposes the packer's unrelated intermediate anchor.
+  const finishSettlingVisual = useCallback(() => {
+    if (!settlePendingRef.current || !settleReadyRef.current) return;
+    const base = baseRef.current;
+    const rect = latestRectRef.current;
+    if (!base || !rect) return;
+
+    settlePendingRef.current = false;
+    settleReadyRef.current = false;
+    const id = base.id;
+    const node = tileElementsRef.current.get(id);
+    const placement = placementByIdRef.current.get(id);
+
+    const finish = () => {
+      if (settleTimerRef.current !== null) {
+        window.clearTimeout(settleTimerRef.current);
+        settleTimerRef.current = null;
+      }
+      clearTileVisual(id);
+      setDragItemId(null);
+      baseRef.current = null;
+      movedRef.current = false;
+      latestRectRef.current = null;
+      latestFootprintRef.current = null;
+      dropTargetsRef.current = [];
+    };
+
+    if (!node || !placement) {
+      finish();
+      return;
     }
-  }, [dragItemId, writeDragVisual]);
+
+    writeDragVisual(id, rect);
+    // The rebase above happens in this layout effect. Force that one active
+    // wrapper to establish its start frame before enabling the settle curve.
+    void node.offsetWidth;
+    node.style.transition = `transform ${GESTURE_SETTLE_MS}ms ease-in-out`;
+    node.style.transform = "translate3d(0px, 0px, 0)";
+    settleTimerRef.current = window.setTimeout(
+      finish,
+      GESTURE_SETTLE_MS + 50,
+    );
+  }, [clearTileVisual, placementByIdRef, tileElementsRef, writeDragVisual]);
+
+  useEffect(
+    () => () => {
+      if (settleTimerRef.current !== null) {
+        window.clearTimeout(settleTimerRef.current);
+      }
+    },
+    [],
+  );
 
   return {
     dragItemId,
-    dragItemSpan,
-    dragAnchorCol,
-    workingOrder,
+    gestureFootprint: gestureFootprint ?? undefined,
+    committedOrder,
     onDragHandlePointerDown,
+    onGestureGeometryCommitted,
+    onGestureSettled,
     syncVisual,
+    finishSettlingVisual,
   };
 }

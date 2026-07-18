@@ -1,5 +1,6 @@
 import {
   computeMasonryGeometry,
+  type MasonryPackInput,
   type MasonryPackRequest,
   type MasonryPackResponse,
 } from "./masonryPacking";
@@ -26,11 +27,38 @@ interface DedicatedWorkerScope {
 
 const ctx = self as unknown as DedicatedWorkerScope;
 
+let cachedRevision = -1;
+let cachedInput: MasonryPackInput | null = null;
+
 ctx.onmessage = (event) => {
-  const { gen, input } = event.data;
+  const request = event.data;
+  let input: MasonryPackInput;
+  if (request.kind === "full") {
+    cachedRevision = request.revision;
+    cachedInput = request.input;
+    input = request.input;
+  } else {
+    if (!cachedInput || cachedRevision !== request.revision) {
+      // The client only emits reuse after a full request for this revision.
+      // Throwing deliberately routes an impossible protocol violation through
+      // the existing worker-failure fallback instead of silently packing the
+      // wrong catalogue revision.
+      throw new Error("masonry worker received an unknown base revision");
+    }
+    input = {
+      ...cachedInput,
+      gestureFootprint: request.gestureFootprint,
+    };
+  }
+
   const geometry = computeMasonryGeometry(input);
   // Transfer the result buffers back out — no copy on either side.
-  ctx.postMessage({ gen, geometry }, [
+  const response: MasonryPackResponse = {
+    gen: request.gen,
+    revision: request.revision,
+    geometry,
+  };
+  ctx.postMessage(response, [
     geometry.xs.buffer,
     geometry.ys.buffer,
     geometry.widths.buffer,

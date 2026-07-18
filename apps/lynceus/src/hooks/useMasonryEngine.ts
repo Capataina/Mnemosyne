@@ -13,8 +13,10 @@ import {
   computeMasonryGeometry,
   heroPlacement,
   placementAt,
+  type MasonryGestureFootprint,
   type MasonryGeometry,
   type MasonryItemPlacement,
+  type MasonryPackInput,
   type MasonryPackParams,
 } from "../components/masonryPacking";
 import {
@@ -30,18 +32,18 @@ interface MasonryEngineInput {
   verticalGap: number;
   columnCountOverride?: number;
   tileScale?: number;
-  /** id → rounded span, for the resize footprint. */
-  spanOverrides?: Record<number, number>;
-  /** The one tile under an active gesture, pinned to a start column: a
-   *  resizing tile grows in place instead of wrapping to a new row; a dragged
-   *  tile's reserved slot tracks the pointer's column instead of drifting. */
-  columnAnchor?: { id: number; startCol: number; edge?: number };
-  /** The tile currently being drag-reordered — never culled. */
-  dragItemId: number | null;
-  /** True while any tile gesture (drag or resize) is live. Freezes the
-   *  visible set so a mid-gesture reflow can't cull tiles out from under the
-   *  pointer and flicker them back on the next pack. */
-  gestureActive: boolean;
+  /** Stable-id 2D obstacle for the one active drag or resize transaction. */
+  gestureFootprint?: MasonryGestureFootprint;
+  /** Confirms that the current generation committed the exact active
+   * footprint. Drag release uses this barrier before clearing into settle. */
+  onGestureGeometryCommitted?: (
+    footprint: MasonryGestureFootprint,
+    geometry: MasonryGeometry,
+    items: FeedItem[],
+  ) => void;
+  /** Fires after the first accepted no-footprint geometry closes settling.
+   * Active hooks use it to animate their cosmetic ghost to that anchor. */
+  onGestureSettled?: () => void;
   // Shell-owned refs the engine populates so the interaction hooks can
   // read live layout data without re-subscribing on every pointer move.
   containerRef: RefObject<HTMLDivElement | null>;
@@ -56,6 +58,8 @@ export interface MasonryEngine {
   visiblePlacements: MasonryItemPlacement[];
   /** Total grid height in px. */
   height: number;
+  /** A release pack is outstanding. Any accepted newer generation clears it. */
+  settling: boolean;
 }
 
 const VIEWPORT_OVERSCAN_PX = 800;
@@ -121,18 +125,18 @@ export function isCurrentGeneration(
   return resultGen === currentGen;
 }
 
-/** Whether two feed slices carry the same ids in the same order — the guard
- *  for commit-adopt: the just-committed gesture geometry is index-aligned to
- *  its order, so it can only be re-paired with the current feed (skipping a
- *  greedy re-pack) when the orders still match. A concurrent delta-merge that
- *  changed the order fails this and falls through to a normal pack. Pure so
- *  the guard is unit-testable. */
-export function ordersAligned(a: FeedItem[], b: FeedItem[]): boolean {
-  if (a.length !== b.length) return false;
-  for (let i = 0; i < a.length; i++) {
-    if (a[i].id !== b[i].id) return false;
-  }
-  return true;
+export type MasonryGesturePhase = "idle" | "active" | "settling";
+export type MasonryGestureEvent = "activate" | "release" | "commit";
+
+/** Explicit non-stranding release machine. A fresh gesture supersedes an old
+ * settle; an authoritative commit only closes settling, never an active one. */
+export function transitionMasonryGesturePhase(
+  phase: MasonryGesturePhase,
+  event: MasonryGestureEvent,
+): MasonryGesturePhase {
+  if (event === "activate") return "active";
+  if (event === "release") return phase === "active" ? "settling" : phase;
+  return phase === "settling" ? "idle" : phase;
 }
 
 /** Nearest scrolling ancestor, falling back to the document scroller. */
@@ -168,9 +172,23 @@ interface CommittedLayout {
  *  dies mid-flight (its transferred inputs are gone). */
 interface PackContext {
   gen: number;
+  revision: number;
   items: FeedItem[];
   selectedItem: FeedItem | null;
-  params: MasonryPackParams;
+  input: MasonryPackInput;
+}
+
+interface PackInputCache {
+  items: FeedItem[];
+  selectedItem: FeedItem | null;
+  width: number;
+  minItemWidth: number;
+  columnGap: number;
+  verticalGap: number;
+  columnCountOverride: number;
+  tileScale: number;
+  revision: number;
+  input: MasonryPackInput;
 }
 
 const EMPTY_PLACEMENTS: MasonryItemPlacement[] = [];
@@ -178,17 +196,18 @@ const EMPTY_PLACEMENTS: MasonryItemPlacement[] = [];
 /**
  * The headless masonry engine: shortest-column packing (off the main thread
  * via a Web Worker, T3-3) plus viewport virtualization. It owns no
- * interaction state — drag-reorder and drag-resize live in their own hooks
- * and feed only structural state through `spanOverrides` and `dragItemId`.
+ * interaction state — drag-reorder and drag-resize publish one stable-id 2D
+ * footprint, and the engine owns the active → settling → idle hand-off.
  *
  * The pack is asynchronous: the engine holds the committed geometry as flat
  * typed arrays (not 100k placement objects) and materialises placement
  * objects only for the visible window. Requests are generation-tagged so
  * stale results are discarded; the first paint (or a large expansion) shows
  * a synchronous prefix so the grid is never empty; a worker failure falls
- * back to synchronous packing. Continuous gesture pixels never enter this
- * hook: resize width and drag position are imperative writes to one tile,
- * while this engine runs only for structural inputs and rounded footprints.
+ * back to synchronous packing. Gesture frames enter as one stable-id numeric
+ * footprint; catalogue-sized arrays stay cached by base revision. The anchor
+ * renders committed geometry while one active inner wrapper may carry a
+ * pointer-exact cosmetic delta that never enters packing or telemetry.
  */
 export function useMasonryEngine(input: MasonryEngineInput): MasonryEngine {
   const {
@@ -199,10 +218,7 @@ export function useMasonryEngine(input: MasonryEngineInput): MasonryEngine {
     verticalGap,
     columnCountOverride,
     tileScale,
-    spanOverrides,
-    columnAnchor,
-    dragItemId,
-    gestureActive,
+    gestureFootprint,
     containerRef,
     placementsRef,
     placementByIdRef,
@@ -211,6 +227,10 @@ export function useMasonryEngine(input: MasonryEngineInput): MasonryEngine {
   } = input;
 
   const scrollerRef = useRef<HTMLElement | null>(null);
+  const onGestureCommitRef = useRef(input.onGestureGeometryCommitted);
+  onGestureCommitRef.current = input.onGestureGeometryCommitted;
+  const onGestureSettledRef = useRef(input.onGestureSettled);
+  onGestureSettledRef.current = input.onGestureSettled;
   // Holds the pending scroll rAF so at most one viewport update runs per
   // frame and any in-flight frame can be cancelled on cleanup.
   const scrollRafRef = useRef<number | null>(null);
@@ -236,10 +256,14 @@ export function useMasonryEngine(input: MasonryEngineInput): MasonryEngine {
   // safe); `packerRef` lets the pack path reach it between renders.
   const packerRef = useRef<MasonryPacker | null>(null);
   const genRef = useRef(0);
-  // Tracks gestureActive across packs so a true→false transition triggers the
-  // one-shot commit-adopt (re-commit the last gesture layout, skip the greedy
-  // release re-pack). See requestPack.
-  const prevGestureActiveRef = useRef(false);
+  const inputRevisionRef = useRef(0);
+  const inputCacheRef = useRef<PackInputCache | null>(null);
+  // The release transaction is generation-based: active → settling when the
+  // footprint clears, then settling → idle when that final dense pack OR any
+  // newer authoritative generation commits. It cannot strand on supersession.
+  const gesturePhaseRef = useRef<MasonryGesturePhase>("idle");
+  const [gesturePhase, setGesturePhase] =
+    useState<MasonryGesturePhase>("idle");
   const packContextRef = useRef<PackContext | null>(null);
   const layoutRef = useRef<CommittedLayout | null>(null);
   // The full committed height, so a pending prefix can never shrink the
@@ -252,6 +276,17 @@ export function useMasonryEngine(input: MasonryEngineInput): MasonryEngine {
     top: 0,
     bottom: 99999,
   });
+
+  const finishSettling = useCallback(() => {
+    const next = transitionMasonryGesturePhase(
+      gesturePhaseRef.current,
+      "commit",
+    );
+    if (next === gesturePhaseRef.current) return;
+    gesturePhaseRef.current = next;
+    setGesturePhase(next);
+    onGestureSettledRef.current?.();
+  }, []);
 
   // Commit a fresh geometry as the visible layout. `partial` (the prefix)
   // never lowers the committed height, so a small prefix cannot clamp scroll;
@@ -280,97 +315,87 @@ export function useMasonryEngine(input: MasonryEngineInput): MasonryEngine {
     [],
   );
 
-  // Request a pack for the current inputs. Reads the committed layout from a
-  // ref (not state), so it does not re-run on every commit — only on genuine
-  // input changes.
+  // Request the latest geometry. Catalogue-sized arrays are rebuilt only when
+  // the base revision changes; gesture-only renders reuse them and enqueue an
+  // O(1) footprint update in the worker client.
   const requestPack = useCallback(() => {
+    const gestureIsActive = gestureFootprint !== undefined;
+    const priorPhase = gesturePhaseRef.current;
+    const event: MasonryGestureEvent = gestureIsActive
+      ? "activate"
+      : "release";
+    const nextPhase = transitionMasonryGesturePhase(priorPhase, event);
+    const enteredSettling =
+      priorPhase === "active" && nextPhase === "settling";
+    if (nextPhase !== priorPhase) {
+      gesturePhaseRef.current = nextPhase;
+      setGesturePhase(nextPhase);
+    }
+
     const container = containerRef.current;
-    if (!container || !items) return;
+    if (!container || !items) {
+      if (enteredSettling) finishSettling();
+      return;
+    }
     const sel = selectedItem ?? null;
-
-    // Commit-adopt. The instant a gesture ends, the last anchored pack already
-    // IS the layout the user saw — so re-commit that geometry rather than
-    // re-packing greedily, which would relocate the just-dropped / just-grown
-    // tile (the release "jump"). It's safe only while the committed geometry is
-    // still index-aligned to the current feed order, so `ordersAligned` guards
-    // it; a concurrent delta-merge that reordered the feed fails the guard and
-    // falls through to a normal pack. Densification is deferred to the next
-    // genuine steady-state pack (filter / shuffle / delta), where a reflow is
-    // expected anyway — so between a release and that event the grid holds
-    // exactly where the gesture left it. Done synchronously here (not by
-    // holding the anchor for an async generation), so a superseded pack can
-    // never strand the gesture.
-    const justEnded = prevGestureActiveRef.current && !gestureActive;
-    prevGestureActiveRef.current = gestureActive;
-    if (justEnded) {
-      const prev = layoutRef.current;
-      // Adopt only when the committed geometry still describes the current
-      // render: same order (ordersAligned) AND same selection. The hero is
-      // baked into the geometry (its selectedIndex is skipped in the flow and
-      // it is placed separately), so re-pairing a geometry built for one
-      // selection with a different `sel` would drop or duplicate the selected
-      // tile. A selection change landing on the same tick as gesture-end falls
-      // through to a normal pack, which places the new hero correctly.
-      const selId = sel?.id ?? -1;
-      const prevSelId = prev?.selectedItem?.id ?? -1;
-      if (
-        prev &&
-        prev.geometry.columnCount > 0 &&
-        selId === prevSelId &&
-        ordersAligned(prev.items, items)
-      ) {
-        // Invalidate any gesture pack still in flight so its late result or
-        // failure cannot recommit a gesture-shaped (anchored / prevCols-seeded)
-        // layout over this adopted one — onResult's generation check and
-        // onFailure's (below) both drop a request older than genRef.
-        genRef.current++;
-        commit(prev.geometry, items, sel, false);
-        return;
-      }
-    }
-
     const width = container.clientWidth;
-    // Coherence seed for the packer's tie-break. Built ONLY during a gesture,
-    // per pack, by tile id: each entry is the column that tile held in the
-    // previous committed layout (round(x / stride)); the anchored (dragged or
-    // resized) tile and any newcomer get -1. Rebuilding it per pack — and
-    // keying by id, not array index — is what keeps it correct across a
-    // mid-gesture reorder splice or a delta-merge that shifts indices; the
-    // strict gesture gate keeps it null on every steady-state pack, so the
-    // layout never depends on hidden cross-pack state (a resting tile can't
-    // shimmer between equal columns, but no non-gesture pack is perturbed).
-    let prevCols: Int32Array | undefined;
-    if (gestureActive) {
-      const prev = layoutRef.current;
-      const stride = (prev?.geometry.columnWidth ?? 0) + columnGap;
-      if (prev && prev.geometry.columnCount > 0 && stride > 0) {
-        const prevColById = new Map<number, number>();
-        const pxs = prev.geometry.xs;
-        const pn = Math.min(prev.geometry.count, prev.items.length);
-        for (let i = 0; i < pn; i++) {
-          if (i === prev.geometry.selectedIndex) continue;
-          prevColById.set(prev.items[i].id, Math.round(pxs[i] / stride));
-        }
-        const anchorId = columnAnchor?.id ?? -1;
-        prevCols = new Int32Array(items.length);
-        for (let i = 0; i < items.length; i++) {
-          const id = items[i].id;
-          prevCols[i] = id === anchorId ? -1 : prevColById.get(id) ?? -1;
-        }
-      }
+    const normalisedOverride = columnCountOverride ?? 0;
+    const normalisedScale = tileScale ?? 1;
+    const cached = inputCacheRef.current;
+    let base: PackInputCache;
+    if (
+      cached &&
+      cached.items === items &&
+      cached.selectedItem === sel &&
+      cached.width === width &&
+      cached.minItemWidth === minItemWidth &&
+      cached.columnGap === columnGap &&
+      cached.verticalGap === verticalGap &&
+      cached.columnCountOverride === normalisedOverride &&
+      cached.tileScale === normalisedScale
+    ) {
+      base = cached;
+    } else {
+      const params: MasonryPackParams = {
+        containerWidth: width,
+        minItemWidth,
+        columnGap,
+        verticalGap,
+        columnCountOverride: normalisedOverride,
+        tileScale: normalisedScale,
+      };
+      base = {
+        items,
+        selectedItem: sel,
+        width,
+        minItemWidth,
+        columnGap,
+        verticalGap,
+        columnCountOverride: normalisedOverride,
+        tileScale: normalisedScale,
+        revision: ++inputRevisionRef.current,
+        input: buildPackInput(items, sel, params),
+      };
+      inputCacheRef.current = base;
     }
-    const params: MasonryPackParams = {
+
+    const fullInput: MasonryPackInput = {
+      ...base.input,
+      gestureFootprint: gestureFootprint
+        ? { ...gestureFootprint }
+        : null,
+    };
+    const gen = ++genRef.current;
+
+    const prefixParams: MasonryPackParams = {
       containerWidth: width,
       minItemWidth,
       columnGap,
       verticalGap,
-      columnCountOverride,
-      tileScale,
-      spanOverrides,
-      columnAnchor,
-      prevCols,
+      columnCountOverride: normalisedOverride,
+      tileScale: normalisedScale,
+      gestureFootprint,
     };
-    const gen = ++genRef.current;
 
     // First paint (nothing to keep) or a large expansion (old set dwarfed):
     // pack a synchronous prefix now so the grid is never empty / never left
@@ -378,25 +403,37 @@ export function useMasonryEngine(input: MasonryEngineInput): MasonryEngine {
     const committedCount = layoutRef.current?.items.length ?? 0;
     const needPrefix =
       committedCount === 0 || items.length > committedCount * RESET_EXPANSION_RATIO;
-    if (needPrefix && items.length > 0 && width > 0) {
+    if (needPrefix && !gestureIsActive && items.length > 0 && width > 0) {
       const prefixCount = Math.min(items.length, PREFIX_PACK_COUNT);
       const prefixItems =
         prefixCount === items.length ? items : items.slice(0, prefixCount);
       const prefixGeo = computeMasonryGeometry(
-        buildPackInput(prefixItems, sel, params),
+        buildPackInput(prefixItems, sel, prefixParams),
       );
       commit(prefixGeo, prefixItems, sel, true);
     }
 
-    // Full pack off-thread (or synchronous fallback inside the packer).
-    const fullInput = buildPackInput(items, sel, params);
-    packContextRef.current = { gen, items, selectedItem: sel, params };
+    packContextRef.current = {
+      gen,
+      revision: base.revision,
+      items,
+      selectedItem: sel,
+      input: fullInput,
+    };
     const packer = packerRef.current;
     if (packer) {
-      packer.pack(gen, fullInput);
+      packer.pack(gen, base.revision, fullInput);
     } else {
-      // Packer not yet created (or torn down): pack synchronously this tick.
-      commit(computeMasonryGeometry(fullInput), items, sel, false);
+      const geometry = computeMasonryGeometry(fullInput);
+      commit(geometry, items, sel, false);
+      if (fullInput.gestureFootprint) {
+        onGestureCommitRef.current?.(
+          fullInput.gestureFootprint,
+          geometry,
+          items,
+        );
+      }
+      finishSettling();
     }
   }, [
     items,
@@ -406,11 +443,10 @@ export function useMasonryEngine(input: MasonryEngineInput): MasonryEngine {
     verticalGap,
     columnCountOverride,
     tileScale,
-    spanOverrides,
-    columnAnchor,
-    gestureActive,
+    gestureFootprint,
     containerRef,
     commit,
+    finishSettling,
   ]);
 
   // Create the packer and wire its result / failure handlers once per mount.
@@ -422,34 +458,46 @@ export function useMasonryEngine(input: MasonryEngineInput): MasonryEngine {
       const ctx = packContextRef.current;
       if (!ctx || ctx.gen !== gen) return;
       commit(geometry, ctx.items, ctx.selectedItem, false);
+      if (ctx.input.gestureFootprint) {
+        onGestureCommitRef.current?.(
+          ctx.input.gestureFootprint,
+          geometry,
+          ctx.items,
+        );
+      }
+      // This result is the current generation. If it superseded a release
+      // generation, that is equally authoritative and must clear settling.
+      finishSettling();
     });
     packer.onFailure(() => {
       // A live worker died mid-flight: re-run the latest pack synchronously
       // from the source items the engine still holds. The grid must never
       // depend on worker availability. Skip a request the engine has already
-      // moved past (a commit-adopt bumps genRef precisely so a stale gesture
-      // pack's failure can't overwrite the adopted layout) — mirrors the
-      // generation check onResult already applies.
+      // moved past — mirrors the generation check onResult applies.
       const ctx = packContextRef.current;
       if (!ctx || ctx.gen !== genRef.current) return;
-      commit(
-        computeMasonryGeometry(
-          buildPackInput(ctx.items, ctx.selectedItem, ctx.params),
-        ),
-        ctx.items,
-        ctx.selectedItem,
-        false,
-      );
+      const geometry = computeMasonryGeometry(ctx.input);
+      commit(geometry, ctx.items, ctx.selectedItem, false);
+      if (ctx.input.gestureFootprint) {
+        onGestureCommitRef.current?.(
+          ctx.input.gestureFootprint,
+          geometry,
+          ctx.items,
+        );
+      }
+      finishSettling();
     });
     return () => {
       packer.dispose();
       packerRef.current = null;
     };
-  }, [commit]);
+  }, [commit, finishSettling]);
 
+  const requestPackRef = useRef(requestPack);
+  requestPackRef.current = requestPack;
   const requestPackDebounced = useMemo(
-    () => debounce(() => requestPack(), 100),
-    [requestPack],
+    () => debounce(() => requestPackRef.current(), 100),
+    [],
   );
 
   useEffect(() => {
@@ -552,6 +600,10 @@ export function useMasonryEngine(input: MasonryEngineInput): MasonryEngine {
     };
   }, [updateViewport, containerRef, layout, height]);
 
+  // Only the stable active id affects culling. Keeping the complete footprint
+  // out of the dependency list is a 100k-scale invariant: pixel-level pointer
+  // updates must not rescan every committed geometry row on the main thread.
+  const activeGestureId = gestureFootprint?.id ?? null;
   const visiblePlacements = useMemo(() => {
     // Render-phase ref writes are safe here (as in useShuffledFeed): the
     // outputs are a pure function of the memo inputs, so a discarded render
@@ -588,8 +640,13 @@ export function useMasonryEngine(input: MasonryEngineInput): MasonryEngine {
     const viewportScrolled =
       viewport.top !== prevViewportRef.current.top ||
       viewport.bottom !== prevViewportRef.current.bottom;
+    const settling = gesturePhase === "settling";
+    const interactionActive = activeGestureId !== null || settling;
+    const gestureId = activeGestureId ?? -1;
     const keepMounted =
-      gestureActive || !viewportScrolled ? prevVisibleIdsRef.current : null;
+      interactionActive || !viewportScrolled
+        ? prevVisibleIdsRef.current
+        : null;
     const n = Math.min(geometry.count, layoutItems.length);
     for (let i = 0; i < n; i++) {
       if (i === selectedIndex) continue;
@@ -597,7 +654,7 @@ export function useMasonryEngine(input: MasonryEngineInput): MasonryEngine {
       // The actively-dragged tile always renders so it never flickers out
       // from under the pointer, even when scrolled past the overscan; the
       // gesture keep-set does the same for its neighbours.
-      const forced = id === dragItemId || (keepMounted?.has(id) ?? false);
+      const forced = id === gestureId || (keepMounted?.has(id) ?? false);
       if (!forced) {
         const tileTop = ys[i];
         const tileBottom = tileTop + heights[i];
@@ -617,7 +674,7 @@ export function useMasonryEngine(input: MasonryEngineInput): MasonryEngine {
     // position — never a set that grows as repacks reflow the grid or as a
     // drag crosses it. Between scrolls the frozen set is what keeps a repack
     // from culling or teleporting a visible tile.
-    if (!gestureActive && viewportScrolled) {
+    if (!interactionActive && viewportScrolled) {
       prevVisibleIdsRef.current = byId;
     }
     prevViewportRef.current = { top, bottom };
@@ -626,13 +683,17 @@ export function useMasonryEngine(input: MasonryEngineInput): MasonryEngine {
     layout,
     viewport.top,
     viewport.bottom,
-    dragItemId,
-    gestureActive,
+    activeGestureId,
+    gesturePhase,
     placementsRef,
     placementByIdRef,
     columnWidthRef,
     columnCountRef,
   ]);
 
-  return { visiblePlacements, height };
+  return {
+    visiblePlacements,
+    height,
+    settling: gesturePhase === "settling",
+  };
 }

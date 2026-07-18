@@ -209,6 +209,8 @@ export interface TileGeometry {
   id: number;
   /** Width the packer set on the anchor (the reserved footprint). */
   packW: number;
+  /** Height the packer set on the anchor. */
+  packH: number;
   /** The anchor's committed transform (its reserved x/y). */
   packTransform: string;
   /** What the tile actually renders as (its on-screen box). */
@@ -216,6 +218,15 @@ export interface TileGeometry {
   renderH: number;
   x: number;
   y: number;
+}
+
+function committedNumber(
+  element: HTMLElement,
+  key: "masonryX" | "masonryY" | "masonryWidth" | "masonryHeight",
+  fallback: number,
+): number {
+  const value = Number(element.dataset[key]);
+  return Number.isFinite(value) ? value : fallback;
 }
 
 /** Do two tile boxes overlap by more than `slop` px on both axes? */
@@ -238,25 +249,42 @@ export function captureGridGeometry(): Record<string, unknown> | null {
   if (nodes.length === 0) return null;
 
   const tiles: TileGeometry[] = nodes.map((el) => {
-    const anchor = el.parentElement;
-    const style = anchor?.style;
+    const style = el.style;
     const r = el.getBoundingClientRect();
     return {
       id: Number(el.dataset.masonryId),
-      packW: style ? Math.round(parseFloat(style.width) || 0) : 0,
-      packTransform: style?.transform ?? "",
+      packW: Math.round(
+        committedNumber(el, "masonryWidth", parseFloat(style.width) || 0),
+      ),
+      packH: Math.round(
+        committedNumber(el, "masonryHeight", parseFloat(style.height) || 0),
+      ),
+      packTransform: style.transform,
       renderW: Math.round(r.width),
       renderH: Math.round(r.height),
-      x: Math.round(r.left),
-      y: Math.round(r.top),
+      // Position comes from the anchor's committed pack data, never from a
+      // descendant's live gesture transform. This keeps telemetry diagnostic
+      // even if a future visual effect moves pixels inside the reserved rect.
+      x: Math.round(committedNumber(el, "masonryX", r.left)),
+      y: Math.round(committedNumber(el, "masonryY", r.top)),
     };
   });
 
   // Divergence: the packer reserved packW but the tile renders renderW.
   // A non-trivial gap here IS the "2x2 acts like a wrong size" bug.
   const mismatched = tiles
-    .filter((t) => Math.abs(t.renderW - t.packW) > 2)
-    .map((t) => ({ id: t.id, packW: t.packW, renderW: t.renderW }));
+    .filter(
+      (t) =>
+        Math.abs(t.renderW - t.packW) > 2 ||
+        Math.abs(t.renderH - t.packH) > 2,
+    )
+    .map((t) => ({
+      id: t.id,
+      packW: t.packW,
+      packH: t.packH,
+      renderW: t.renderW,
+      renderH: t.renderH,
+    }));
 
   // Overlaps: pairs of tiles whose rendered boxes intersect. On a healthy
   // masonry this is empty (barring the active drag tile) — but a snapshot
@@ -355,17 +383,33 @@ function startLayoutMonitor(): void {
     jumpTrans: { prop: string; dur: string } | null;
   }
 
-  const readTiles = (): Map<number, { snap: Snap; el: HTMLElement }> => {
-    const m = new Map<number, { snap: Snap; el: HTMLElement }>();
+  interface TileSnap {
+    /** Packer target used to detect a real layout change. */
+    committed: Snap;
+    /** Animated screen position used only to grade slide vs teleport. */
+    rendered: Snap;
+    el: HTMLElement;
+  }
+
+  const readTiles = (): Map<number, TileSnap> => {
+    const m = new Map<number, TileSnap>();
     for (const el of document.querySelectorAll<HTMLElement>("[data-masonry-id]")) {
       const id = Number(el.dataset.masonryId);
       const r = el.getBoundingClientRect();
-      m.set(id, { snap: { x: r.left, y: r.top }, el });
+      m.set(id, {
+        committed: {
+          x: committedNumber(el, "masonryX", r.left),
+          y: committedNumber(el, "masonryY", r.top),
+        },
+        rendered: { x: r.left, y: r.top },
+        el,
+      });
     }
     return m;
   };
 
-  let prev = new Map<number, Snap>();
+  let prevCommitted = new Map<number, Snap>();
+  let prevRendered = new Map<number, Snap>();
   let active = false;
   let idle = 0;
   let acc = new Map<number, Acc>();
@@ -430,39 +474,62 @@ function startLayoutMonitor(): void {
     const cur = readTiles();
     let motion = false;
 
-    for (const [id, { snap: c, el }] of cur) {
-      const p = prev.get(id);
-      if (!p) {
+    for (const [id, { committed, rendered, el }] of cur) {
+      const priorCommitted = prevCommitted.get(id);
+      const priorRendered = prevRendered.get(id);
+      if (!priorCommitted || !priorRendered) {
         if (active) mounted.add(id);
         continue;
       }
-      const jump = Math.hypot(c.x - p.x, c.y - p.y);
-      if (jump > MOVE_EPS) {
+      // A reflow starts from committed pack geometry, not a cosmetic/live
+      // transform. The rendered box is retained solely to grade whether the
+      // browser interpolated that target change or teleported it.
+      const targetJump = Math.hypot(
+        committed.x - priorCommitted.x,
+        committed.y - priorCommitted.y,
+      );
+      const visualJump = Math.hypot(
+        rendered.x - priorRendered.x,
+        rendered.y - priorRendered.y,
+      );
+      if (targetJump > MOVE_EPS || visualJump > MOVE_EPS) {
         motion = true;
         if (!active) {
           active = true;
           ctxAtStart = { ...monitorContext };
         }
-        const a = acc.get(id) ?? { first: p, last: c, maxJump: 0, jumpTrans: null };
-        a.last = c;
-        if (jump > a.maxJump) {
-          a.maxJump = jump;
-          if (jump > JUMP_PX) {
-            const cs = getComputedStyle(el.parentElement ?? el);
+      }
+      if (visualJump > MOVE_EPS) {
+        const a = acc.get(id) ?? {
+          first: priorRendered,
+          last: rendered,
+          maxJump: 0,
+          jumpTrans: null,
+        };
+        a.last = rendered;
+        if (visualJump > a.maxJump) {
+          a.maxJump = visualJump;
+          if (visualJump > JUMP_PX) {
+            const cs = getComputedStyle(el);
             a.jumpTrans = { prop: cs.transitionProperty, dur: cs.transitionDuration };
           }
         }
         acc.set(id, a);
       }
     }
-    for (const [id] of prev) {
+    for (const [id] of prevCommitted) {
       if (!cur.has(id)) {
         if (active) unmounted.add(id);
         motion = true;
       }
     }
 
-    prev = new Map(Array.from(cur, ([id, v]) => [id, v.snap]));
+    prevCommitted = new Map(
+      Array.from(cur, ([id, value]) => [id, value.committed]),
+    );
+    prevRendered = new Map(
+      Array.from(cur, ([id, value]) => [id, value.rendered]),
+    );
 
     if (motion) {
       idle = 0;
@@ -477,7 +544,13 @@ function startLayoutMonitor(): void {
     requestAnimationFrame(step);
   };
 
-  prev = new Map(Array.from(readTiles(), ([id, v]) => [id, v.snap]));
+  const initial = readTiles();
+  prevCommitted = new Map(
+    Array.from(initial, ([id, value]) => [id, value.committed]),
+  );
+  prevRendered = new Map(
+    Array.from(initial, ([id, value]) => [id, value.rendered]),
+  );
   requestAnimationFrame(step);
 }
 

@@ -35,7 +35,7 @@ interface MasonryEngineInput {
   /** The one tile under an active gesture, pinned to a start column: a
    *  resizing tile grows in place instead of wrapping to a new row; a dragged
    *  tile's reserved slot tracks the pointer's column instead of drifting. */
-  columnAnchor?: { id: number; startCol: number };
+  columnAnchor?: { id: number; startCol: number; edge?: number };
   /** The tile currently being drag-reordered — never culled. */
   dragItemId: number | null;
   /** True while any tile gesture (drag or resize) is live. Freezes the
@@ -119,6 +119,20 @@ export function isCurrentGeneration(
   currentGen: number,
 ): boolean {
   return resultGen === currentGen;
+}
+
+/** Whether two feed slices carry the same ids in the same order — the guard
+ *  for commit-adopt: the just-committed gesture geometry is index-aligned to
+ *  its order, so it can only be re-paired with the current feed (skipping a
+ *  greedy re-pack) when the orders still match. A concurrent delta-merge that
+ *  changed the order fails this and falls through to a normal pack. Pure so
+ *  the guard is unit-testable. */
+export function ordersAligned(a: FeedItem[], b: FeedItem[]): boolean {
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) {
+    if (a[i].id !== b[i].id) return false;
+  }
+  return true;
 }
 
 /** Nearest scrolling ancestor, falling back to the document scroller. */
@@ -222,6 +236,10 @@ export function useMasonryEngine(input: MasonryEngineInput): MasonryEngine {
   // safe); `packerRef` lets the pack path reach it between renders.
   const packerRef = useRef<MasonryPacker | null>(null);
   const genRef = useRef(0);
+  // Tracks gestureActive across packs so a true→false transition triggers the
+  // one-shot commit-adopt (re-commit the last gesture layout, skip the greedy
+  // release re-pack). See requestPack.
+  const prevGestureActiveRef = useRef(false);
   const packContextRef = useRef<PackContext | null>(null);
   const layoutRef = useRef<CommittedLayout | null>(null);
   // The full committed height, so a pending prefix can never shrink the
@@ -268,7 +286,60 @@ export function useMasonryEngine(input: MasonryEngineInput): MasonryEngine {
   const requestPack = useCallback(() => {
     const container = containerRef.current;
     if (!container || !items) return;
+    const sel = selectedItem ?? null;
+
+    // Commit-adopt. The instant a gesture ends, the last anchored pack already
+    // IS the layout the user saw — so re-commit that geometry rather than
+    // re-packing greedily, which would relocate the just-dropped / just-grown
+    // tile (the release "jump"). It's safe only while the committed geometry is
+    // still index-aligned to the current feed order, so `ordersAligned` guards
+    // it; a concurrent delta-merge that reordered the feed fails the guard and
+    // falls through to a normal pack. Densification is deferred to the next
+    // genuine steady-state pack (filter / shuffle / delta), where a reflow is
+    // expected anyway — so between a release and that event the grid holds
+    // exactly where the gesture left it. Done synchronously here (not by
+    // holding the anchor for an async generation), so a superseded pack can
+    // never strand the gesture.
+    const justEnded = prevGestureActiveRef.current && !gestureActive;
+    prevGestureActiveRef.current = gestureActive;
+    if (justEnded) {
+      const prev = layoutRef.current;
+      if (prev && prev.geometry.columnCount > 0 && ordersAligned(prev.items, items)) {
+        commit(prev.geometry, items, sel, false);
+        return;
+      }
+    }
+
     const width = container.clientWidth;
+    // Coherence seed for the packer's tie-break. Built ONLY during a gesture,
+    // per pack, by tile id: each entry is the column that tile held in the
+    // previous committed layout (round(x / stride)); the anchored (dragged or
+    // resized) tile and any newcomer get -1. Rebuilding it per pack — and
+    // keying by id, not array index — is what keeps it correct across a
+    // mid-gesture reorder splice or a delta-merge that shifts indices; the
+    // strict gesture gate keeps it null on every steady-state pack, so the
+    // layout never depends on hidden cross-pack state (a resting tile can't
+    // shimmer between equal columns, but no non-gesture pack is perturbed).
+    let prevCols: Int32Array | undefined;
+    if (gestureActive) {
+      const prev = layoutRef.current;
+      const stride = (prev?.geometry.columnWidth ?? 0) + columnGap;
+      if (prev && prev.geometry.columnCount > 0 && stride > 0) {
+        const prevColById = new Map<number, number>();
+        const pxs = prev.geometry.xs;
+        const pn = Math.min(prev.geometry.count, prev.items.length);
+        for (let i = 0; i < pn; i++) {
+          if (i === prev.geometry.selectedIndex) continue;
+          prevColById.set(prev.items[i].id, Math.round(pxs[i] / stride));
+        }
+        const anchorId = columnAnchor?.id ?? -1;
+        prevCols = new Int32Array(items.length);
+        for (let i = 0; i < items.length; i++) {
+          const id = items[i].id;
+          prevCols[i] = id === anchorId ? -1 : prevColById.get(id) ?? -1;
+        }
+      }
+    }
     const params: MasonryPackParams = {
       containerWidth: width,
       minItemWidth,
@@ -278,8 +349,8 @@ export function useMasonryEngine(input: MasonryEngineInput): MasonryEngine {
       tileScale,
       spanOverrides,
       columnAnchor,
+      prevCols,
     };
-    const sel = selectedItem ?? null;
     const gen = ++genRef.current;
 
     // First paint (nothing to keep) or a large expansion (old set dwarfed):
@@ -318,6 +389,7 @@ export function useMasonryEngine(input: MasonryEngineInput): MasonryEngine {
     tileScale,
     spanOverrides,
     columnAnchor,
+    gestureActive,
     containerRef,
     commit,
   ]);

@@ -581,11 +581,13 @@ fn run_pipeline_inner(
             .map(|n| (n.get() / 2).clamp(2, 4))
             .unwrap_or(2);
 
-        // Reuse Phase::Scan — NOT a new Phase variant. The frontend's phase
-        // map is a closed set owned by another agent; an unknown phase
-        // blanks the status pill and hides it. This is the same reason the
-        // eager-preview pass reuses Phase::Thumbnail; the message carries
-        // the honest label into the pill.
+        // Reuse Phase::Scan — a deliberate choice, not the old closed-set
+        // constraint (that died when the phase map reopened and the
+        // eager-preview pass got its own Phase::Previews). The hash
+        // backfill is a one-time, scan-adjacent catch-up after the
+        // content-hash upgrade; a dedicated phase for it would outlive
+        // its single firing. The message carries the honest label into
+        // the pill.
         emit(
             app,
             Phase::Scan,
@@ -1739,6 +1741,7 @@ mod tests {
             (Phase::Scan, "scan"),
             (Phase::ModelDownload, "model-download"),
             (Phase::Thumbnail, "thumbnail"),
+            (Phase::Previews, "previews"),
             (Phase::Encode, "encode"),
             (Phase::Ready, "ready"),
             (Phase::Error, "error"),

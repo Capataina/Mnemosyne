@@ -42,6 +42,22 @@ function renderView() {
   );
 }
 
+// happy-dom's WheelEvent constructor drops ctrlKey (and fireEvent.wheel passes
+// it through as undefined), so the trackpad-pinch encoding (ctrl-wheel) has to
+// be dispatched as a hand-built event.
+function firePinchWheel(
+  stage: HTMLElement,
+  init: { deltaY: number; clientX: number; clientY: number },
+) {
+  const event = new Event("wheel", { bubbles: true, cancelable: true });
+  const fields = { ...init, ctrlKey: true, deltaMode: 0, deltaX: 0 };
+  for (const [key, value] of Object.entries(fields)) {
+    Object.defineProperty(event, key, { value });
+  }
+  // Dispatch through fireEvent so React state updates flush inside act().
+  fireEvent(stage, event);
+}
+
 function setZoomGeometry(stage: HTMLElement, image: HTMLImageElement) {
   Object.defineProperties(stage, {
     clientWidth: { configurable: true, value: 1000 },
@@ -56,7 +72,7 @@ function setZoomGeometry(stage: HTMLElement, image: HTMLImageElement) {
 }
 
 describe("GestureTimerView zoom", () => {
-  it("zooms around wheel input and exposes an immediate return to fit", () => {
+  it("zooms around pinch (ctrl-wheel) input and exposes an immediate return to fit", () => {
     renderView();
     const stage = screen.getByLabelText(/Drawing reference/);
     const image = screen.getByRole("img", {
@@ -65,17 +81,34 @@ describe("GestureTimerView zoom", () => {
     setZoomGeometry(stage, image);
     fireEvent.load(image);
 
-    fireEvent.wheel(stage, {
-      deltaY: -100,
-      clientX: 750,
-      clientY: 300,
-    });
+    firePinchWheel(stage, { deltaY: -100, clientX: 750, clientY: 300 });
 
     expect(image.style.transform).toContain("scale(");
     const reset = screen.getByRole("button", { name: "Reset zoom to fit" });
     expect(reset).toHaveAttribute("tabindex", "0");
     fireEvent.click(reset);
     expect(image.style.transform).toBe("");
+  });
+
+  it("pans with a plain scroll only while zoomed", () => {
+    renderView();
+    const stage = screen.getByLabelText(/Drawing reference/);
+    const image = screen.getByRole("img", {
+      name: "Starting reference",
+    }) as HTMLImageElement;
+    setZoomGeometry(stage, image);
+    fireEvent.load(image);
+
+    fireEvent.wheel(stage, { deltaY: -100, clientX: 750, clientY: 300 });
+    expect(image.style.transform).toBe("");
+
+    firePinchWheel(stage, { deltaY: -100, clientX: 750, clientY: 300 });
+    const zoomed = image.style.transform;
+    expect(zoomed).toContain("scale(");
+
+    fireEvent.wheel(stage, { deltaX: 40, deltaY: 25 });
+    expect(image.style.transform).not.toBe(zoomed);
+    expect(image.style.transform).toContain("scale(");
   });
 
   it("mounts the next keyed image at fit with no stale transform", () => {

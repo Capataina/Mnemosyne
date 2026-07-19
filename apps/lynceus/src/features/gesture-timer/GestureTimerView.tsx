@@ -237,7 +237,7 @@ export function GestureTimerView({
       <div
         ref={stageRef}
         data-gesture-zoom-stage
-        aria-label="Drawing reference. Pinch, scroll, or use plus and minus to zoom. Drag to pan while zoomed."
+        aria-label="Drawing reference. Pinch or use plus and minus to zoom. Scroll or drag to pan while zoomed."
         className="gesture-timer-stage absolute inset-0 flex touch-none items-center justify-center overflow-hidden"
         {...pointerHandlers}
       >

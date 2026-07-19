@@ -130,6 +130,56 @@ painter-order flip now that pack targets are stable; revisit only if the live pa
 disagrees. tsc clean, 189/189 with new gates the pre-fix code provably fails.
 **The owed proof remains the live WebView pass** — the acceptance criteria in §10.
 
+### POST-FIX REVIEW (2026-07-19, three independent reviewers over 0d42833)
+
+A fresh-context verifier scored the commit **6/6** (including the worker-path race:
+a reuse request can never see stale anchors — an anchor change forces a new revision,
+which can never match `workerRevision`, structurally forcing the full path). An
+adversarial critic and a GPT-5.6 Sol xhigh full-story review then surfaced six real
+findings, all fixed forward in the follow-up commit: the source-slot guard compared
+the 48px-quantised top against the raw pre-gesture y (60% false-negative rate for
+20px-tall tiles, empirically swept) → the guard now reads the raw ghost rectangle;
+the half-height tolerance let tall tiles swallow genuine same-column moves → capped
+at 72px; the quantum phase-shifted the first footprint by up to ±24px → quantisation
+is now relative to the gesture origin; a drop with no derivable insertion lost its
+column pin → the anchor now travels on every non-source drop; a failed resize
+persistence left a stale pin → the pin lands only on mutation success; drag anchors
+could store out-of-range columns → clamped at construction, and the hero is excluded
+from drop targets. Known accepted costs, recorded not hidden: any anchor retires the
+scalar fast path for the session (~2.3× pack cost at 48k items, in a worker — a live
+pass will not feel it); the telemetry column list still derives from visible left
+edges (false-negative risk only, never phantom-positive).
+
+**Sol's deepest point, deliberately deferred to the live pass:** release intent is
+still two composed approximations (an order insertion + an X-only pin), not a joint
+solve with the dense layout — so a drop into a BACKFILLED slot whose neighbours are
+far away in feed order can settle with the right column but a divergent Y. If the
+live pass shows that, the next round solves release jointly (evaluate insertion
+candidates under the chosen column, pick the dense solution nearest the drop rect).
+
+### LIVE-TEST PROTOCOL (run in order; telemetry on: `just lynceus-dev-telemetry`)
+
+1. Wiggle a tile 10–20px and release at source → no movement, NO masonry_reorder.
+2. Span-2 tile one column left, then right, near-constant Y → both stick, one
+   masonry_reorder each with startCol changing by one. **(the old headline bug)**
+3. Repeat at spans 1/2/3 incl. throws against both walls → no even-span offset;
+   placeholder and final anchor share a left edge; startCol never out of range.
+4. **BLOCKER** — tall tile moved vertically ~100px onto the tile below, same column
+   → must reorder (a no-event snap-back = the tolerance cap still wrong).
+5. **BLOCKER** — drop a top tile into a backfilled slot much lower in the column →
+   settled position must stay close to the placeholder (X and Y), not just X.
+6. **BLOCKER** — anchor three tiles (two sharing a column, one multi-span crossing
+   it), then gesture again → earlier anchors hold dx=0, no unexplained dy.
+7. Resize all four corners: 1→2, 2→3, 2→1 → previewed column holds, no ±240 wobble;
+   masonry_resize carries {id, colSpan, startCol}.
+8. Slow 200px vertical drag, then a fast diagonal throw → no black holes (the
+   placeholder now owns the reserved slot), no persistent stacking; settled
+   captures show overlaps:[] and no tile-height gaps.
+9. Trigger an indexing delta / second resize with an anchored tile visible, scroll
+   it off and back → anchor survives, no remount teleport.
+10. Recreate the span-2 bridge (narrow above, span-2 across, narrow below) → the
+    gap detector must NOT report the old ~306px signature.
+
 ---
 
 ## 0. THE MISSION (what the masonry is supposed to do — from the getgo)

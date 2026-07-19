@@ -181,10 +181,21 @@ export function useTileDrag(input: UseTileDragInput) {
       const footprint: MasonryGestureFootprint = {
         id: base.id,
         span: base.span,
-        startCol: Math.round(desiredX / stride),
-        top:
-          Math.round(desiredY / FOOTPRINT_TOP_QUANTUM_PX) *
-          FOOTPRINT_TOP_QUANTUM_PX,
+        // Clamped at construction (matching resize's discipline) so the
+        // committed anchor can never store an out-of-range column.
+        startCol: Math.max(
+          0,
+          Math.min(Math.round(desiredX / stride), columnCount - base.span),
+        ),
+        // Quantised RELATIVE to the gesture origin, so the first footprint
+        // matches the tile's resting top exactly (an absolute grid would
+        // phase-shift it by up to ±24px before any real vertical movement).
+        top: Math.max(
+          0,
+          base.y +
+            Math.round((desiredY - base.y) / FOOTPRINT_TOP_QUANTUM_PX) *
+              FOOTPRINT_TOP_QUANTUM_PX,
+        ),
       };
       latestFootprintRef.current = footprint;
       setGestureFootprint((previous) =>
@@ -259,13 +270,18 @@ export function useTileDrag(input: UseTileDragInput) {
       movedRef.current = false;
       latestRectRef.current = null;
       latestFootprintRef.current = null;
-      dropTargetsRef.current = placementsRef.current.map((candidate) => ({
-        itemData: { id: candidate.itemData.id },
-        x: candidate.x,
-        y: candidate.y,
-        width: candidate.width,
-        height: candidate.height,
-      }));
+      // The selected hero never participates in grid packing, so it is not a
+      // meaningful drop target — reordering onto its array index has no
+      // rendered meaning.
+      dropTargetsRef.current = placementsRef.current
+        .filter((candidate) => !candidate.isSelected)
+        .map((candidate) => ({
+          itemData: { id: candidate.itemData.id },
+          x: candidate.x,
+          y: candidate.y,
+          width: candidate.width,
+          height: candidate.height,
+        }));
       setPressedId(id);
     },
     [enabled, placementByIdRef, placementsRef, pressedId],
@@ -387,9 +403,20 @@ export function useTileDrag(input: UseTileDragInput) {
           : 0;
       const sourceStartCol =
         stride > 0 ? Math.round(base.x / stride) : expected.startCol;
+      // The vertical test uses the RAW ghost rectangle, not the quantised
+      // footprint top: the 48px quantum carries up to ±24px of noise, which
+      // for a tile shorter than 48px could out-range the half-height
+      // tolerance and misread a zero-motion release as a real move. The
+      // tolerance is also capped so a TALL tile cannot swallow a genuine
+      // same-column move of a row or more inside its own half-height.
+      const releasedY = latestRectRef.current?.y ?? expected.top;
+      const sourceTolerance = Math.min(
+        base.height / 2,
+        1.5 * FOOTPRINT_TOP_QUANTUM_PX,
+      );
       const droppedAtSource =
         expected.startCol === sourceStartCol &&
-        Math.abs(expected.top - base.y) < base.height / 2;
+        Math.abs(releasedY - base.y) < sourceTolerance;
 
       if (!droppedAtSource) {
         let committedIndex = -1;
@@ -422,11 +449,15 @@ export function useTileDrag(input: UseTileDragInput) {
         if (next) {
           committedOrderRef.current = next;
           setCommittedOrder(next);
-          onReorderRef.current?.(
-            next.map((item) => item.id),
-            { id: expected.id, startCol: committedFootprint.startCol },
-          );
         }
+        // The column pin travels even when no insertion derives (a drop over
+        // empty space, or a feed too small to have a target) — the tile must
+        // still keep the column the preview showed instead of snapping to
+        // the argmin column.
+        onReorderRef.current?.(
+          (next ?? committedItems).map((item) => item.id),
+          { id: expected.id, startCol: committedFootprint.startCol },
+        );
       }
 
       releasePendingRef.current = false;

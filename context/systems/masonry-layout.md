@@ -90,7 +90,8 @@ The dispatch rule is structural:
 
 | Input shape | Solver | Reason |
 |---|---|---|
-| No gesture and every ordinary tile spans one column | Historical `colHeights` scalar frontier | Preserves the resting layout bit-for-bit, including strict leftmost ties |
+| No gesture, no column anchors, and every ordinary tile spans one column | Historical `colHeights` scalar frontier | Preserves the resting layout bit-for-bit, including strict leftmost ties |
+| Any session column anchor present | Occupancy path for the rest of the session (until the anchors' lifecycle clears them) | An anchored tile needs the interval model; measured ~2.3× the fast path at 48k items in a worker — a real but invisible tax, recorded deliberately |
 | A gesture exists or any tile spans more than one column | Per-column sorted occupied intervals | Can represent and backfill free space below wide/fixed rectangles |
 
 The occupancy path stores each column as a flat numeric sequence

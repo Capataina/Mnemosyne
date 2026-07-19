@@ -501,12 +501,22 @@ export default function Home() {
   const handleResizeCommit = useCallback(
     (itemId: number, colSpan: number | null, startCol: number) => {
       recordAction("masonry_resize", { id: itemId, colSpan, startCol });
-      setColumnAnchors((prev) => ({ ...prev, [itemId]: startCol }));
       // useTileResize retains the final footprint until this promise settles.
       // The optimistic manifest stamp therefore becomes authoritative before
       // the preview can clear; no intermediate render can repack the tile as
-      // its stale 1x1 span.
-      return setManualColSpanMutation.mutateAsync({ imageId: itemId, colSpan });
+      // its stale 1x1 span. The column pin lands only on SUCCESS — a failed
+      // persistence rolls the span back, and a pin surviving that rollback
+      // would strand the tile in a column its span no longer justifies. The
+      // footprint stays live until this promise settles, so the pin is
+      // committed before the settle pack ever runs.
+      const persisted = setManualColSpanMutation.mutateAsync({
+        imageId: itemId,
+        colSpan,
+      });
+      void persisted.then(() => {
+        setColumnAnchors((prev) => ({ ...prev, [itemId]: startCol }));
+      });
+      return persisted;
     },
     [setManualColSpanMutation.mutateAsync],
   );

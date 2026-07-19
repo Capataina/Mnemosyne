@@ -147,9 +147,10 @@ describe("drag release barrier", () => {
     });
 
     expect(node.style.transform).toBe("translate3d(37px, 19px, 0)");
-    // The ghost is pixel-exact; the published footprint's top is stepped to
-    // the 48px quantum (desiredY 219 → 240) so packs fire per step crossing.
-    expect(result.current.gestureFootprint?.top).toBe(240);
+    // The ghost is pixel-exact; the published footprint's top steps in 48px
+    // quanta RELATIVE to the gesture origin (base.y 200, +19px of travel →
+    // still 200), so the first footprint never phase-shifts off the tile.
+    expect(result.current.gestureFootprint?.top).toBe(200);
   });
 
   it("treats a drop back onto the source slot as a genuine no-op", () => {
@@ -224,6 +225,159 @@ describe("drag release barrier", () => {
     // Same slot → no reorder, no anchor; the grid settles exactly as it was.
     expect(onReorder).not.toHaveBeenCalled();
     expect(result.current.gestureFootprint).toBeUndefined();
+  });
+
+  it("keeps the source-slot no-op for tiles shorter than the top quantum", () => {
+    // Adversarial finding from the fix-round review: the guard once compared
+    // the 48px-QUANTISED footprint top against the raw pre-gesture y, so a
+    // tile shorter than 48px (half-height under the ±24px quantisation
+    // noise) could misread a zero-motion release as a real move — purely as
+    // a function of its y position modulo 48. Two defences now hold: the
+    // quantisation is relative to the gesture origin (no phantom at source)
+    // and the guard reads the raw ghost rectangle. Tile: height 30 at y=22.
+    const items: FeedItem[] = [
+      { id: 1, name: "one", width: 300, height: 30, hasThumbnail: true },
+      { id: 2, name: "two", width: 300, height: 30, hasThumbnail: true },
+    ];
+    const placements: MasonryItemPlacement[] = items.map((item, index) => ({
+      itemData: item,
+      x: index * 100,
+      y: 22,
+      width: 100,
+      height: 30,
+      colSpan: 1,
+      isSelected: false,
+    }));
+    const onReorder = vi.fn();
+    const { result } = renderHook(() =>
+      useTileDrag({
+        enabled: true,
+        items,
+        placementsRef: { current: placements },
+        placementByIdRef: {
+          current: new Map(
+            placements.map((placement) => [placement.itemData.id, placement]),
+          ),
+        },
+        tileElementsRef: { current: new Map() },
+        columnWidthRef: { current: 100 },
+        columnCountRef: { current: 2 },
+        columnGap: 0,
+        onReorder,
+        suppressClick: vi.fn(),
+      }),
+    );
+
+    act(() => {
+      result.current.onDragHandlePointerDown(1, {
+        clientX: 50,
+        clientY: 40,
+      } as React.PointerEvent<HTMLDivElement>);
+    });
+    // Horizontal-only wiggle past the drag threshold; the tile never leaves
+    // its slot vertically, so the release must be a no-op.
+    act(() => {
+      window.dispatchEvent(
+        new PointerEvent("pointermove", { clientX: 60, clientY: 40 }),
+      );
+    });
+    act(() => {
+      window.dispatchEvent(
+        new PointerEvent("pointerup", { clientX: 60, clientY: 40 }),
+      );
+    });
+
+    const footprint = result.current.gestureFootprint!;
+    expect(footprint.top).toBe(22); // origin-relative: no quantised phantom
+    const geometry = computeMasonryGeometry(
+      buildPackInput(items, null, {
+        containerWidth: 200,
+        minItemWidth: 100,
+        columnGap: 0,
+        verticalGap: 0,
+        columnCountOverride: 2,
+        gestureFootprint: footprint,
+      }),
+    );
+    act(() => {
+      result.current.onGestureGeometryCommitted(footprint, geometry, items);
+    });
+
+    expect(onReorder).not.toHaveBeenCalled();
+  });
+
+  it("commits a tall tile's same-column move past the tolerance cap", () => {
+    // The counterpart adversarial finding: an uncapped half-height tolerance
+    // let a TALL tile swallow genuine same-column moves inside its own half
+    // height. The cap (1.5 × the 48px quantum = 72px) keeps a ~100px
+    // deliberate vertical move committing even on a 300px-tall tile.
+    const items: FeedItem[] = [
+      { id: 1, name: "one", width: 100, height: 300, hasThumbnail: true },
+      { id: 2, name: "two", width: 100, height: 300, hasThumbnail: true },
+    ];
+    const placements: MasonryItemPlacement[] = items.map((item, index) => ({
+      itemData: item,
+      x: 0,
+      y: index * 316,
+      width: 100,
+      height: 300,
+      colSpan: 1,
+      isSelected: false,
+    }));
+    const onReorder = vi.fn();
+    const { result } = renderHook(() =>
+      useTileDrag({
+        enabled: true,
+        items,
+        placementsRef: { current: placements },
+        placementByIdRef: {
+          current: new Map(
+            placements.map((placement) => [placement.itemData.id, placement]),
+          ),
+        },
+        tileElementsRef: { current: new Map() },
+        columnWidthRef: { current: 100 },
+        columnCountRef: { current: 2 },
+        columnGap: 0,
+        onReorder,
+        suppressClick: vi.fn(),
+      }),
+    );
+
+    act(() => {
+      result.current.onDragHandlePointerDown(1, {
+        clientX: 50,
+        clientY: 50,
+      } as React.PointerEvent<HTMLDivElement>);
+    });
+    act(() => {
+      window.dispatchEvent(
+        new PointerEvent("pointermove", { clientX: 50, clientY: 150 }),
+      );
+    });
+    act(() => {
+      window.dispatchEvent(
+        new PointerEvent("pointerup", { clientX: 50, clientY: 150 }),
+      );
+    });
+
+    const footprint = result.current.gestureFootprint!;
+    expect(footprint.startCol).toBe(0); // same column throughout
+    const geometry = computeMasonryGeometry(
+      buildPackInput(items, null, {
+        containerWidth: 200,
+        minItemWidth: 100,
+        columnGap: 0,
+        verticalGap: 0,
+        columnCountOverride: 2,
+        gestureFootprint: footprint,
+      }),
+    );
+    act(() => {
+      result.current.onGestureGeometryCommitted(footprint, geometry, items);
+    });
+
+    expect(onReorder).toHaveBeenCalledWith([2, 1], { id: 1, startCol: 0 });
   });
 
   it("animates the retained drop ghost to the authoritative dense slot", () => {

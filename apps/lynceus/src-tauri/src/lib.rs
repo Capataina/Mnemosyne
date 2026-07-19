@@ -292,7 +292,7 @@ pub fn run(db: ImageDatabase, db_path: String) {
     };
     use commands::images::{
         clear_all_manual_spans, get_feed_manifest, get_image_details, get_images,
-        get_pipeline_stats, get_thumbnail, purge_orphaned_images, set_manual_col_span,
+        get_pipeline_stats, get_preview_breakdown, get_thumbnail, purge_orphaned_images, set_manual_col_span,
         set_manual_order,
     };
     use commands::notes::{get_image_notes, set_image_notes};
@@ -578,6 +578,7 @@ pub fn run(db: ImageDatabase, db_path: String) {
             get_feed_manifest,
             get_image_details,
             get_pipeline_stats,
+            get_preview_breakdown,
             get_thumbnail,
             set_manual_order,
             set_manual_col_span,

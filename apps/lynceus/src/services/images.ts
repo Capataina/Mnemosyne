@@ -266,6 +266,27 @@ export async function purgeOrphanedImages(): Promise<number> {
   }
 }
 
+/** One tier of the settings drawer's preview breakdown. Mirrors
+ * PreviewBucketStat in src-tauri/src/commands/images.rs. */
+export interface PreviewBucketStat {
+  width: number;
+  done: number;
+  eligible: number;
+}
+
+/**
+ * Per-tier preview coverage (base 480 + eager 960/1440/2048 buckets).
+ * Larger tiers are counted from files on disk, so this is fetched only
+ * while the breakdown is expanded rather than on the 1Hz stats poll.
+ */
+export async function fetchPreviewBreakdown(): Promise<PreviewBucketStat[]> {
+  try {
+    return await invoke<PreviewBucketStat[]>("get_preview_breakdown");
+  } catch (error) {
+    throw new Error(formatApiError(error));
+  }
+}
+
 /**
  * Map a backend ImageSearchResult into the frontend's SimilarImageItem
  * shape. All three search commands (semantic, similar, tiered) now

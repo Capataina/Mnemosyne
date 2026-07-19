@@ -91,6 +91,88 @@ pub fn get_pipeline_stats(db: State<'_, ImageDatabase>) -> Result<PipelineStats,
     Ok(db.get_pipeline_stats()?)
 }
 
+/// One row of the settings drawer's collapsible preview breakdown.
+#[derive(serde::Serialize, Clone, Debug)]
+pub struct PreviewBucketStat {
+    /// Bucket width in px (480 = the base thumbnail).
+    pub width: u32,
+    /// Files that actually exist for this bucket (base: DB-tracked;
+    /// larger buckets: counted on disk, where the generator writes them).
+    pub done: i64,
+    /// How many visible images can ever have this bucket: everything
+    /// for the base, `width > bucket` for the larger sizes (the
+    /// generator skips buckets at/above the source width — the original
+    /// serves those requests directly).
+    pub eligible: i64,
+}
+
+/// Per-tier preview coverage for the settings drawer's collapsible
+/// "Images with previews" breakdown. The base tier reads the DB
+/// (`thumbnail_path`, the same source as `with_thumbnail`); the larger
+/// tiers are counted from the files on disk, because bucket files are
+/// deliberately not DB-tracked (the eager pass and the on-demand
+/// `get_thumbnail` fallback both write them stat-first). A ~5k-file
+/// directory walk costs single-digit milliseconds; the frontend only
+/// calls this while the breakdown is expanded, on a slow poll.
+///
+/// `(async)`: the walk is filesystem I/O and a 100k-image library's
+/// walk should not run on the main thread.
+#[tauri::command(async)]
+#[tracing::instrument(name = "ipc.get_preview_breakdown", skip(db))]
+pub fn get_preview_breakdown(
+    db: State<'_, ImageDatabase>,
+) -> Result<Vec<PreviewBucketStat>, ApiError> {
+    let stats = db.get_pipeline_stats()?;
+    let eligibility = db.get_preview_eligibility(&THUMBNAIL_BUCKETS[1..])?;
+
+    // Count bucket files across the flat legacy dir and every root_*
+    // subdir in one walk: filenames are thumb_<id>.jpg (base) or
+    // thumb_<id>_<width>.jpg (bucket).
+    let mut on_disk: std::collections::HashMap<u32, i64> = std::collections::HashMap::new();
+    let thumb_root = paths::thumbnails_dir();
+    let mut dirs: Vec<std::path::PathBuf> = vec![thumb_root.clone()];
+    if let Ok(entries) = std::fs::read_dir(&thumb_root) {
+        for entry in entries.flatten() {
+            let p = entry.path();
+            if p.is_dir() {
+                dirs.push(p);
+            }
+        }
+    }
+    for dir in dirs {
+        let Ok(entries) = std::fs::read_dir(&dir) else { continue };
+        for entry in entries.flatten() {
+            let name = entry.file_name();
+            let Some(name) = name.to_str() else { continue };
+            let Some(stem) = name.strip_prefix("thumb_").and_then(|s| s.strip_suffix(".jpg"))
+            else {
+                continue;
+            };
+            // stem is "<id>" (base) or "<id>_<width>".
+            if let Some((_, width)) = stem.split_once('_') {
+                if let Ok(w) = width.parse::<u32>() {
+                    *on_disk.entry(w).or_insert(0) += 1;
+                }
+            }
+        }
+    }
+
+    let visible = stats.total_images - stats.orphaned;
+    let mut out = Vec::with_capacity(THUMBNAIL_BUCKETS.len());
+    out.push(PreviewBucketStat {
+        width: THUMBNAIL_BUCKETS[0],
+        done: stats.with_thumbnail,
+        eligible: visible,
+    });
+    for (width, eligible) in eligibility {
+        // Cap at eligible: an on-demand file for a row that later became
+        // orphaned would otherwise report done > eligible.
+        let done = on_disk.get(&width).copied().unwrap_or(0).min(eligible);
+        out.push(PreviewBucketStat { width, done, eligible });
+    }
+    Ok(out)
+}
+
 /// Resolve — generating and caching on demand — a thumbnail whose width
 /// is at least `target_px`, returning an absolute filesystem path the
 /// frontend hands to `convertFileSrc`.

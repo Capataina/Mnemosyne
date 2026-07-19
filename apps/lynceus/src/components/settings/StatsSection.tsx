@@ -1,14 +1,30 @@
+import { useState } from "react";
+import { ChevronDown } from "lucide-react";
 import { useConfirm } from "@/components/ui/confirm";
 import { usePipelineStats } from "../../hooks/useIndexingStatus";
-import { usePurgeOrphanedImages } from "../../queries/useImages";
+import {
+  usePreviewBreakdown,
+  usePurgeOrphanedImages,
+} from "../../queries/useImages";
 import { Section } from "./controls";
+
+/** Tier labels for the preview breakdown, keyed by bucket width. The
+ * base 480 bucket is what `with_thumbnail` tracks; the rest are the
+ * eager/adaptive buckets from THUMBNAIL_BUCKETS. */
+const TIER_LABELS: Record<number, { name: string; description: string }> = {
+  480: { name: "Small", description: "Base preview · 480 px" },
+  960: { name: "Medium", description: "960 px" },
+  1440: { name: "Large", description: "1440 px" },
+  2048: { name: "Extra large", description: "2048 px" },
+};
 
 /**
  * Pipeline progress stats — counts of images at each stage of the
  * indexing pipeline. Lets the user see at a glance how much of the
  * library has been indexed (base previews generated, embeddings computed).
- * `with_thumbnail` counts images with a base preview, not the number of
- * adaptive-resolution preview files stored for each image.
+ * `with_thumbnail` counts images with a base preview; the collapsible
+ * breakdown under it shows every preview size individually (base 480
+ * plus the 960/1440/2048 buckets, fetched only while expanded).
  *
  * Reads the shared `usePipelineStats` snapshot (react-query keyed
  * `["pipelineStats"]`), which is the same authoritative source the
@@ -26,6 +42,8 @@ export function StatsSection() {
   const stats = usePipelineStats();
   const confirm = useConfirm();
   const purgeOrphanedMutation = usePurgeOrphanedImages();
+  const [previewsOpen, setPreviewsOpen] = useState(false);
+  const breakdown = usePreviewBreakdown(previewsOpen);
 
   async function handleCleanUpOrphaned(orphanedCount: number) {
     const confirmed = await confirm({
@@ -107,13 +125,83 @@ export function StatsSection() {
         </div>
 
         <div className="space-y-4 px-3.5 py-3.5">
-          <ProgressRow
-            label="Images with previews"
-            description="Base preview created"
-            done={stats.with_thumbnail}
-            total={total}
-            pct={thumbPct}
-          />
+          {/* Collapsible preview coverage: the headline row is the base
+              preview count (what the pipeline's thumbnail phase tracks);
+              expanding it shows each preview size individually, so
+              "previews at 100% while the pill prepares larger sizes"
+              reads as two different tiers instead of a desync. */}
+          <div className="space-y-3">
+            <button
+              type="button"
+              aria-expanded={previewsOpen}
+              onClick={() => setPreviewsOpen((open) => !open)}
+              className="group w-full text-left"
+            >
+              <div className="flex items-end justify-between gap-3">
+                <div className="flex min-w-0 items-center gap-1.5">
+                  <ChevronDown
+                    className={[
+                      "size-3 shrink-0 text-muted-foreground transition-transform",
+                      previewsOpen ? "" : "-rotate-90",
+                    ].join(" ")}
+                    strokeWidth={2}
+                  />
+                  <div className="min-w-0">
+                    <p className="truncate text-[11px] font-[580] text-foreground">
+                      Images with previews
+                    </p>
+                    <p className="mt-0.5 text-[10px] text-muted-foreground">
+                      Base preview created · click for size breakdown
+                    </p>
+                  </div>
+                </div>
+                <span className="shrink-0 text-[10.5px] tabular-nums text-muted-foreground">
+                  {stats.with_thumbnail.toLocaleString()} of {total.toLocaleString()} images
+                </span>
+              </div>
+              <div className="mt-2 h-[3px] w-full overflow-hidden rounded-full bg-input">
+                <div
+                  className="h-full rounded-full bg-primary transition-[width] duration-500 ease-out"
+                  style={{ width: `${thumbPct}%` }}
+                />
+              </div>
+            </button>
+            {previewsOpen && (
+              <div className="space-y-3 rounded-[9px] border border-border/70 bg-surface/40 px-3 py-3">
+                {breakdown.data ? (
+                  breakdown.data.map((tier) => {
+                    const labels = TIER_LABELS[tier.width] ?? {
+                      name: `${tier.width} px`,
+                      description: `${tier.width} px`,
+                    };
+                    const pct =
+                      tier.eligible > 0
+                        ? Math.round((tier.done / tier.eligible) * 100)
+                        : 100;
+                    return (
+                      <ProgressRow
+                        key={tier.width}
+                        label={labels.name}
+                        description={labels.description}
+                        done={tier.done}
+                        total={tier.eligible}
+                        pct={pct}
+                      />
+                    );
+                  })
+                ) : (
+                  <div className="space-y-2" aria-label="Loading preview breakdown">
+                    <div className="skeleton-tile h-3 rounded-full" />
+                    <div className="skeleton-tile h-3 w-4/5 rounded-full" />
+                  </div>
+                )}
+                <p className="text-[9.5px] leading-relaxed text-muted-foreground">
+                  Larger sizes are only made for images big enough to need
+                  them, so their totals can be smaller than the library.
+                </p>
+              </div>
+            )}
+          </div>
           {/* Per-encoder progress — one row per encoder. Encoders that
               haven't been indexed yet show 0/total in muted style; full
               encoders show the bar at 100%. */}

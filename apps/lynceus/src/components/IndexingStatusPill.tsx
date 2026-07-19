@@ -10,6 +10,7 @@ const PHASE_LABELS: Record<IndexingPhase, string> = {
   scan: "Scanning",
   "model-download": "Downloading models",
   thumbnail: "Generating thumbnails",
+  previews: "Preparing larger previews",
   encode: "Encoding embeddings",
   ready: "Ready",
   error: "Error",

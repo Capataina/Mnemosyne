@@ -22,6 +22,7 @@ export type IndexingPhase =
   | "scan"
   | "model-download"
   | "thumbnail"
+  | "previews"
   | "encode"
   | "ready"
   | "error";
@@ -49,6 +50,7 @@ const ACTIVE_PHASES: IndexingPhase[] = [
   "scan",
   "model-download",
   "thumbnail",
+  "previews",
   "encode",
 ];
 

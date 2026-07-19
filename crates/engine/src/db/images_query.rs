@@ -739,6 +739,31 @@ impl ImageDatabase {
             orphaned,
         })
     }
+
+    /// For each preview bucket width, how many visible images are
+    /// ELIGIBLE for a file at that width. The generator writes a bucket
+    /// file only when the source is strictly wider than the bucket
+    /// (`generate_buckets` skips `w >= original_width` — the original is
+    /// served directly at and above its own width), so the honest
+    /// denominator for "medium previews done" is `width > 960`, not the
+    /// library total. Width is NULL until the base thumbnail lands, so
+    /// un-thumbnailed rows are correctly not yet eligible for any bucket.
+    pub fn get_preview_eligibility(
+        &self,
+        bucket_widths: &[u32],
+    ) -> rusqlite::Result<Vec<(u32, i64)>> {
+        let conn = self.read_lock();
+        let mut out = Vec::with_capacity(bucket_widths.len());
+        for &w in bucket_widths {
+            let mut stmt = conn.prepare(
+                "SELECT COUNT(*) FROM images
+                 WHERE orphaned = 0 AND width IS NOT NULL AND width > ?1",
+            )?;
+            let count: i64 = stmt.query_row([w as i64], |row| row.get(0))?;
+            out.push((w, count));
+        }
+        Ok(out)
+    }
 }
 
 /// One compact row of the feed's layout manifest (T3-1).
@@ -976,6 +1001,42 @@ impl ImageDatabase {
 mod tests {
     use super::super::test_helpers::fresh_db;
     use super::*;
+
+    #[test]
+    fn preview_eligibility_counts_strictly_wider_sources() {
+        // The generator writes a bucket file only when the source is
+        // STRICTLY wider than the bucket (w >= original_width skips), so
+        // eligibility must be `width > bucket`: a 960-wide source is NOT
+        // eligible for the 960 bucket. NULL-width (un-thumbnailed) and
+        // orphaned rows never count.
+        let db = fresh_db();
+        for (path, width) in [
+            ("/small.jpg", Some(700u32)),
+            ("/edge.jpg", Some(960)),
+            ("/medium.jpg", Some(1200)),
+            ("/large.jpg", Some(2400)),
+            ("/pending.jpg", None),
+        ] {
+            db.add_image(path.into(), None).unwrap();
+            if let Some(w) = width {
+                let id = db.get_image_id_by_path(path).unwrap();
+                db.update_image_thumbnail(id, std::path::Path::new("/t.jpg"), w, 100)
+                    .unwrap();
+            }
+        }
+        // Orphan the 2400-wide row: it must drop out of every count.
+        let large_id = db.get_image_id_by_path("/large.jpg").unwrap();
+        db.connection
+            .lock()
+            .unwrap()
+            .execute("UPDATE images SET orphaned = 1 WHERE id = ?1", [large_id])
+            .unwrap();
+
+        let counts = db.get_preview_eligibility(&[960, 1440, 2048]).unwrap();
+        // 960: only /medium.jpg (1200 > 960; the 960-wide edge case is
+        // excluded, the 2400 row is orphaned). 1440/2048: nothing left.
+        assert_eq!(counts, vec![(960, 1), (1440, 0), (2048, 0)]);
+    }
 
     #[test]
     fn metadata_for_ids_hydrates_and_bundles_thumbnail() {

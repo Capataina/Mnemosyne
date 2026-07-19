@@ -10,6 +10,7 @@ import {
   clearAllManualSpans,
   fetchFeedManifest,
   fetchImageDetails,
+  fetchPreviewBreakdown,
   purgeOrphanedImages,
   removeTagFromImage,
   setManualColSpan,
@@ -284,6 +285,19 @@ export function usePurgeOrphanedImages() {
       queryClient.invalidateQueries({ queryKey: ["pipelineStats"] });
       queryClient.invalidateQueries({ queryKey: ["feed-manifest"] });
     },
+  });
+}
+
+/** Per-tier preview coverage for the settings drawer's collapsible
+ * breakdown. Enabled only while the breakdown is expanded — the backend
+ * walks the thumbnail directories to count bucket files, which has no
+ * business running on the always-on stats poll. */
+export function usePreviewBreakdown(enabled: boolean) {
+  return useQuery({
+    queryKey: ["previewBreakdown"],
+    queryFn: fetchPreviewBreakdown,
+    enabled,
+    refetchInterval: enabled ? 5000 : false,
   });
 }
 

@@ -89,8 +89,14 @@ pub enum Phase {
     Scan,
     /// Downloading missing model files.
     ModelDownload,
-    /// Generating thumbnails for new images.
+    /// Generating base thumbnails for new images.
     Thumbnail,
+    /// Pre-generating the larger preview buckets (960/1440/2048) after
+    /// search is already ready. Split from Thumbnail so the status pill
+    /// and the settings "Images with previews" count can never look out
+    /// of sync: with_thumbnail tracks BASE thumbnails, which are all
+    /// done before this phase begins.
+    Previews,
     /// Producing CLIP image embeddings batch by batch.
     Encode,
     /// Pipeline complete; cosine index repopulated; UI may refresh.
@@ -853,16 +859,15 @@ fn run_pipeline_inner(
     //     decode+resize mid-gesture. Three things changed from the old
     //     inline pass, each fixing a confirmed live-telemetry problem:
     //
-    //   (a) VISIBILITY. It emits real per-image progress under
-    //       Phase::Thumbnail with a "Generating high-res previews"
-    //       message, instead of running silently. The pill previously sat
-    //       frozen at "thumbnails 100%" for minutes; now it shows a
-    //       climbing bar. A dedicated Phase::Previews variant would label
-    //       cleaner, but the frontend's phase map is a closed set — an
-    //       unknown phase would blank the pill label and (not being in
-    //       ACTIVE_PHASES) hide the pill entirely. Reusing Thumbnail is
-    //       the honest zero-frontend-change option; the message carries
-    //       the real label into the pill's tooltip.
+    //   (a) VISIBILITY. It emits real per-image progress under its own
+    //       Phase::Previews (the frontend's phase map knows it), so the
+    //       pill says "Preparing larger previews" while the settings
+    //       drawer's base-thumbnail count sits — correctly — at 100%.
+    //       It originally reused Phase::Thumbnail because the phase map
+    //       was a closed set owned by a concurrently-working agent; that
+    //       constraint is gone, and the reuse produced exactly the
+    //       "pill says generating thumbnails but the previews count
+    //       doesn't move" desync a live pass reported.
     //   (b) ORDERING. It runs AFTER the encoder phase (step 6) AND the
     //       fusion refresh (step 7), not before them. Encoding is core
     //       functionality and search readiness is established at step 7;
@@ -918,10 +923,10 @@ fn run_pipeline_inner(
         // Prime the pill with a coherent 0/total under the honest message.
         emit(
             app,
-            Phase::Thumbnail,
+            Phase::Previews,
             0,
             total_thumbs,
-            Some("Generating high-res previews".into()),
+            Some("Preparing larger previews".into()),
         );
 
         let run_preview = || {
@@ -943,10 +948,10 @@ fn run_pipeline_inner(
                         *last = done;
                         emit(
                             app,
-                            Phase::Thumbnail,
+                            Phase::Previews,
                             done,
                             total_thumbs,
-                            Some("Generating high-res previews".into()),
+                            Some("Preparing larger previews".into()),
                         );
                     }
                 }

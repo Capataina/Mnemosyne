@@ -12,6 +12,15 @@ import {
   visualMotion,
   visualTrack,
 } from "../onboardingMotion";
+import {
+  CHROME,
+  centre,
+  makeGrid,
+  moveTo,
+  rect,
+  rectStyle,
+  type SceneGeometryManifest,
+} from "../sceneGeometry";
 import type { ClosedTrack, OnboardingSceneProps, VisualFrame } from "../types";
 import { DemoAppChrome, DemoSceneRoot } from "../primitives/DemoAppChrome";
 import { OnboardingSkeleton } from "../primitives/OnboardingSkeleton";
@@ -22,28 +31,112 @@ import {
 
 export const ORGANISE_DURATION_MS = 9600;
 
+/**
+ * Results grid: 3 columns of 168×102 cells, 12px gaps (the container is
+ * w-[528px] with grid-cols-3 gap-3, which yields exactly these cells —
+ * change one, change both). Filtering REMOVES tiles and COMPACTS the
+ * survivors: each survivor translates from its base cell to the cell of
+ * its new index among survivors — computed, so nothing stacks or drifts.
+ */
+export const ORGANISE_GRID = makeGrid({
+  originX: 382,
+  originY: 104,
+  cellW: 168,
+  cellH: 102,
+  gapX: 12,
+  gapY: 12,
+});
+
+const TILE_COUNT = 12;
+const baseCell = (index: number) =>
+  ORGANISE_GRID.cell(index % 3, Math.floor(index / 3));
+
+const FOLDER_REMOVED = new Set([2, 7, 10]);
+const INCLUDE_REMOVED = new Set([...FOLDER_REMOVED, 1, 5]);
+const EXCLUDE_REMOVED = new Set([...INCLUDE_REMOVED, 4]);
+
+function filteredFrame(index: number, removed: Set<number>): VisualFrame {
+  if (removed.has(index)) {
+    return { transform: "translate3d(0px, 0px, 0px) scale(.96)", opacity: 0 };
+  }
+  let survivorIndex = 0;
+  for (let k = 0; k < index; k += 1) {
+    if (!removed.has(k)) survivorIndex += 1;
+  }
+  const target = ORGANISE_GRID.cell(
+    survivorIndex % 3,
+    Math.floor(survivorIndex / 3),
+  );
+  return { transform: moveTo(baseCell(index), target), opacity: 1 };
+}
+
+function gridTileTrack(index: number): ClosedTrack<VisualFrame> {
+  return visualTrack(
+    [
+      visualFrame(),
+      visualFrame(),
+      filteredFrame(index, FOLDER_REMOVED),
+      filteredFrame(index, INCLUDE_REMOVED),
+      filteredFrame(index, EXCLUDE_REMOVED),
+      filteredFrame(index, EXCLUDE_REMOVED),
+      visualFrame(),
+      visualFrame(),
+    ],
+    normaliseTimes(ORGANISE_DURATION_MS, [0, 1800, 2200, 3360, 4510, 6000, 6420, 9600]),
+    ["linear", SETTLE_EASE, SETTLE_EASE, SETTLE_EASE, "linear", SETTLE_EASE, "linear"],
+  );
+}
+
+const gridTracks = Array.from({ length: TILE_COUNT }, (_, index) =>
+  gridTileTrack(index),
+);
+
+/**
+ * Drawer geometry — the drawer is 360 wide under the 72px header, p-5
+ * (20) padding, with every flow element's height pinned in the markup so
+ * these rects stay true: header row h-[20px] mb-5, section labels
+ * h-[14px] mb-3, All-images h-10 mb-2, folder rows h-11 mb-2, divider
+ * my-5, refine rows h-12 mb-2.
+ */
+const DRAWER = rect(0, 72, 360, 528);
+const CLOSE_X = rect(324, 94, 16, 16);
+const FOLDER_ROW_1 = rect(20, 206, 320, 44);
+const CLEAR = rect(300, 343, 40, 14);
+const MUST_HAVE = rect(20, 369, 320, 48);
+const MUST_HAVE_CONTROL = rect(300, 381, 28, 24);
+const MUST_NOT = rect(20, 425, 320, 48);
+const MUST_NOT_CONTROL = rect(300, 437, 28, 24);
+const SEARCH_CHIP = rect(294, 24, 80, 24);
+
+const CLICK_LIBRARY = centre(CHROME.leadingPill);
+const CLICK_FOLDER = centre(FOLDER_ROW_1);
+const CLICK_INCLUDE = centre(MUST_HAVE_CONTROL);
+const CLICK_EXCLUDE = centre(MUST_NOT_CONTROL);
+const CLICK_CLEAR = centre(CLEAR);
+const CLICK_CLOSE = centre(CLOSE_X);
+
 const cursor = cursorTrack(
   [
     cursorFrame(CURSOR_PARK.x, CURSOR_PARK.y),
     cursorFrame(CURSOR_PARK.x, CURSOR_PARK.y),
-    cursorFrame(36, 36),
-    cursorFrame(36, 36, 0.92, 0.75, 1),
-    cursorFrame(36, 36),
-    cursorFrame(142, 214),
-    cursorFrame(142, 214, 0.92, 0.75, 1),
-    cursorFrame(142, 214),
-    cursorFrame(304, 392),
-    cursorFrame(304, 392, 0.92, 0.75, 1),
-    cursorFrame(304, 392),
-    cursorFrame(336, 432),
-    cursorFrame(336, 432, 0.92, 0.75, 1),
-    cursorFrame(336, 432),
-    cursorFrame(304, 334),
-    cursorFrame(304, 334, 0.92, 0.75, 1),
-    cursorFrame(304, 334),
-    cursorFrame(332, 105),
-    cursorFrame(332, 105, 0.92, 0.75, 1),
-    cursorFrame(332, 105),
+    cursorFrame(CLICK_LIBRARY.x, CLICK_LIBRARY.y),
+    cursorFrame(CLICK_LIBRARY.x, CLICK_LIBRARY.y, 0.92, 0.75, 1),
+    cursorFrame(CLICK_LIBRARY.x, CLICK_LIBRARY.y),
+    cursorFrame(CLICK_FOLDER.x, CLICK_FOLDER.y),
+    cursorFrame(CLICK_FOLDER.x, CLICK_FOLDER.y, 0.92, 0.75, 1),
+    cursorFrame(CLICK_FOLDER.x, CLICK_FOLDER.y),
+    cursorFrame(CLICK_INCLUDE.x, CLICK_INCLUDE.y),
+    cursorFrame(CLICK_INCLUDE.x, CLICK_INCLUDE.y, 0.92, 0.75, 1),
+    cursorFrame(CLICK_INCLUDE.x, CLICK_INCLUDE.y),
+    cursorFrame(CLICK_EXCLUDE.x, CLICK_EXCLUDE.y),
+    cursorFrame(CLICK_EXCLUDE.x, CLICK_EXCLUDE.y, 0.92, 0.75, 1),
+    cursorFrame(CLICK_EXCLUDE.x, CLICK_EXCLUDE.y),
+    cursorFrame(CLICK_CLEAR.x, CLICK_CLEAR.y),
+    cursorFrame(CLICK_CLEAR.x, CLICK_CLEAR.y, 0.92, 0.75, 1),
+    cursorFrame(CLICK_CLEAR.x, CLICK_CLEAR.y),
+    cursorFrame(CLICK_CLOSE.x, CLICK_CLOSE.y),
+    cursorFrame(CLICK_CLOSE.x, CLICK_CLOSE.y, 0.92, 0.75, 1),
+    cursorFrame(CLICK_CLOSE.x, CLICK_CLOSE.y),
     cursorFrame(CURSOR_PARK.x, CURSOR_PARK.y),
     cursorFrame(CURSOR_PARK.x, CURSOR_PARK.y),
   ],
@@ -118,28 +211,6 @@ const excludeState = visualTrack(
   ["linear", FADE_EASE, "linear", FADE_EASE, "linear"],
 );
 
-function gridTileTrack(index: number): ClosedTrack<VisualFrame> {
-  const folderShift = index % 3 === 1 ? 18 : index % 3 === 2 ? -18 : 0;
-  const includeShift = index % 4 === 0 ? 22 : -12;
-  const excluded = index === 2 || index === 7;
-  return visualTrack(
-    [
-      visualFrame(),
-      visualFrame(),
-      visualFrame(`translate3d(${folderShift}px, 0px, 0px) scale(1)`, index % 5 === 0 ? 0 : 1),
-      visualFrame(`translate3d(${includeShift}px, -6px, 0px) scale(1)`, index % 4 === 1 ? 0 : 1),
-      visualFrame(`translate3d(${includeShift}px, -12px, 0px) scale(1)`, excluded ? 0 : 1),
-      visualFrame(`translate3d(${includeShift}px, -12px, 0px) scale(1)`, excluded ? 0 : 1),
-      visualFrame(),
-      visualFrame(),
-    ],
-    normaliseTimes(ORGANISE_DURATION_MS, [0, 1800, 2200, 3360, 4510, 6000, 6420, 9600]),
-    ["linear", SETTLE_EASE, SETTLE_EASE, SETTLE_EASE, "linear", SETTLE_EASE, "linear"],
-  );
-}
-
-const gridTracks = Array.from({ length: 12 }, (_, index) => gridTileTrack(index));
-
 const searchChip = folderState;
 
 export const ORGANISE_TRACKS = {
@@ -152,6 +223,34 @@ export const ORGANISE_TRACKS = {
   searchChip,
   ...Object.fromEntries(gridTracks.map((track, index) => [`tile-${index}`, track])),
 } as const;
+
+const BASE_TILES = Array.from({ length: TILE_COUNT }, (_, i) => baseCell(i));
+
+export const ORGANISE_GEOMETRY: SceneGeometryManifest = {
+  scene: "organise",
+  bounds: {
+    drawer: DRAWER,
+    searchChip: SEARCH_CHIP,
+    ...Object.fromEntries(BASE_TILES.map((r, i) => [`tile-${i}`, r])),
+  },
+  clicks: [
+    { label: "library", point: CLICK_LIBRARY, target: CHROME.leadingPill },
+    { label: "folder-row", point: CLICK_FOLDER, target: FOLDER_ROW_1 },
+    { label: "must-have", point: CLICK_INCLUDE, target: MUST_HAVE },
+    { label: "must-not", point: CLICK_EXCLUDE, target: MUST_NOT },
+    { label: "clear", point: CLICK_CLEAR, target: CLEAR },
+    { label: "close", point: CLICK_CLOSE, target: CLOSE_X },
+  ],
+  disjoint: {
+    base: BASE_TILES,
+    folderFiltered: BASE_TILES.filter((_, i) => !FOLDER_REMOVED.has(i)).map(
+      (_, j) => ORGANISE_GRID.cell(j % 3, Math.floor(j / 3)),
+    ),
+    excludeFiltered: BASE_TILES.filter((_, i) => !EXCLUDE_REMOVED.has(i)).map(
+      (_, j) => ORGANISE_GRID.cell(j % 3, Math.floor(j / 3)),
+    ),
+  },
+};
 
 const reducedKinds: readonly [StaticFrameKind, string][] = [
   ["organise-all", "Browse every tag as a folder"],
@@ -171,14 +270,17 @@ export function OrganiseScene({ animationLevel }: OnboardingSceneProps) {
     <DemoSceneRoot>
       <DemoAppChrome
         leading={
-          <div className="rounded-[9px] border border-border bg-surface px-3 py-2 text-[10.5px] font-[600]">
+          <div className="grid size-full place-items-center rounded-[9px] border border-border bg-surface text-[10.5px] font-[600]">
             Library
           </div>
         }
       />
       <div className="absolute inset-x-0 bottom-0 top-[72px] bg-surface-sunken/35" />
 
-      <div className="absolute left-[382px] top-[104px] grid w-[530px] grid-cols-3 gap-3">
+      <div
+        className="absolute grid w-[528px] grid-cols-3 gap-3"
+        style={{ left: ORGANISE_GRID.originX, top: ORGANISE_GRID.originY }}
+      >
         {gridTracks.map((track, index) => (
           <motion.div
             key={index}
@@ -201,11 +303,13 @@ export function OrganiseScene({ animationLevel }: OnboardingSceneProps) {
         className="absolute bottom-0 left-0 top-[72px] z-30 w-[360px] border-r border-border bg-card p-5 shadow-[var(--shadow-float)]"
         animate={visualMotion(drawer, ORGANISE_DURATION_MS, motionOptions)}
       >
-        <div className="mb-5 flex items-center justify-between">
-          <h3 className="text-[14px] font-[650]">Library</h3>
+        <div className="mb-5 flex h-[20px] items-center justify-between">
+          <h3 className="text-[14px] font-[650] leading-[20px]">Library</h3>
           <X className="size-4 text-muted-foreground" />
         </div>
-        <p className="mb-3 text-[10px] font-[650] text-muted-foreground">Folders</p>
+        <p className="mb-3 h-[14px] text-[10px] font-[650] leading-[14px] text-muted-foreground">
+          Folders
+        </p>
         <div className="mb-2 flex h-10 items-center justify-between rounded-[9px] px-3 text-[11px] font-[600]">
           <span>All images</span>
           <OnboardingSkeleton className="h-2 w-7 rounded-full" />
@@ -227,9 +331,11 @@ export function OrganiseScene({ animationLevel }: OnboardingSceneProps) {
           </div>
         ))}
         <div className="my-5 h-px bg-border" />
-        <div className="mb-3 flex items-center justify-between">
-          <p className="text-[10px] font-[650] text-muted-foreground">Refine</p>
-          <span className="text-[10px] font-[650]">Clear</span>
+        <div className="mb-3 flex h-[14px] items-center justify-between">
+          <p className="text-[10px] font-[650] leading-[14px] text-muted-foreground">
+            Refine
+          </p>
+          <span className="text-[10px] font-[650] leading-[14px]">Clear</span>
         </div>
         {[
           { label: "Must have", icon: Plus, track: includeState, destructive: false },
@@ -259,7 +365,8 @@ export function OrganiseScene({ animationLevel }: OnboardingSceneProps) {
       </motion.aside>
 
       <motion.div
-        className="absolute left-[330px] top-[18px] z-40 h-9 w-20 rounded-full border border-primary/50 bg-primary/10"
+        className="absolute z-40 rounded-full border border-primary/50 bg-primary/10"
+        style={rectStyle(SEARCH_CHIP)}
         animate={visualMotion(searchChip, ORGANISE_DURATION_MS, motionOptions)}
       />
 

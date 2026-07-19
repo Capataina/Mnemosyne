@@ -20,6 +20,11 @@ import {
   visualMotion,
   visualTrack,
 } from "../onboardingMotion";
+import {
+  centre,
+  rect,
+  type SceneGeometryManifest,
+} from "../sceneGeometry";
 import type { OnboardingSceneProps } from "../types";
 import { DemoSceneRoot } from "../primitives/DemoAppChrome";
 import { OnboardingSkeleton } from "../primitives/OnboardingSkeleton";
@@ -30,31 +35,56 @@ import {
 
 export const GESTURE_PRACTICE_DURATION_MS = 10800;
 
+/**
+ * Geometry — the setup aside is x 650..960 with p-6 (24) padding and
+ * pinned flow heights (19px heading + mb-5, four 12px rows with mb-4,
+ * mt-10, then a 40px button), so the Start button rect is exact. The
+ * session view's transport and zoom rows are absolutely positioned from
+ * these rects rather than flex-centred, so the cursor can actually hit
+ * them. Artwork area = inset 80/80/20 band (bottom-20 left-20 right-20
+ * top-20 of the 960×600 stage).
+ */
+const START_BTN = rect(674, 215, 262, 40);
+const ARTWORK = rect(80, 80, 800, 440);
+const TRANSPORT_X = 364;
+const PAUSE_BTN = rect(TRANSPORT_X + 44, 548, 36, 36);
+const EXIT_BTN = rect(TRANSPORT_X + 176, 548, 56, 36);
+const ZOOM_PLUS = rect(852, 552, 32, 32);
+const ZOOM_FIT = rect(892, 552, 48, 32);
+
+const CLICK_START = centre(START_BTN);
+const CLICK_PLUS = centre(ZOOM_PLUS);
+const CLICK_FIT = centre(ZOOM_FIT);
+const CLICK_PAUSE = centre(PAUSE_BTN);
+const CLICK_EXIT = centre(EXIT_BTN);
+const PAN_FROM = { x: 440, y: 300 };
+const PAN_TO = { x: 540, y: 350 };
+
 const cursor = cursorTrack(
   [
     cursorFrame(CURSOR_PARK.x, CURSOR_PARK.y),
     cursorFrame(CURSOR_PARK.x, CURSOR_PARK.y),
-    cursorFrame(796, 500),
-    cursorFrame(796, 500, 0.92, 0.75, 1),
-    cursorFrame(796, 500),
-    cursorFrame(884, 526),
-    cursorFrame(884, 526, 0.92, 0.75, 1),
-    cursorFrame(884, 526),
-    cursorFrame(480, 300),
-    cursorFrame(480, 300, 0.92),
-    cursorFrame(552, 332, 0.92),
-    cursorFrame(552, 332),
-    cursorFrame(916, 526),
-    cursorFrame(916, 526, 0.92, 0.75, 1),
-    cursorFrame(916, 526),
-    cursorFrame(486, 548),
-    cursorFrame(486, 548, 0.92, 0.75, 1),
-    cursorFrame(486, 548),
-    cursorFrame(486, 548, 0.92, 0.75, 1),
-    cursorFrame(486, 548),
-    cursorFrame(606, 548),
-    cursorFrame(606, 548, 0.92, 0.75, 1),
-    cursorFrame(606, 548),
+    cursorFrame(CLICK_START.x, CLICK_START.y),
+    cursorFrame(CLICK_START.x, CLICK_START.y, 0.92, 0.75, 1),
+    cursorFrame(CLICK_START.x, CLICK_START.y),
+    cursorFrame(CLICK_PLUS.x, CLICK_PLUS.y),
+    cursorFrame(CLICK_PLUS.x, CLICK_PLUS.y, 0.92, 0.75, 1),
+    cursorFrame(CLICK_PLUS.x, CLICK_PLUS.y),
+    cursorFrame(PAN_FROM.x, PAN_FROM.y),
+    cursorFrame(PAN_FROM.x, PAN_FROM.y, 0.92),
+    cursorFrame(PAN_TO.x, PAN_TO.y, 0.92),
+    cursorFrame(PAN_TO.x, PAN_TO.y),
+    cursorFrame(CLICK_FIT.x, CLICK_FIT.y),
+    cursorFrame(CLICK_FIT.x, CLICK_FIT.y, 0.92, 0.75, 1),
+    cursorFrame(CLICK_FIT.x, CLICK_FIT.y),
+    cursorFrame(CLICK_PAUSE.x, CLICK_PAUSE.y),
+    cursorFrame(CLICK_PAUSE.x, CLICK_PAUSE.y, 0.92, 0.75, 1),
+    cursorFrame(CLICK_PAUSE.x, CLICK_PAUSE.y),
+    cursorFrame(CLICK_PAUSE.x, CLICK_PAUSE.y, 0.92, 0.75, 1),
+    cursorFrame(CLICK_PAUSE.x, CLICK_PAUSE.y),
+    cursorFrame(CLICK_EXIT.x, CLICK_EXIT.y),
+    cursorFrame(CLICK_EXIT.x, CLICK_EXIT.y, 0.92, 0.75, 1),
+    cursorFrame(CLICK_EXIT.x, CLICK_EXIT.y),
     cursorFrame(CURSOR_PARK.x, CURSOR_PARK.y),
     cursorFrame(CURSOR_PARK.x, CURSOR_PARK.y),
   ],
@@ -181,6 +211,27 @@ export const GESTURE_PRACTICE_TRACKS = {
   pauseState,
 } as const;
 
+export const GESTURE_PRACTICE_GEOMETRY: SceneGeometryManifest = {
+  scene: "gesture-practice",
+  bounds: {
+    startButton: START_BTN,
+    artwork: ARTWORK,
+    pause: PAUSE_BTN,
+    exit: EXIT_BTN,
+    zoomPlus: ZOOM_PLUS,
+    zoomFit: ZOOM_FIT,
+  },
+  clicks: [
+    { label: "start-session", point: CLICK_START, target: START_BTN },
+    { label: "zoom-in", point: CLICK_PLUS, target: ZOOM_PLUS },
+    { label: "pan-from", point: PAN_FROM, target: ARTWORK },
+    { label: "pan-to", point: PAN_TO, target: ARTWORK },
+    { label: "fit", point: CLICK_FIT, target: ZOOM_FIT },
+    { label: "pause", point: CLICK_PAUSE, target: PAUSE_BTN },
+    { label: "exit", point: CLICK_EXIT, target: EXIT_BTN },
+  ],
+};
+
 const reducedKinds: readonly [StaticFrameKind, string][] = [
   ["gesture-setup", "Build a timed session"],
   ["gesture-timer", "Let Lynceus keep the pace"],
@@ -204,11 +255,13 @@ export function GesturePracticeScene({ animationLevel }: OnboardingSceneProps) {
           <OnboardingSkeleton className="h-full w-full rounded-[14px]" raised />
         </div>
         <aside className="w-[310px] border-l border-border bg-card p-6">
-          <h3 className="mb-5 text-[14px] font-[650]">Timer</h3>
+          <h3 className="mb-5 h-[19px] text-[14px] font-[650] leading-[19px]">
+            Timer
+          </h3>
           {["w-full", "w-3/4", "w-5/6", "w-2/3"].map((width) => (
             <OnboardingSkeleton key={width} className={`mb-4 h-3 ${width} rounded-full`} />
           ))}
-          <div className="mt-10 rounded-[10px] bg-primary px-4 py-3 text-center text-[11px] font-[650] text-primary-foreground">
+          <div className="mt-10 grid h-[40px] place-items-center rounded-[10px] bg-primary text-[11px] font-[650] text-primary-foreground">
             Start session
           </div>
         </aside>
@@ -241,7 +294,10 @@ export function GesturePracticeScene({ animationLevel }: OnboardingSceneProps) {
           <span className="text-[10px] font-[650]">Reference</span>
           <OnboardingSkeleton className="h-2 w-12 rounded-full" />
         </div>
-        <div className="absolute bottom-4 left-1/2 flex -translate-x-1/2 items-center gap-2">
+        <div
+          className="absolute flex items-center gap-2"
+          style={{ left: TRANSPORT_X, top: PAUSE_BTN.y }}
+        >
           {[ChevronLeft, Pause, ChevronRight, Settings].map((Icon, index) => (
             <div key={index} className="relative grid size-9 place-items-center rounded-full border border-border bg-card">
               <Icon className="size-3.5" />
@@ -255,17 +311,18 @@ export function GesturePracticeScene({ animationLevel }: OnboardingSceneProps) {
               )}
             </div>
           ))}
-          <div className="ml-2 rounded-[9px] border border-border bg-card px-3 py-2 text-[10px] font-[650]">
+          <div className="ml-2 grid h-9 w-[56px] place-items-center rounded-[9px] border border-border bg-card text-[10px] font-[650]">
             Exit
           </div>
         </div>
         <motion.div
-          className="absolute bottom-4 right-5 flex items-center gap-2"
+          className="absolute flex items-center gap-2"
+          style={{ left: 812, top: ZOOM_PLUS.y }}
           animate={visualMotion(zoomControls, GESTURE_PRACTICE_DURATION_MS, motionOptions)}
         >
           <div className="grid size-8 place-items-center rounded-[9px] border border-border bg-card"><Minus className="size-3" /></div>
           <div className="grid size-8 place-items-center rounded-[9px] border border-border bg-card"><Plus className="size-3" /></div>
-          <div className="rounded-[9px] border border-border bg-card px-3 py-2 text-[10px] font-[650]">Fit</div>
+          <div className="grid h-8 w-[48px] place-items-center rounded-[9px] border border-border bg-card text-[10px] font-[650]">Fit</div>
         </motion.div>
       </motion.div>
 

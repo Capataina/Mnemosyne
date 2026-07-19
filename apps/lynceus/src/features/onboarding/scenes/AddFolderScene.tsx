@@ -14,6 +14,14 @@ import {
   visualMotion,
   visualTrack,
 } from "../onboardingMotion";
+import {
+  CHROME,
+  centre,
+  rect,
+  rectStyle,
+  type Rect,
+  type SceneGeometryManifest,
+} from "../sceneGeometry";
 import type { ClosedTrack, OnboardingSceneProps, VisualFrame } from "../types";
 import {
   DemoAppChrome,
@@ -27,20 +35,54 @@ import {
 
 export const ADD_FOLDER_DURATION_MS = 8000;
 
+/**
+ * Geometry — declared once, derived everywhere. The picker's internal
+ * rects assume its flow layout: p-5 (20), an 18px title with mb-4 (16),
+ * two h-14 rows with mb-2 (8), then an mt-4 (16) button row of h-8
+ * buttons with fixed widths. Change the markup ⇒ change these together.
+ */
+const PICKER = rect(280, 146, 380, 250);
+const PICKER_ROW_1 = rect(300, 200, 340, 56);
+const PICKER_ADD = rect(576, 344, 64, 32);
+const INDEXING_PILL = rect(732, 86, 208, 48);
+
+/** Arriving thumbnails: 4 masonry columns (w190, gap 16), each column
+ * stacked top-down from y=118 with a 16px vertical gap — computed, so
+ * tiles cannot overlap or leak by construction. */
+const TILE_COLUMN_X = [64, 270, 476, 682] as const;
+const TILE_HEIGHTS: readonly (readonly number[])[] = [
+  [132, 150],
+  [168, 120],
+  [140, 150],
+  [150],
+];
+const TILES: Rect[] = TILE_COLUMN_X.flatMap((x, col) => {
+  let y = 118;
+  return TILE_HEIGHTS[col].map((h) => {
+    const r = rect(x, y, 190, h);
+    y += h + 16;
+    return r;
+  });
+});
+
+const CLICK_ADD_FOLDER = centre(CHROME.addFolder);
+const CLICK_ROW_1 = centre(PICKER_ROW_1);
+const CLICK_ADD = centre(PICKER_ADD);
+
 const cursor = cursorTrack(
   [
     cursorFrame(CURSOR_PARK.x, CURSOR_PARK.y),
     cursorFrame(CURSOR_PARK.x, CURSOR_PARK.y),
-    cursorFrame(842, 36),
-    cursorFrame(842, 36, 0.92, 0.75, 1),
-    cursorFrame(842, 36),
-    cursorFrame(438, 228),
-    cursorFrame(438, 228, 0.92, 0.75, 1),
-    cursorFrame(438, 228),
-    cursorFrame(612, 386),
-    cursorFrame(612, 386, 0.92, 0.75, 1),
-    cursorFrame(612, 386),
-    cursorFrame(612, 386),
+    cursorFrame(CLICK_ADD_FOLDER.x, CLICK_ADD_FOLDER.y),
+    cursorFrame(CLICK_ADD_FOLDER.x, CLICK_ADD_FOLDER.y, 0.92, 0.75, 1),
+    cursorFrame(CLICK_ADD_FOLDER.x, CLICK_ADD_FOLDER.y),
+    cursorFrame(CLICK_ROW_1.x, CLICK_ROW_1.y),
+    cursorFrame(CLICK_ROW_1.x, CLICK_ROW_1.y, 0.92, 0.75, 1),
+    cursorFrame(CLICK_ROW_1.x, CLICK_ROW_1.y),
+    cursorFrame(CLICK_ADD.x, CLICK_ADD.y),
+    cursorFrame(CLICK_ADD.x, CLICK_ADD.y, 0.92, 0.75, 1),
+    cursorFrame(CLICK_ADD.x, CLICK_ADD.y),
+    cursorFrame(CLICK_ADD.x, CLICK_ADD.y),
     cursorFrame(CURSOR_PARK.x, CURSOR_PARK.y),
     cursorFrame(CURSOR_PARK.x, CURSOR_PARK.y),
   ],
@@ -129,19 +171,9 @@ const progress = visualTrack(
   normaliseTimes(ADD_FOLDER_DURATION_MS, [0, 3140, 3790, 5100, 5520, 8000]),
 );
 
-const tileGeometry = [
-  [88, 118, 148, 120],
-  [250, 118, 128, 178],
-  [392, 118, 184, 134],
-  [590, 118, 122, 164],
-  [726, 118, 146, 110],
-  [88, 312, 178, 156],
-  [280, 312, 140, 126],
-] as const;
-
 function tileTrack(index: number): ClosedTrack<VisualFrame> {
   const enter = 3160 + index * STAGGER_MS;
-  const leave = 5100 + (tileGeometry.length - index - 1) * 60;
+  const leave = 5100 + (TILES.length - index - 1) * 60;
   return visualTrack(
     [
       visualFrame("translate3d(0px, 10px, 0px) scale(.965)", 0),
@@ -187,13 +219,10 @@ function tileSheenTrack(index: number): ClosedTrack<VisualFrame> {
 }
 
 const tileTracks = Object.fromEntries(
-  tileGeometry.map((_, index) => [`tile-${index + 1}`, tileTrack(index)]),
+  TILES.map((_, index) => [`tile-${index + 1}`, tileTrack(index)]),
 ) as Record<string, ClosedTrack<VisualFrame>>;
 const tileSheenTracks = Object.fromEntries(
-  tileGeometry.map((_, index) => [
-    `tile-sheen-${index + 1}`,
-    tileSheenTrack(index),
-  ]),
+  TILES.map((_, index) => [`tile-sheen-${index + 1}`, tileSheenTrack(index)]),
 ) as Record<string, ClosedTrack<VisualFrame>>;
 
 const clickAccent = visualTrack(
@@ -220,6 +249,21 @@ export const ADD_FOLDER_TRACKS = {
   ...tileSheenTracks,
 } as const;
 
+export const ADD_FOLDER_GEOMETRY: SceneGeometryManifest = {
+  scene: "add-folder",
+  bounds: {
+    picker: PICKER,
+    indexingPill: INDEXING_PILL,
+    ...Object.fromEntries(TILES.map((r, i) => [`tile-${i + 1}`, r])),
+  },
+  clicks: [
+    { label: "add-folder", point: CLICK_ADD_FOLDER, target: CHROME.addFolder },
+    { label: "picker-row-1", point: CLICK_ROW_1, target: PICKER_ROW_1 },
+    { label: "picker-add", point: CLICK_ADD, target: PICKER_ADD },
+  ],
+  disjoint: { tiles: TILES },
+};
+
 const reducedKinds: readonly [StaticFrameKind, string][] = [
   ["add-empty", "Choose a folder"],
   ["add-picker", "Keep the originals in place"],
@@ -240,15 +284,16 @@ export function AddFolderScene({ animationLevel }: OnboardingSceneProps) {
     <DemoSceneRoot>
       <DemoAppChrome />
       <motion.div
-        className="absolute left-[768px] top-[17px] z-30 h-9 w-[106px] rounded-[10px] border border-primary bg-primary/10"
+        className="absolute z-30 rounded-[10px] border border-primary bg-primary/10"
+        style={rectStyle(CHROME.addFolder)}
         animate={visualMotion(clickAccent, ADD_FOLDER_DURATION_MS, accentMotionOptions)}
       />
 
-      {tileGeometry.map(([left, top, width, height], index) => (
+      {TILES.map((tile, index) => (
         <motion.div
           key={index}
           className="absolute"
-          style={{ left, top, width, height }}
+          style={rectStyle(tile)}
           animate={visualMotion(
             tileTracks[`tile-${index + 1}`],
             ADD_FOLDER_DURATION_MS,
@@ -271,10 +316,13 @@ export function AddFolderScene({ animationLevel }: OnboardingSceneProps) {
       ))}
 
       <motion.div
-        className="absolute left-[280px] top-[146px] z-30 w-[380px] rounded-[16px] border border-border-strong bg-card p-5 shadow-[var(--shadow-float)]"
+        className="absolute z-30 rounded-[16px] border border-border-strong bg-card p-5 shadow-[var(--shadow-float)]"
+        style={{ left: PICKER.x, top: PICKER.y, width: PICKER.w }}
         animate={visualMotion(picker, ADD_FOLDER_DURATION_MS, accentMotionOptions)}
       >
-        <p className="mb-4 text-[13px] font-[650]">Choose a folder</p>
+        <p className="mb-4 h-[18px] text-[13px] font-[650] leading-[18px]">
+          Choose a folder
+        </p>
         {[0, 1].map((index) => (
           <div
             key={index}
@@ -296,15 +344,18 @@ export function AddFolderScene({ animationLevel }: OnboardingSceneProps) {
           </div>
         ))}
         <div className="mt-4 flex justify-end gap-2 text-[11px] font-[600]">
-          <div className="rounded-[9px] border border-border px-3 py-2">Cancel</div>
-          <div className="rounded-[9px] bg-primary px-3 py-2 text-primary-foreground">
+          <div className="grid h-8 w-[72px] place-items-center rounded-[9px] border border-border">
+            Cancel
+          </div>
+          <div className="grid h-8 w-[64px] place-items-center rounded-[9px] bg-primary text-primary-foreground">
             Add
           </div>
         </div>
       </motion.div>
 
       <motion.div
-        className="absolute right-5 top-[86px] z-30 flex h-12 w-[208px] items-center gap-3 rounded-[12px] border border-border bg-card px-3 shadow-[var(--shadow-soft)]"
+        className="absolute z-30 flex items-center gap-3 rounded-[12px] border border-border bg-card px-3 shadow-[var(--shadow-soft)]"
+        style={rectStyle(INDEXING_PILL)}
         animate={visualMotion(indexingPill, ADD_FOLDER_DURATION_MS, motionOptions)}
       >
         <LoaderCircle className="size-4 text-primary" strokeWidth={1.8} />

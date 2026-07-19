@@ -57,6 +57,65 @@ tutorial) are tracked as sub-issues #16/#17/#18.
 
 ---
 
+## DIAGNOSIS 2026-07-19 (video + telemetry + 6 independent hunters — supersedes "this is polish")
+
+The morning live test (28s video + perf-1784453601) was characterised frame-by-frame,
+cross-read against telemetry, and handed to six independent hunters (3 Claude debuggers,
+1 adversarial critic, 1 test-writer, GPT-5.6 Sol xhigh), each blind to the others. All
+six converged. The §"SESSION OUTCOME" framing ("mechanism right, polish left") was wrong:
+the packer IS correct (critic's 300-tile probe: zero fillable gaps; diag tests: largest
+steady-state gap 27px), but the orchestration layers around it carry five real defects.
+
+1. **Release self-target no-op** (`masonryReorder.ts:102-133` + `useTileDrag.ts:246-252`).
+   `spatialTargetId` scores the drop rect against a pre-gesture snapshot that INCLUDES the
+   active tile; for span≥2 a one-column move keeps `width−stride` of self-overlap (span-2:
+   68,672 px² self vs 31,808 px² best neighbour — 2.16×), self wins, `reorderWithinList`
+   no-ops, no `masonry_reorder` fires, and the settle pack reproduces the pre-drag layout.
+   The dead zone scales with tile width (span-2 needs >2 columns, span-3 ~>3). Ground
+   truth: all three 2×2 drags in the session left tile 876 at (240,296) — hard no-ops;
+   both span-1 drags committed. Confirmed by 6/6 hunters, three numeric reproductions.
+2. **Even-span off-by-one in the drag footprint** (`useTileDrag.ts:165-172` publishes
+   `centreCol = floor((desiredX+width/2)/stride)` with edge:2; `resolveFootprintLeft`
+   subtracts `span>>1`). For even spans the two conventions disagree by one column: a
+   still span-2 tile at column c is reserved at column c−1 from the first drag frame, so
+   the reserved obstacle never sits under the ghost and neighbours dodge the wrong
+   column. Odd spans are correct — `masonryGestureAnchor.test.ts` tests edge modes only
+   at span 3, which is why every existing 3×3 assertion passes.
+3. **No positional carry on release/settle** (`masonryPacking.ts:435-458` + resize path).
+   Only the SPAN persists; the settle pack re-derives the column by global argmin with no
+   memory of the gesture's anchor. Deterministic repro: skyline [T,S,T,T,T,T] → settle
+   jumps dx=−240. T3's −240/+240 pair = the left-corner preview pinning x=480 (right edge
+   fixed, by design) then the settle pack re-deriving x=720. The felt post-resize wobble.
+4. **Mid-drag chaos cluster**: (i) the reserved footprint renders EMPTY — no placeholder
+   element exists; (ii) footprint `top` is the raw pointer Y, so every pointer frame
+   re-solves the whole grid; (iii) correctness is endpoint-only — Sol's probe showed 0
+   intersections at pack endpoints but 54–112 along the interpolated 400ms paths, so
+   neighbours provably cross/stack mid-flight and vacated regions read as black holes.
+   Together this is the whole "empties the boxes and everything under it" report.
+5. **T2's persistent ~306px "gaps" are a telemetry artefact** (`telemetry.ts:306-310`):
+   the gap detector bins tiles by left-edge x only, so a span-2 tile never registers in
+   its second column — the reported gap is the tile itself (Sol reconstructed capture
+   ts=20064 numerically: 692 covers x=960 y=296–570; 586−(148+132)=306). Third
+   measurement-artefact wrong-lead of this saga. Dissent recorded: hunt-a proved greedy
+   packing CAN strand small real gaps (150px in a 7-item fixture; 27–109px at realistic
+   scale) — real but sub-tile-size, not the reported defect. Fix the monitor before
+   trusting any future gap report.
+
+Test-gap verdict (why 179/179 stayed green): reorder tests use only span-1 rects moved
+further than their own width; edge-mode tests only span 3; regression tests assert
+no-intersections (a pointer-disagreeing geometry passes) and relative-not-absolute gap
+counts; nothing tests cross-pack position stability; the fuzz checked overlaps, never
+density or pointer-agreement. Characterisation tests now exist at
+`masonryPacking.diag.test.ts` / `masonryReorder.diag.test.ts` (deliberately weak
+assertions; harden into failing-until-fixed gates as part of the fix round). Full hunter
+reports live in the session scratchpad (hunt-a/b/c, hunt-critic, hunt-tests,
+sol-findings).
+
+What survived review: the occupancy packer, the release state machine (no strand found),
+and the two-layer split as architecture. The fix round targets the layers around them.
+
+---
+
 ## 0. THE MISSION (what the masonry is supposed to do — from the getgo)
 
 The grid is not just a viewer; **free spatial manipulation is the point**:

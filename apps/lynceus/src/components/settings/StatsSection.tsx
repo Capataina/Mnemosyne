@@ -1,4 +1,6 @@
+import { useConfirm } from "@/components/ui/confirm";
 import { usePipelineStats } from "../../hooks/useIndexingStatus";
+import { usePurgeOrphanedImages } from "../../queries/useImages";
 import { Section } from "./controls";
 
 /**
@@ -22,6 +24,30 @@ import { Section } from "./controls";
  */
 export function StatsSection() {
   const stats = usePipelineStats();
+  const confirm = useConfirm();
+  const purgeOrphanedMutation = usePurgeOrphanedImages();
+
+  async function handleCleanUpOrphaned(orphanedCount: number) {
+    const confirmed = await confirm({
+      title: "Remove missing images?",
+      description: `${orphanedCount.toLocaleString()} ${
+        orphanedCount === 1 ? "image points" : "images point"
+      } at files that are no longer on disk. Removing them clears these entries from the library — files still on disk are untouched, and any tags on these entries are removed along with them.`,
+      confirmLabel: "Remove images",
+      destructive: true,
+    });
+    if (!confirmed) return;
+    try {
+      await purgeOrphanedMutation.mutateAsync();
+    } catch (err) {
+      await confirm({
+        title: "Could not clean up missing images",
+        description: err instanceof Error ? err.message : String(err),
+        confirmLabel: "OK",
+        alert: true,
+      });
+    }
+  }
 
   if (!stats) {
     return (
@@ -106,12 +132,21 @@ export function StatsSection() {
             );
           })}
           {stats.orphaned > 0 && (
-            <div className="flex items-center justify-between gap-3 rounded-[8px] bg-warning/8 px-2.5 py-2 text-[10.5px] text-warning">
-              <span>Source file missing</span>
-              <span className="font-[620] tabular-nums">
-                {stats.orphaned.toLocaleString()}{" "}
-                {stats.orphaned === 1 ? "image" : "images"}
-              </span>
+            <div className="space-y-1.5 rounded-[8px] bg-warning/8 px-2.5 py-2 text-[10.5px] text-warning">
+              <div className="flex items-center justify-between gap-3">
+                <span>Source file missing</span>
+                <span className="font-[620] tabular-nums">
+                  {stats.orphaned.toLocaleString()}{" "}
+                  {stats.orphaned === 1 ? "image" : "images"}
+                </span>
+              </div>
+              <button
+                onClick={() => handleCleanUpOrphaned(stats.orphaned)}
+                disabled={purgeOrphanedMutation.isPending}
+                className="w-full rounded-[6px] border border-warning/25 bg-warning/10 py-1 text-[10px] font-[600] text-warning transition-colors hover:bg-warning/[0.16] disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {purgeOrphanedMutation.isPending ? "Cleaning up…" : "Clean up"}
+              </button>
             </div>
           )}
         </div>

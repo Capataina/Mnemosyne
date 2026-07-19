@@ -251,6 +251,22 @@ export async function clearAllManualSpans(): Promise<void> {
 }
 
 /**
+ * Permanently delete every image row whose source file has gone missing
+ * from disk (`orphaned = 1`) — the "Clean up" affordance next to the
+ * "Source file missing" warning in Settings. The files on disk were
+ * already gone; this only removes the now-permanent DB debris (and any
+ * tags on those entries) plus their cached thumbnail files. Returns the
+ * number of rows removed, so the caller can show "Removed N images".
+ */
+export async function purgeOrphanedImages(): Promise<number> {
+  try {
+    return await invoke<number>("purge_orphaned_images");
+  } catch (error) {
+    throw new Error(formatApiError(error));
+  }
+}
+
+/**
  * Map a backend ImageSearchResult into the frontend's SimilarImageItem
  * shape. All three search commands (semantic, similar, tiered) now
  * return the same struct (audit consolidation), so this single helper

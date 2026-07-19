@@ -10,6 +10,7 @@ import {
   clearAllManualSpans,
   fetchFeedManifest,
   fetchImageDetails,
+  purgeOrphanedImages,
   removeTagFromImage,
   setManualColSpan,
 } from "../services/images";
@@ -262,6 +263,26 @@ export function useClearAllManualSpans() {
     onSettled: () => {
       queryClient.invalidateQueries({ queryKey: ["feed-manifest"] });
       queryClient.invalidateQueries({ queryKey: ["image-detail"] });
+    },
+  });
+}
+
+/** Permanently delete every orphaned (source-file-missing) image row —
+ *  the Settings "Clean up" affordance. No optimistic patch: orphaned
+ *  rows are already excluded from every `feed-manifest` query (the grid
+ *  never showed them), so there's nothing visible to update ahead of
+ *  the round-trip. `["pipelineStats"]` drives the orphan count itself;
+ *  `["feed-manifest"]` is invalidated too in case a stale cache
+ *  somehow retained a since-orphaned row. */
+export function usePurgeOrphanedImages() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: () => purgeOrphanedImages(),
+
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["pipelineStats"] });
+      queryClient.invalidateQueries({ queryKey: ["feed-manifest"] });
     },
   });
 }

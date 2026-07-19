@@ -79,6 +79,44 @@ impl ImageDatabase {
         Ok(updated)
     }
 
+    /// (id, root_id) for every orphaned row, ordered by id. Read-only —
+    /// callers that need to clean up on-disk artefacts tied to an
+    /// orphaned row (e.g. its cached thumbnail files) must snapshot this
+    /// BEFORE calling `purge_orphaned`, since the row those paths would
+    /// be derived from is gone once that runs.
+    pub fn list_orphaned_locations(&self) -> rusqlite::Result<Vec<(ID, Option<ID>)>> {
+        let conn = self.connection.lock().unwrap();
+        let mut stmt =
+            conn.prepare("SELECT id, root_id FROM images WHERE orphaned = 1 ORDER BY id")?;
+        let rows =
+            stmt.query_map([], |r| Ok((r.get::<_, ID>(0)?, r.get::<_, Option<ID>>(1)?)))?;
+        rows.collect()
+    }
+
+    /// Permanently delete every orphaned image row — remedy option 2 from
+    /// the orphan-lifecycle diagnosis ledger
+    /// (context/notes/image-identity-orphan-lifecycle.md): a scoped
+    /// DELETE for rows whose backing file vanished from disk and never
+    /// came back (`mark_orphaned` above only un-marks a row if the SAME
+    /// path reappears, so without this these rows are permanent debris).
+    /// `images_tags` and `embeddings` rows for the deleted ids cascade
+    /// away via the `ON DELETE CASCADE` FKs declared in mod.rs's schema —
+    /// `PRAGMA foreign_keys = ON` is set once on this writer connection
+    /// in `initialize()` and, being a per-connection (not per-file)
+    /// SQLite setting, holds for the connection's whole lifetime, so
+    /// every DELETE through it actually cascades.
+    ///
+    /// Returns the number of rows deleted. Callers that also want to
+    /// clean up the purged rows' cached thumbnail files must call
+    /// `list_orphaned_locations` first — this method's contract is
+    /// intentionally a bare count, not the rows it removed.
+    pub fn purge_orphaned(&self) -> rusqlite::Result<usize> {
+        self.connection
+            .lock()
+            .unwrap()
+            .execute("DELETE FROM images WHERE orphaned = 1", [])
+    }
+
     /// Insert an image path. With multi-folder support each row remembers
     /// which root it came from. Idempotent via `INSERT OR IGNORE` on the
     /// path uniqueness constraint — a re-scan never duplicates rows.
@@ -371,6 +409,92 @@ mod tests {
             .unwrap();
         assert_eq!(visible.len(), 1);
         assert_eq!(visible[0].path, "/b/1.jpg");
+    }
+
+    #[test]
+    fn purge_orphaned_deletes_rows_and_cascades_tags_and_embeddings() {
+        let db = fresh_db();
+        let r = db.add_root("/r".into(), None).unwrap();
+        db.add_image("/r/alive.jpg".into(), Some(r.id)).unwrap();
+        db.add_image("/r/dead.jpg".into(), Some(r.id)).unwrap();
+        let alive_id = db.get_image_id_by_path("/r/alive.jpg").unwrap();
+        let dead_id = db.get_image_id_by_path("/r/dead.jpg").unwrap();
+
+        // Attach a tag + embedding to BOTH rows, so the assertions below
+        // prove the cascade removes exactly the orphaned row's dependents
+        // and leaves the alive row's untouched.
+        let tag = db.create_tag("keep".into(), "#fff".into()).unwrap();
+        db.add_tag_to_image(alive_id, tag.id).unwrap();
+        db.add_tag_to_image(dead_id, tag.id).unwrap();
+        db.upsert_embedding(alive_id, "clip_vit_b_32", &[1.0, 0.0])
+            .unwrap();
+        db.upsert_embedding(dead_id, "clip_vit_b_32", &[0.0, 1.0])
+            .unwrap();
+
+        // Only alive.jpg survives the scan → dead.jpg gets orphaned.
+        db.mark_orphaned(r.id, &["/r/alive.jpg".to_string()])
+            .unwrap();
+
+        // list_orphaned_locations must see exactly the orphaned row,
+        // with its root_id, before anything is deleted.
+        let locations = db.list_orphaned_locations().unwrap();
+        assert_eq!(locations, vec![(dead_id, Some(r.id))]);
+
+        let deleted = db.purge_orphaned().unwrap();
+        assert_eq!(deleted, 1, "exactly the one orphaned row should be purged");
+
+        let conn = db.connection.lock().unwrap();
+        let remaining_ids: Vec<ID> = conn
+            .prepare("SELECT id FROM images ORDER BY id")
+            .unwrap()
+            .query_map([], |r| r.get::<_, ID>(0))
+            .unwrap()
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .unwrap();
+        assert_eq!(
+            remaining_ids,
+            vec![alive_id],
+            "the alive row must survive untouched"
+        );
+
+        let tag_image_ids: Vec<ID> = conn
+            .prepare("SELECT image_id FROM images_tags ORDER BY image_id")
+            .unwrap()
+            .query_map([], |r| r.get::<_, ID>(0))
+            .unwrap()
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .unwrap();
+        assert_eq!(
+            tag_image_ids,
+            vec![alive_id],
+            "the dead row's images_tags link must cascade away, alive's must survive"
+        );
+
+        let embedding_image_ids: Vec<ID> = conn
+            .prepare("SELECT image_id FROM embeddings ORDER BY image_id")
+            .unwrap()
+            .query_map([], |r| r.get::<_, ID>(0))
+            .unwrap()
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .unwrap();
+        assert_eq!(
+            embedding_image_ids,
+            vec![alive_id],
+            "the dead row's embeddings must cascade away, alive's must survive"
+        );
+        drop(conn);
+
+        // Idempotent: nothing left to purge on a second call.
+        assert_eq!(db.purge_orphaned().unwrap(), 0);
+    }
+
+    #[test]
+    fn purge_orphaned_is_a_no_op_when_nothing_is_orphaned() {
+        let db = fresh_db();
+        db.add_image("/only.jpg".into(), None).unwrap();
+        assert!(db.list_orphaned_locations().unwrap().is_empty());
+        assert_eq!(db.purge_orphaned().unwrap(), 0);
+        assert_eq!(db.get_all_images().unwrap().len(), 1);
     }
 
     #[test]

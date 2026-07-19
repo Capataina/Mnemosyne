@@ -10,6 +10,7 @@ use crate::db::{
 use crate::image_struct::ImageData;
 use crate::paths;
 use crate::thumbnail::ThumbnailGenerator;
+use crate::FusionIndexState;
 
 /// Bucket ladder of thumbnail widths the adaptive masonry grid requests.
 /// `get_thumbnail` snaps a caller's `target_px` up to the smallest of
@@ -219,4 +220,70 @@ pub fn set_manual_col_span(
 #[tracing::instrument(name = "ipc.clear_all_manual_spans", skip(db))]
 pub fn clear_all_manual_spans(db: State<'_, ImageDatabase>) -> Result<usize, ApiError> {
     Ok(db.clear_all_manual_col_spans()?)
+}
+
+/// Best-effort on-disk thumbnail cleanup for one purged image. Mirrors
+/// the exact naming `ThumbnailGenerator` writes — the base bucket as
+/// `thumb_<id>.jpg` (`generator.rs::generate_thumbnail`) and the eager
+/// extra buckets as `thumb_<id>_<width>.jpg` (`generator.rs::ensure_variant`) —
+/// so a row with only the base thumbnail generated simply no-ops on the
+/// three bucket variants it never had. Errors are swallowed: a stale
+/// thumbnail file left behind after a purge is cosmetic disk usage,
+/// never worth failing the whole purge over — the same posture
+/// `remove_root`'s per-root `remove_dir_all` takes for the same reason.
+fn remove_thumbnail_files(id: ID, root_id: Option<ID>) {
+    let dir = match root_id {
+        Some(rid) => paths::thumbnails_dir_for_root(rid),
+        None => paths::thumbnails_dir(),
+    };
+    let _ = std::fs::remove_file(dir.join(format!("thumb_{id}.jpg")));
+    for bucket in &THUMBNAIL_BUCKETS[1..] {
+        let _ = std::fs::remove_file(dir.join(format!("thumb_{id}_{bucket}.jpg")));
+    }
+}
+
+/// Permanently delete every orphaned image row — the explicit "clean up
+/// missing files" affordance next to the orphan count in Settings
+/// (remedy option 2 in
+/// context/notes/image-identity-orphan-lifecycle.md; option 1,
+/// content-hash relinking, would additionally *preserve* tags/placement/
+/// embeddings across a restructure instead of just discarding the
+/// debris, but that's a bigger structural change tracked separately).
+///
+/// `images_tags` and `embeddings` rows for the purged ids cascade away
+/// inside `db.purge_orphaned()` itself (`ON DELETE CASCADE`, verified
+/// by its unit test in `db/notes_orphans.rs`); this command's own job
+/// is (1) best-effort cleanup of the thumbnail files those rows leave
+/// behind on disk — collected via `list_orphaned_locations` BEFORE the
+/// rows are deleted, since the paths are derived from `id` + `root_id`,
+/// not read back from the row afterwards — and (2) dropping the fusion
+/// caches so a purged id already resident there (from a similarity
+/// query that ran before this cleanup) can never surface again, same
+/// reasoning as `remove_root` / `set_root_enabled`.
+///
+/// There is no per-root `remove_dir_all` shortcut available here the
+/// way `remove_root` has one: orphaned rows from many different roots
+/// (or none) can be purged in the same call, so cleanup is necessarily
+/// per-file rather than per-directory.
+///
+/// `(async)`: a large library can have thousands of orphaned rows — the
+/// DELETE plus per-row thumbnail-file removal must not block the main
+/// thread.
+#[tauri::command(async)]
+#[tracing::instrument(name = "ipc.purge_orphaned_images", skip(db, fusion_state))]
+pub fn purge_orphaned_images(
+    db: State<'_, ImageDatabase>,
+    fusion_state: State<'_, FusionIndexState>,
+) -> Result<usize, ApiError> {
+    let locations = db.list_orphaned_locations()?;
+    let deleted = db.purge_orphaned()?;
+    for (id, root_id) in locations {
+        remove_thumbnail_files(id, root_id);
+    }
+    // The purged ids may still be resident in the fusion caches from a
+    // similarity query that ran before this cleanup; clear so the next
+    // query cold-populates against the now-smaller DB.
+    fusion_state.invalidate_all();
+    tracing::info!("purge_orphaned_images removed {} orphaned rows", deleted);
+    Ok(deleted)
 }

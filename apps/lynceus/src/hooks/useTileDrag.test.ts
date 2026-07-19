@@ -5,6 +5,11 @@ import {
   computeMasonryGeometry,
   type MasonryItemPlacement,
 } from "../components/masonryPacking";
+import {
+  SETTLE_CLEANUP_SLACK_MS,
+  SETTLE_EASING,
+  SETTLE_MS,
+} from "../components/masonryMotion";
 import type { FeedItem } from "../types";
 import { useTileDrag } from "./useTileDrag";
 
@@ -468,11 +473,15 @@ describe("drag release barrier", () => {
         result.current.finishSettlingVisual();
       });
 
-      expect(node.style.transition).toBe("transform 400ms ease-in-out");
+      expect(node.style.transition).toBe(
+        `transform ${SETTLE_MS}ms ${SETTLE_EASING}`,
+      );
       expect(node.style.transform).toBe("translate3d(0px, 0px, 0)");
       expect(result.current.dragItemId).toBe(1);
 
-      act(() => vi.advanceTimersByTime(450));
+      act(() =>
+        vi.advanceTimersByTime(SETTLE_MS + SETTLE_CLEANUP_SLACK_MS),
+      );
       expect(result.current.dragItemId).toBeNull();
       expect(node.style.transition).toBe("");
     } finally {

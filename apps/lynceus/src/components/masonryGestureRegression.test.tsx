@@ -331,6 +331,8 @@ describe("reserved rectangle is the rendered rectangle", () => {
         width={240.75}
         height={135.5}
         onTop={false}
+        motion="settle"
+        settling={false}
       >
         <div className="h-full w-full" />
       </MasonryAnchor>,

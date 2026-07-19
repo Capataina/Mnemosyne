@@ -171,6 +171,16 @@ in stable ID order even though placements remain in feed order; React therefore
 updates persistent nodes instead of relocating them in the child list, preserving
 the CSS transition start frame for displaced tiles.
 
+Motion timing lives in `components/masonryMotion.ts`. While a gesture footprint is
+active, neighbour anchors re-target `transform` over 200ms with
+`cubic-bezier(0.2, 0, 0, 1)` so stepwise packs track the pointer without inheriting
+the one-shot release glide. Once the footprint clears, anchors settle transform,
+width, and height over 260ms with the existing ease-out-expo curve
+`cubic-bezier(0.16, 1, 0.3, 1)`. During the engine's `settling` phase only,
+anchors the settle actually displaced receive `will-change: transform`; idle and live-drag anchors
+do not retain compositor layers. Active-tile wrappers keep their separate scoped
+promotion and bypass anchor transitions throughout the gesture.
+
 ### `useTileDrag` — one spatial transaction
 
 A 6px threshold separates click from drag. Each animation frame converts the
@@ -199,7 +209,8 @@ tile out-overlaps any smaller neighbour on its own vacated rect (the
 in the reserved slot, which otherwise paints as bare background while the
 tile's pixels float with the pointer. The ghost stays at the literal drop
 rectangle while the worker computes the dense layout; once that geometry
-commits, its transform animates to zero over the snapped anchor. Concurrent
+commits, its transform animates to zero over 260ms using the shared settle curve
+and clears after the shared 50ms cleanup slack. Concurrent
 feed deltas are merged by stable ID; no interaction state stores a feed index.
 
 ### `useTileResize` — all four corners and atomic span authority
@@ -226,7 +237,8 @@ clears only after that Promise settles. There is therefore no render in which th
 preview has vanished but the feed still describes the old 1×1 span, and no geometry
 from such a gap can be adopted. It then enters `settling`: the dense pack commits
 behind the retained pixel ghost, whose transform, width, and height animate to the
-committed anchor before local gesture state clears. The commit callback carries
+committed anchor over the shared 260ms settle before local gesture state clears.
+The commit callback carries
 the previewed `{startCol, top}`, which the route stores as a session placement
 anchor only after mutation success. The settle pack therefore reserves the exact
 rectangle the resize preview showed instead of re-deriving X by global argmin or

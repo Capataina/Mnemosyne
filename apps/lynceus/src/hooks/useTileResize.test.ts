@@ -2,6 +2,11 @@ import { act, renderHook } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import type { MasonryItemPlacement } from "../components/masonryPacking";
 import {
+  SETTLE_CLEANUP_SLACK_MS,
+  SETTLE_EASING,
+  SETTLE_MS,
+} from "../components/masonryMotion";
+import {
   anchorStartColFor,
   resizePreviewForSpan,
   resizeVisualForPointer,
@@ -282,5 +287,78 @@ describe("resize commit sequencing", () => {
     expect(result.current.resizeState).toBeNull();
     expect(result.current.gestureFootprint).toBeUndefined();
     expect(node.style.willChange).toBe("");
+  });
+
+  it("animates the retained resize ghost with the shared settle tokens", async () => {
+    vi.useFakeTimers();
+    try {
+      const placement: MasonryItemPlacement = {
+        itemData: {
+          id: 10,
+          name: "tile-10",
+          width: 100,
+          height: 100,
+          hasThumbnail: true,
+        },
+        x: 0,
+        y: 0,
+        width: 100,
+        height: 100,
+        colSpan: 1,
+        isSelected: false,
+      };
+      const node = document.createElement("div");
+      const placementByIdRef = { current: new Map([[10, placement]]) };
+      const { result } = renderHook(() =>
+        useTileResize({
+          enabled: true,
+          columnWidthRef: { current: 100 },
+          columnCountRef: { current: 4 },
+          columnGap: 0,
+          placementsRef: { current: [placement] },
+          placementByIdRef,
+          tileElementsRef: { current: new Map([[10, node]]) },
+          suppressClick: vi.fn(),
+        }),
+      );
+
+      act(() => {
+        result.current.onResizeHandlePointerDown(10, "br", {
+          clientX: 100,
+          clientY: 100,
+        } as React.PointerEvent<HTMLDivElement>);
+      });
+      await act(async () => {
+        window.dispatchEvent(
+          new PointerEvent("pointerup", { clientX: 200, clientY: 200 }),
+        );
+        await Promise.resolve();
+      });
+
+      placementByIdRef.current = new Map([
+        [10, { ...placement, width: 200, height: 200, colSpan: 2 }],
+      ]);
+      act(() => {
+        result.current.onGestureSettled();
+        result.current.finishSettlingVisual();
+      });
+
+      expect(node.style.transition).toBe(
+        [
+          `transform ${SETTLE_MS}ms ${SETTLE_EASING}`,
+          `width ${SETTLE_MS}ms ${SETTLE_EASING}`,
+          `height ${SETTLE_MS}ms ${SETTLE_EASING}`,
+        ].join(", "),
+      );
+      expect(result.current.resizeState?.phase).toBe("settling");
+
+      act(() =>
+        vi.advanceTimersByTime(SETTLE_MS + SETTLE_CLEANUP_SLACK_MS),
+      );
+      expect(result.current.resizeState).toBeNull();
+      expect(node.style.transition).toBe("");
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

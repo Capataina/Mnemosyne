@@ -24,6 +24,39 @@ One real session at the machine should confirm: the pill's per-phase reset feel 
 smoothness); post-index search freshness (the `1514a90` fix, reasoned + unit-tested, not
 e2e-driven); and the new timer panel/pill look in the WebView.
 
+## Gesture feel and measurement hygiene (2026-07-19)
+
+> Post-review corrections folded in the same round: the two-frame teleport
+> threshold is capped at 0.75, not 1 — a cap of 1 required the entire
+> displacement in one sample and silently missed any teleport diluted by
+> co-occurring motion (detection SENSITIVITY changed with the sampling
+> cadence, not just cost; the 0.75 figure sits above the steepest smooth
+> ease's measured ~59%-per-sample peak). Compositor promotion is scoped to
+> anchors the settle actually moved, via a latch that holds through the
+> glide. Accepted corner: live-mode transitions are transform-only, so a
+> mid-gesture window resize or a mid-gesture feed-delta that changes an
+> already-resized neighbour's dimensions snaps that tile's width for one
+> frame — both rare, both invisible against an active gesture, and cheaper
+> than re-introducing layout-property transitions to the live path.
+
+The post-0.7.0 gesture hunt exonerated release-path JavaScript: measured work stayed below 0.4ms
+at 2,141 items, while the perceived delay came from a 400ms ease-in-out settle that accelerated
+from rest and from neighbour transitions repeatedly restarting during live footprint steps.
+Decision: one `masonryMotion.ts` source now gives live neighbour reflows a 200ms Material-style
+deceleration and final anchor/ghost settling a 260ms ease-out-expo curve, with the existing 50ms
+cleanup slack. Final geometry, placement pins, and the WYSIWYG release barrier remain unchanged;
+`will-change: transform` is scoped to anchors only while the engine settles.
+
+The profiling monitor was also contaminating the evidence it collected: it read every visible
+tile at 60fps forever, allocated fresh maps per frame, and interleaved geometry and computed-style
+reads. It is now pointer/DOM-mutation armed, stops 1.5 seconds after motion, samples every second
+frame, reuses persistent maps, and batches every bounding-box read before computed styles. This is
+a measurement-hygiene correction to the profiling-only surface, not a production optimisation.
+
+Optimistic pre-pack settling remains deferred because it crosses the just-stabilised release
+handoff. Reopen it only **if a release build still shows release dead-time**; the required proof is
+that the ghost remains visibly frozen between pointer-up and the authoritative dense-pack commit.
+
 ## Do not reintroduce (verified failures / wrong instincts)
 
 - **`content-visibility: auto` on tiles** — caused disappearing tiles during fast drags (removed

@@ -340,8 +340,24 @@ export function captureGridGeometry(): Record<string, unknown> | null {
  * (nothing animated it) vs slide when it moved gradually. Pure, so the
  * threshold is unit-testable.
  */
-export function classifyMove(total: number, maxFrameJump: number): "TELEPORT" | "slide" {
-  return maxFrameJump > total * 0.6 ? "TELEPORT" : "slide";
+export function classifyMove(
+  total: number,
+  maxFrameJump: number,
+  sampleSpanFrames = 1,
+): "TELEPORT" | "slide" {
+  // The original threshold meant ">60% in one browser frame". A sample
+  // spanning multiple frames legitimately accumulates more smooth motion,
+  // so the threshold scales with the span — but it must stay strictly
+  // BELOW 1: an adversarial review showed a cap of 1 collapsed detection
+  // to "the entire displacement in one sample", which any co-occurring
+  // legitimate motion dilutes past, blinding the monitor to exactly the
+  // jank it exists to catch. The steepest smooth curve in the motion
+  // tokens (SETTLE_EASING at the two-frame cadence) peaks at ~59% of its
+  // total per sample — measured, not assumed — so 0.75 discriminates:
+  // no false positives from clean eases, and a genuine unanimated jump
+  // (~100% in one sample) is still caught.
+  const thresholdFraction = Math.min(0.6 * sampleSpanFrames, 0.75);
+  return maxFrameJump > total * thresholdFraction ? "TELEPORT" : "slide";
 }
 
 /**
@@ -362,9 +378,10 @@ const monitorContext: MonitorContext = {
 };
 
 /**
- * The unified layout monitor — ONE always-on observer that classifies EVERY
+ * The unified layout monitor — one armed observer that classifies every
  * masonry reflow, whatever triggered it (drag reorder, indexing delta, resize,
- * filter change). No hard-coded per-trigger sampler.
+ * filter change). Pointer gestures and masonry DOM mutations arm a bounded rAF
+ * sampling window; idle browsing has no per-frame monitor work.
  *
  * An rAF loop tracks every visible tile frame-to-frame. When motion starts it
  * captures the current interaction context; while motion continues it
@@ -379,10 +396,14 @@ const monitorContext: MonitorContext = {
  * was its transition even live when it jumped, did it appear/vanish, and is the
  * final layout clean.
  */
-function startLayoutMonitor(): void {
-  const SETTLE_FRAMES = 5; // still frames that end a reflow
+function startLayoutMonitor(): () => void {
+  const SAMPLE_SPAN_FRAMES = 2;
+  const ACTIVE_WINDOW_MS = 1_500;
+  // Preserve roughly the old five-browser-frame settle window while sampling
+  // every second frame.
+  const SETTLE_SAMPLES = Math.ceil(5 / SAMPLE_SPAN_FRAMES);
   const MOVE_EPS = 1; // px; below this a tile is "still" this frame
-  const JUMP_PX = 24; // single-frame move worth reading transition state for
+  const JUMP_PX = 24 * SAMPLE_SPAN_FRAMES;
   const MEANINGFUL = 6; // total px a tile must move to be reported
 
   type Snap = { x: number; y: number };
@@ -401,12 +422,12 @@ function startLayoutMonitor(): void {
     el: HTMLElement;
   }
 
-  const readTiles = (): Map<number, TileSnap> => {
-    const m = new Map<number, TileSnap>();
+  const readTiles = (target: Map<number, TileSnap>): void => {
+    target.clear();
     for (const el of document.querySelectorAll<HTMLElement>("[data-masonry-id]")) {
       const id = Number(el.dataset.masonryId);
       const r = el.getBoundingClientRect();
-      m.set(id, {
+      target.set(id, {
         committed: {
           x: committedNumber(el, "masonryX", r.left),
           y: committedNumber(el, "masonryY", r.top),
@@ -415,20 +436,21 @@ function startLayoutMonitor(): void {
         el,
       });
     }
-    return m;
   };
 
-  let prevCommitted = new Map<number, Snap>();
-  let prevRendered = new Map<number, Snap>();
+  // These maps swap roles after each sample and are cleared/refilled rather
+  // than allocated at rAF cadence.
+  let previousTiles = new Map<number, TileSnap>();
+  let currentTiles = new Map<number, TileSnap>();
   let active = false;
   let idle = 0;
-  let acc = new Map<number, Acc>();
+  const acc = new Map<number, Acc>();
   const mounted = new Set<number>();
   const unmounted = new Set<number>();
   let ctxAtStart: MonitorContext = { ...monitorContext };
 
   const reset = () => {
-    acc = new Map();
+    acc.clear();
     mounted.clear();
     unmounted.clear();
   };
@@ -446,7 +468,7 @@ function startLayoutMonitor(): void {
         dx: Math.round(dx),
         dy: Math.round(dy),
         maxFrameJump: Math.round(a.maxJump),
-        verdict: classifyMove(total, a.maxJump),
+        verdict: classifyMove(total, a.maxJump, SAMPLE_SPAN_FRAMES),
         dir:
           Math.abs(dx) > Math.abs(dy)
             ? dx < 0
@@ -480,14 +502,16 @@ function startLayoutMonitor(): void {
     reset();
   };
 
-  const step = () => {
-    const cur = readTiles();
+  const sample = (): boolean => {
+    // Geometry is read as one phase. Computed styles for noteworthy jumps are
+    // deferred until every getBoundingClientRect read in this sample is done.
+    readTiles(currentTiles);
     let motion = false;
+    const styleReads: Array<{ acc: Acc; el: HTMLElement }> = [];
 
-    for (const [id, { committed, rendered, el }] of cur) {
-      const priorCommitted = prevCommitted.get(id);
-      const priorRendered = prevRendered.get(id);
-      if (!priorCommitted || !priorRendered) {
+    for (const [id, { committed, rendered, el }] of currentTiles) {
+      const prior = previousTiles.get(id);
+      if (!prior) {
         if (active) mounted.add(id);
         continue;
       }
@@ -495,12 +519,12 @@ function startLayoutMonitor(): void {
       // transform. The rendered box is retained solely to grade whether the
       // browser interpolated that target change or teleported it.
       const targetJump = Math.hypot(
-        committed.x - priorCommitted.x,
-        committed.y - priorCommitted.y,
+        committed.x - prior.committed.x,
+        committed.y - prior.committed.y,
       );
       const visualJump = Math.hypot(
-        rendered.x - priorRendered.x,
-        rendered.y - priorRendered.y,
+        rendered.x - prior.rendered.x,
+        rendered.y - prior.rendered.y,
       );
       if (targetJump > MOVE_EPS || visualJump > MOVE_EPS) {
         motion = true;
@@ -511,7 +535,7 @@ function startLayoutMonitor(): void {
       }
       if (visualJump > MOVE_EPS) {
         const a = acc.get(id) ?? {
-          first: priorRendered,
+          first: prior.rendered,
           last: rendered,
           maxJump: 0,
           jumpTrans: null,
@@ -520,48 +544,108 @@ function startLayoutMonitor(): void {
         if (visualJump > a.maxJump) {
           a.maxJump = visualJump;
           if (visualJump > JUMP_PX) {
-            const cs = getComputedStyle(el);
-            a.jumpTrans = { prop: cs.transitionProperty, dur: cs.transitionDuration };
+            styleReads.push({ acc: a, el });
           }
         }
         acc.set(id, a);
       }
     }
-    for (const [id] of prevCommitted) {
-      if (!cur.has(id)) {
+    for (const [id] of previousTiles) {
+      if (!currentTiles.has(id)) {
         if (active) unmounted.add(id);
         motion = true;
       }
     }
 
-    prevCommitted = new Map(
-      Array.from(cur, ([id, value]) => [id, value.committed]),
-    );
-    prevRendered = new Map(
-      Array.from(cur, ([id, value]) => [id, value.rendered]),
-    );
+    for (const { acc: move, el } of styleReads) {
+      const cs = getComputedStyle(el);
+      move.jumpTrans = {
+        prop: cs.transitionProperty,
+        dur: cs.transitionDuration,
+      };
+    }
+
+    const reusable = previousTiles;
+    previousTiles = currentTiles;
+    currentTiles = reusable;
 
     if (motion) {
       idle = 0;
     } else if (active) {
       idle += 1;
-      if (idle >= SETTLE_FRAMES) {
+      if (idle >= SETTLE_SAMPLES) {
         flush();
         active = false;
         idle = 0;
       }
     }
-    requestAnimationFrame(step);
+    return motion;
   };
 
-  const initial = readTiles();
-  prevCommitted = new Map(
-    Array.from(initial, ([id, value]) => [id, value.committed]),
-  );
-  prevRendered = new Map(
-    Array.from(initial, ([id, value]) => [id, value.rendered]),
-  );
-  requestAnimationFrame(step);
+  let frame: number | null = null;
+  let framesUntilSample = SAMPLE_SPAN_FRAMES;
+  let lastActivityAt = performance.now();
+
+  const step = (now: number) => {
+    frame = null;
+    framesUntilSample -= 1;
+    if (framesUntilSample === 0) {
+      framesUntilSample = SAMPLE_SPAN_FRAMES;
+      if (sample()) lastActivityAt = now;
+    }
+
+    if (
+      monitorContext.dragging ||
+      active ||
+      now - lastActivityAt <= ACTIVE_WINDOW_MS
+    ) {
+      frame = requestAnimationFrame(step);
+    }
+  };
+
+  const arm = () => {
+    lastActivityAt = performance.now();
+    if (frame !== null) return;
+    framesUntilSample = SAMPLE_SPAN_FRAMES;
+    frame = requestAnimationFrame(step);
+  };
+
+  readTiles(previousTiles);
+
+  // React pack commits update anchor data/style attributes or mount/unmount
+  // anchors, so a mutation re-arms non-pointer reflows such as feed deltas.
+  const mutationTouchesMasonry = (mutation: MutationRecord): boolean => {
+    if (
+      mutation.target instanceof Element &&
+      mutation.target.closest("[data-masonry-id]")
+    ) {
+      return true;
+    }
+    return [...mutation.addedNodes, ...mutation.removedNodes].some(
+      (node) =>
+        node instanceof Element &&
+        (node.matches("[data-masonry-id]") ||
+          node.querySelector("[data-masonry-id]")),
+    );
+  };
+  const mutationObserver = new MutationObserver((mutations) => {
+    if (mutations.some(mutationTouchesMasonry)) arm();
+  });
+  mutationObserver.observe(document.body, {
+    subtree: true,
+    childList: true,
+    attributes: true,
+    attributeFilter: [
+      "style",
+      "data-masonry-x",
+      "data-masonry-y",
+      "data-masonry-width",
+      "data-masonry-height",
+    ],
+  });
+
+  arm();
+  return arm;
 }
 
 /** First `[data-masonry-id]` tile under a screen point, or EMPTY. */
@@ -647,6 +731,7 @@ export function initTelemetry(queryClient: QueryClient): void {
   // caused it and where the cursor was. The reflow classification itself
   // (teleport/slide, mount/unmount, geometry) is the monitor's job, not
   // this handler's — one observer for all reflows, not a per-event sampler.
+  const armLayoutMonitor = startLayoutMonitor();
   let pointerDown = false;
   let lastDragSample = 0;
 
@@ -658,6 +743,7 @@ export function initTelemetry(queryClient: QueryClient): void {
       monitorContext.dragging = true;
       monitorContext.grabbedId = under.id;
       monitorContext.cursor = { x: Math.round(e.clientX), y: Math.round(e.clientY) };
+      armLayoutMonitor();
       recordAction("pointer_down", {
         x: Math.round(e.clientX),
         y: Math.round(e.clientY),
@@ -673,6 +759,7 @@ export function initTelemetry(queryClient: QueryClient): void {
     "pointermove",
     (e) => {
       if (!pointerDown) return; // only trace motion WHILE holding
+      armLayoutMonitor();
       monitorContext.cursor = { x: Math.round(e.clientX), y: Math.round(e.clientY) };
       const now = Date.now();
       if (now - lastDragSample < DRAG_SAMPLE_MS) return;
@@ -693,6 +780,7 @@ export function initTelemetry(queryClient: QueryClient): void {
     (e) => {
       if (!pointerDown) return;
       pointerDown = false;
+      armLayoutMonitor();
       const under = tileUnderPoint(e.clientX, e.clientY);
       recordAction("pointer_up", {
         x: Math.round(e.clientX),
@@ -711,9 +799,6 @@ export function initTelemetry(queryClient: QueryClient): void {
     },
     { capture: true, passive: true },
   );
-
-  // The one observer that classifies every reflow.
-  startLayoutMonitor();
 
   document.addEventListener(
     "keydown",

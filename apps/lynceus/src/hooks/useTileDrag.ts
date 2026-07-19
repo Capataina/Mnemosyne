@@ -10,9 +10,13 @@ import {
   type SpatialPlacement,
   type SpatialRect,
 } from "./masonryReorder";
+import {
+  SETTLE_CLEANUP_SLACK_MS,
+  SETTLE_EASING,
+  SETTLE_MS,
+} from "../components/masonryMotion";
 
 const DRAG_THRESHOLD_PX = 6;
-const GESTURE_SETTLE_MS = 400;
 /** Vertical step for the published footprint's `top`. The ghost stays
  * pixel-exact; only the reserved obstacle moves in steps, so a drag re-packs
  * the grid per step crossing instead of per pointer pixel and neighbours get
@@ -524,11 +528,11 @@ export function useTileDrag(input: UseTileDragInput) {
     // The rebase above happens in this layout effect. Force that one active
     // wrapper to establish its start frame before enabling the settle curve.
     void node.offsetWidth;
-    node.style.transition = `transform ${GESTURE_SETTLE_MS}ms ease-in-out`;
+    node.style.transition = `transform ${SETTLE_MS}ms ${SETTLE_EASING}`;
     node.style.transform = "translate3d(0px, 0px, 0)";
     settleTimerRef.current = window.setTimeout(
       finish,
-      GESTURE_SETTLE_MS + 50,
+      SETTLE_MS + SETTLE_CLEANUP_SLACK_MS,
     );
   }, [clearTileVisual, placementByIdRef, tileElementsRef, writeDragVisual]);
 

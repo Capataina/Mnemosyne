@@ -25,6 +25,16 @@ describe("classifyMove", () => {
     expect(classifyMove(100, 61)).toBe("TELEPORT");
     expect(classifyMove(100, 59)).toBe("slide");
   });
+  it("scales the threshold for half-rate samples, capped below total-dilution", () => {
+    // At two-frame sampling the cap is 0.75: the steepest smooth ease peaks
+    // at ~59% of total per sample (no false positives), while a genuine
+    // unanimated jump still classifies even when other motion shares the
+    // accumulation window (a cap of 1 required the ENTIRE displacement in
+    // one sample and silently missed diluted teleports).
+    expect(classifyMove(100, 74, 2)).toBe("slide");
+    expect(classifyMove(100, 76, 2)).toBe("TELEPORT");
+    expect(classifyMove(100, 100, 2)).toBe("TELEPORT");
+  });
 });
 
 describe("tilesOverlap", () => {

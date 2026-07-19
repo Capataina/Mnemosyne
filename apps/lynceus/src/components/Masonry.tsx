@@ -136,6 +136,7 @@ export default function Masonry(props: MasonryProps) {
   // start both gestures at once.
   const gestureFootprint =
     resize.gestureFootprint ?? drag.gestureFootprint;
+  const anchorMotion = gestureFootprint ? "live" : "settle";
   const handleGestureSettled = useCallback(() => {
     drag.onGestureSettled();
     resize.onGestureSettled();
@@ -247,7 +248,7 @@ export default function Masonry(props: MasonryProps) {
   //
   // Known minor trade-off: among two *ordinary* (non-`onTop`) tiles that cross
   // paths mid-slide, painter order now follows id rather than pack order, so
-  // which briefly paints over the other during the ~400ms cross is arbitrary.
+  // which briefly paints over the other during the settle cross is arbitrary.
   // The settled pack never overlaps (masonryPacking guarantees it) and the
   // dragged/resizing/selected tiles are raised by z-50, so this is a
   // sub-second z-flip between two opaque image tiles, not a layout artefact.
@@ -281,6 +282,8 @@ export default function Masonry(props: MasonryProps) {
             height={item.height}
             onTop={item.isSelected || isDraggingThis || id === resizingId}
             snap={id === resizingId || isDraggingThis}
+            motion={anchorMotion}
+            settling={settling}
           >
             <MasonryItem
               item={item.itemData}

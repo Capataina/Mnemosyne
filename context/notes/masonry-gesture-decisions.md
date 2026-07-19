@@ -63,9 +63,10 @@
 - A pinned tile can leave a small gap above/below when no later tile is short
   enough to backfill (inherent to honouring user placement — observed and
   accepted in the final live pass).
-- Mid-flight tiles can cross during the 400ms slides (painter-order flip,
-  sub-second, accepted since 91564f0); the deliberate-collision choreography
-  was never built because stable pack targets made it unnecessary.
+- Mid-flight tiles can cross during the 200ms live reflow or 260ms settle
+  (painter-order flip, sub-second, accepted since 91564f0); the
+  deliberate-collision choreography was never built because stable pack
+  targets made it unnecessary.
 
 ## The hard-won process lessons
 

@@ -4,9 +4,13 @@ import type {
   MasonryItemPlacement,
   MasonryPlacementAnchor,
 } from "../components/masonryPacking";
+import {
+  SETTLE_CLEANUP_SLACK_MS,
+  SETTLE_EASING,
+  SETTLE_MS,
+} from "../components/masonryMotion";
 
 export type ResizeCorner = "tl" | "tr" | "bl" | "br";
-const GESTURE_SETTLE_MS = 400;
 
 export function isLeftCorner(corner: ResizeCorner): boolean {
   return corner === "tl" || corner === "bl";
@@ -553,16 +557,16 @@ export function useTileResize(input: UseTileResizeInput) {
     writeTileVisual(id, visual);
     void node.offsetWidth;
     node.style.transition = [
-      `transform ${GESTURE_SETTLE_MS}ms ease-in-out`,
-      `width ${GESTURE_SETTLE_MS}ms ease-in-out`,
-      `height ${GESTURE_SETTLE_MS}ms ease-in-out`,
+      `transform ${SETTLE_MS}ms ${SETTLE_EASING}`,
+      `width ${SETTLE_MS}ms ${SETTLE_EASING}`,
+      `height ${SETTLE_MS}ms ${SETTLE_EASING}`,
     ].join(", ");
     node.style.width = `${placement.width}px`;
     node.style.height = `${placement.height}px`;
     node.style.transform = "translate3d(0px, 0px, 0)";
     settleTimerRef.current = window.setTimeout(
       finish,
-      GESTURE_SETTLE_MS + 50,
+      SETTLE_MS + SETTLE_CLEANUP_SLACK_MS,
     );
   }, [clearTileVisual, placementByIdRef, tileElementsRef, writeTileVisual]);
 

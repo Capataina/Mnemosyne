@@ -4,6 +4,7 @@ import { useEffect } from "react";
 import { BrowserRouter, useRoutes } from "react-router-dom";
 
 import routes from "~react-pages";
+import { BootSplash } from "./components/BootSplash";
 import { ConfirmProvider } from "./components/ui/confirm";
 import { queryClient } from "./queries/queryClient";
 import { isProfilingEnabled } from "./services/perf";
@@ -28,6 +29,7 @@ function App() {
       <QueryClientProvider client={queryClient}>
         <ConfirmProvider>
           <Routes />
+          <BootSplash />
         </ConfirmProvider>
       </QueryClientProvider>
     </BrowserRouter>

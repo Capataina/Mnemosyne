@@ -314,6 +314,22 @@
   animation: skeleton-shimmer 1.8s cubic-bezier(0.4, 0, 0.2, 1) infinite;
 }
 
+@keyframes boot-bar-sweep {
+  from { transform: translateX(-100%); }
+  to { transform: translateX(350%); }
+}
+
+.boot-bar-sweep {
+  animation: boot-bar-sweep 1.1s cubic-bezier(0.45, 0, 0.4, 1) infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .boot-bar-sweep {
+    animation: none;
+    transform: translateX(75%);
+  }
+}
+
 /* `.masonry-tile` intentionally carries no `content-visibility` — it
    skipped painting tiles the browser judged off-screen, which during a
    fast drag/reflow blanked tiles out until you hovered them (they

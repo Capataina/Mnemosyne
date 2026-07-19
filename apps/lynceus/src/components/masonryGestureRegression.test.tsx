@@ -311,7 +311,7 @@ describe("occupancy-aware gesture packing", () => {
         startCol: 3,
         top: 12_345,
       },
-      columnAnchors: null,
+      placementAnchors: null,
     };
     const geometry = computeMasonryGeometry(input);
     expect(geometry.count).toBe(count);

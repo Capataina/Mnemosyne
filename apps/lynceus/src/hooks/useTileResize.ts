@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState, type RefObject } from "react"
 import type {
   MasonryGestureFootprint,
   MasonryItemPlacement,
+  MasonryPlacementAnchor,
 } from "../components/masonryPacking";
 
 export type ResizeCorner = "tl" | "tr" | "bl" | "br";
@@ -171,12 +172,12 @@ interface UseTileResizeInput {
   tileElementsRef: RefObject<Map<number, HTMLElement>>;
   /** Resolves only after the durable/optimistic span is authoritative. The
    * local footprint remains live until then, eliminating the 1×1 gap render.
-   * `startCol` is the previewed left column — the caller pins it so the
-   * settle pack cannot relocate the tile the user just placed. */
+   * The anchor is the previewed rectangle coordinate — the caller pins it so
+   * settle cannot relocate the tile the user just placed. */
   onResizeCommit?: (
     id: number,
     colSpan: number | null,
-    startCol: number,
+    anchor: MasonryPlacementAnchor,
   ) => void | Promise<unknown>;
   suppressClick: () => void;
 }
@@ -470,7 +471,10 @@ export function useTileResize(input: UseTileResizeInput) {
         result = commitRef.current?.(
           live.id,
           live.span === 1 ? null : live.span,
-          live.footprint.startCol,
+          {
+            startCol: live.footprint.startCol,
+            top: live.footprint.top,
+          },
         );
       } catch {
         cancelResize(sequence);

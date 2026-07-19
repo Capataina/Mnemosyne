@@ -180,9 +180,9 @@ describe("resize commit sequencing", () => {
       );
     });
 
-    // The previewed left column travels with the commit so the host can pin
-    // it — the settle pack keeps the tile where the resize preview showed it.
-    expect(commit).toHaveBeenCalledWith(7, 2, 1);
+    // The previewed rectangle travels with the commit so the host can pin it
+    // exactly — the settle pack becomes the telegraph with the ghost snapped in.
+    expect(commit).toHaveBeenCalledWith(7, 2, { startCol: 1, top: 200 });
     expect(result.current.resizeState?.phase).toBe("committing");
     expect(result.current.gestureFootprint?.span).toBe(2);
 

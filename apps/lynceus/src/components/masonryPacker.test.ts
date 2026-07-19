@@ -49,7 +49,7 @@ function input(top: number | null): MasonryPackInput {
     selectedHeight: 0,
     gestureFootprint:
       top === null ? null : { id: 1, span: 1, startCol: 0, top },
-    columnAnchors: null,
+    placementAnchors: null,
   };
 }
 
@@ -59,6 +59,28 @@ afterEach(() => {
 });
 
 describe("masonry worker coalescing", () => {
+  it("deep-clones placement anchors into a full worker request", () => {
+    vi.stubGlobal("Worker", FakeWorker);
+    const packer = createMasonryPacker();
+    const worker = FakeWorker.instances[0];
+    const source = input(null);
+    source.placementAnchors = { 2: { startCol: 1, top: 240 } };
+
+    packer.pack(1, 1, source);
+    const request = worker.messages[0];
+    expect(request.kind).toBe("full");
+    if (request.kind !== "full") throw new Error("expected full request");
+    expect(request.input.placementAnchors).toEqual(source.placementAnchors);
+    expect(request.input.placementAnchors).not.toBe(source.placementAnchors);
+    expect(request.input.placementAnchors?.[2]).not.toBe(
+      source.placementAnchors[2],
+    );
+
+    source.placementAnchors[2].top = 999;
+    expect(request.input.placementAnchors?.[2].top).toBe(240);
+    packer.dispose();
+  });
+
   it("keeps one in-flight request and replaces pending work with the latest", () => {
     vi.stubGlobal("Worker", FakeWorker);
     const packer = createMasonryPacker();

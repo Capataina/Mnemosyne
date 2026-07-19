@@ -8,7 +8,10 @@ import {
 import { FeedItem } from "../types";
 import { MasonryItem } from "./MasonryItem";
 import { MasonryAnchor } from "./MasonryAnchor";
-import type { MasonryItemPlacement } from "./masonryPacking";
+import type {
+  MasonryItemPlacement,
+  MasonryPlacementAnchor,
+} from "./masonryPacking";
 import { useMasonryEngine } from "../hooks/useMasonryEngine";
 import { useTileDrag } from "../hooks/useTileDrag";
 import { useTileResize } from "../hooks/useTileResize";
@@ -42,24 +45,27 @@ interface MasonryProps {
   /** Enables drag-to-reorder (a live in-session nudge). */
   reorderEnabled?: boolean;
   /** Fired once, on a committing drop, with the complete new id ordering and
-   * the dropped tile's column pin (the slot the gesture preview showed). */
+   * the dropped tile's committed rectangle coordinate. */
   onReorder?: (
     orderedIds: number[],
-    anchor: { id: number; startCol: number },
+    anchor: { id: number; startCol: number; top: number },
   ) => void;
   /**
    * Fired once, on release, with the tile's new column span (`null` =
-   * back to single-column) and the previewed left column to pin. Resize
+   * back to single-column) and the previewed rectangle coordinate to pin. Resize
    * persists its span per-image (unlike reorder).
    */
   onResizeCommit?: (
     itemId: number,
     colSpan: number | null,
-    startCol: number,
+    anchor: MasonryPlacementAnchor,
   ) => void | Promise<unknown>;
-  /** Session column pins (tile id → left column) for gesture-placed tiles,
-   * owned by the host alongside the session order. */
-  columnAnchors?: Record<number, number>;
+  /** Session rectangle pins for gesture-placed tiles, owned by the host
+   * alongside the session order. */
+  placementAnchors?: Record<number, MasonryPlacementAnchor>;
+  /** Fired when the pack's coordinate basis changes (width, columns, scale);
+   * the host clears its pixel-space placement anchors in response. */
+  onGeometryBasisChanged?: () => void;
   /** Fired when the pointer enters a tile — used to prefetch its
    *  similar-set so opening it is instant. */
   onItemHover?: (id: number) => void;
@@ -144,7 +150,8 @@ export default function Masonry(props: MasonryProps) {
     columnCountOverride: props.columnCountOverride,
     tileScale: props.tileScale,
     gestureFootprint,
-    columnAnchors: props.columnAnchors,
+    placementAnchors: props.placementAnchors,
+    onGeometryBasisChanged: props.onGeometryBasisChanged,
     onGestureGeometryCommitted: drag.onGestureGeometryCommitted,
     onGestureSettled: handleGestureSettled,
     containerRef,

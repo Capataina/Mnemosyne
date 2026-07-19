@@ -18,6 +18,7 @@ import {
   type MasonryItemPlacement,
   type MasonryPackInput,
   type MasonryPackParams,
+  type MasonryPlacementAnchor,
 } from "../components/masonryPacking";
 import {
   createMasonryPacker,
@@ -34,10 +35,9 @@ interface MasonryEngineInput {
   tileScale?: number;
   /** Stable-id 2D obstacle for the one active drag or resize transaction. */
   gestureFootprint?: MasonryGestureFootprint;
-  /** Session column pins (tile id → left column) for gesture-placed tiles;
-   * threaded into every pack so a settle or later steady-state pack keeps
-   * those tiles in the column the user put them in. */
-  columnAnchors?: Record<number, number>;
+  /** Session rectangle pins for gesture-placed tiles; threaded into every
+   * pack so settle and later steady-state packs preserve the committed slot. */
+  placementAnchors?: Record<number, MasonryPlacementAnchor>;
   /** Confirms that the current generation committed the exact active
    * footprint. Drag release uses this barrier before clearing into settle. */
   onGestureGeometryCommitted?: (
@@ -48,6 +48,11 @@ interface MasonryEngineInput {
   /** Fires after the first accepted no-footprint geometry closes settling.
    * Active hooks use it to animate their cosmetic ghost to that anchor. */
   onGestureSettled?: () => void;
+  /** Fires when the pack's coordinate basis changes (container width, column
+   * count/scale, gaps). Placement-anchor tops are absolute pixels in that
+   * basis, so the host clears its pins here — a pin from the old space would
+   * otherwise reserve a stale rectangle and strand a tile in a void. */
+  onGeometryBasisChanged?: () => void;
   // Shell-owned refs the engine populates so the interaction hooks can
   // read live layout data without re-subscribing on every pointer move.
   containerRef: RefObject<HTMLDivElement | null>;
@@ -129,6 +134,33 @@ export function isCurrentGeneration(
   return resultGen === currentGen;
 }
 
+/** The scalar configuration that defines the pack's pixel coordinate space.
+ * Items, selection, and anchors are deliberately NOT part of it. */
+export interface MasonryGeometryBasis {
+  width: number;
+  minItemWidth: number;
+  columnGap: number;
+  verticalGap: number;
+  columnCountOverride: number;
+  tileScale: number;
+}
+
+/** Pure so the basis-invalidation trigger is unit-testable without mounting
+ * the hook (the file's standing pattern for wiring-adjacent decisions). */
+export function sameGeometryBasis(
+  a: MasonryGeometryBasis,
+  b: MasonryGeometryBasis,
+): boolean {
+  return (
+    a.width === b.width &&
+    a.minItemWidth === b.minItemWidth &&
+    a.columnGap === b.columnGap &&
+    a.verticalGap === b.verticalGap &&
+    a.columnCountOverride === b.columnCountOverride &&
+    a.tileScale === b.tileScale
+  );
+}
+
 export type MasonryGesturePhase = "idle" | "active" | "settling";
 export type MasonryGestureEvent = "activate" | "release" | "commit";
 
@@ -191,7 +223,7 @@ interface PackInputCache {
   verticalGap: number;
   columnCountOverride: number;
   tileScale: number;
-  columnAnchors: Record<number, number> | undefined;
+  placementAnchors: Record<number, MasonryPlacementAnchor> | undefined;
   revision: number;
   input: MasonryPackInput;
 }
@@ -224,7 +256,7 @@ export function useMasonryEngine(input: MasonryEngineInput): MasonryEngine {
     columnCountOverride,
     tileScale,
     gestureFootprint,
-    columnAnchors,
+    placementAnchors,
     containerRef,
     placementsRef,
     placementByIdRef,
@@ -237,6 +269,11 @@ export function useMasonryEngine(input: MasonryEngineInput): MasonryEngine {
   onGestureCommitRef.current = input.onGestureGeometryCommitted;
   const onGestureSettledRef = useRef(input.onGestureSettled);
   onGestureSettledRef.current = input.onGestureSettled;
+  const onGeometryBasisChangedRef = useRef(input.onGeometryBasisChanged);
+  onGeometryBasisChangedRef.current = input.onGeometryBasisChanged;
+  // The basis the previous pack ran in; null until the first pack, which
+  // must not fire the invalidation (there is nothing stale to clear yet).
+  const geometryBasisRef = useRef<MasonryGeometryBasis | null>(null);
   // Holds the pending scroll rAF so at most one viewport update runs per
   // frame and any in-flight frame can be cancelled on cleanup.
   const scrollRafRef = useRef<number | null>(null);
@@ -347,6 +384,23 @@ export function useMasonryEngine(input: MasonryEngineInput): MasonryEngine {
     const width = container.clientWidth;
     const normalisedOverride = columnCountOverride ?? 0;
     const normalisedScale = tileScale ?? 1;
+
+    // Placement-anchor tops are pixels in THIS basis. When it changes, tell
+    // the host before packing so stale pins never reserve old-space rects.
+    const basis: MasonryGeometryBasis = {
+      width,
+      minItemWidth,
+      columnGap,
+      verticalGap,
+      columnCountOverride: normalisedOverride,
+      tileScale: normalisedScale,
+    };
+    const previousBasis = geometryBasisRef.current;
+    geometryBasisRef.current = basis;
+    if (previousBasis && !sameGeometryBasis(previousBasis, basis)) {
+      onGeometryBasisChangedRef.current?.();
+    }
+
     const cached = inputCacheRef.current;
     let base: PackInputCache;
     if (
@@ -359,7 +413,7 @@ export function useMasonryEngine(input: MasonryEngineInput): MasonryEngine {
       cached.verticalGap === verticalGap &&
       cached.columnCountOverride === normalisedOverride &&
       cached.tileScale === normalisedScale &&
-      cached.columnAnchors === columnAnchors
+      cached.placementAnchors === placementAnchors
     ) {
       base = cached;
     } else {
@@ -370,7 +424,7 @@ export function useMasonryEngine(input: MasonryEngineInput): MasonryEngine {
         verticalGap,
         columnCountOverride: normalisedOverride,
         tileScale: normalisedScale,
-        columnAnchors,
+        placementAnchors,
       };
       base = {
         items,
@@ -381,7 +435,7 @@ export function useMasonryEngine(input: MasonryEngineInput): MasonryEngine {
         verticalGap,
         columnCountOverride: normalisedOverride,
         tileScale: normalisedScale,
-        columnAnchors,
+        placementAnchors,
         revision: ++inputRevisionRef.current,
         input: buildPackInput(items, sel, params),
       };
@@ -404,7 +458,7 @@ export function useMasonryEngine(input: MasonryEngineInput): MasonryEngine {
       columnCountOverride: normalisedOverride,
       tileScale: normalisedScale,
       gestureFootprint,
-      columnAnchors,
+      placementAnchors,
     };
 
     // First paint (nothing to keep) or a large expansion (old set dwarfed):
@@ -454,7 +508,7 @@ export function useMasonryEngine(input: MasonryEngineInput): MasonryEngine {
     columnCountOverride,
     tileScale,
     gestureFootprint,
-    columnAnchors,
+    placementAnchors,
     containerRef,
     commit,
     finishSettling,

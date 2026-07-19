@@ -73,8 +73,10 @@ interface MasonryGestureFootprint {
 // The old edge-reference field (left/right/centre) is gone: its centre mode
 // was ambiguous for even spans and reserved the slot one column left of the
 // rendered ghost — the 2026-07-19 fix round deleted the convention outright.
-// Pack input also carries columnAnchors (tile id -> left column): session
-// pins for gesture-placed tiles, honoured at each tile's feed-order turn.
+interface MasonryPlacementAnchor {
+  startCol: number;
+  top: number;
+}
 
 interface MasonryPackInput {
   ids: Float64Array;
@@ -83,6 +85,7 @@ interface MasonryPackInput {
   spans: Int32Array;
   // scalar layout configuration + selected hero metadata
   gestureFootprint: MasonryGestureFootprint | null;
+  placementAnchors: Record<number, MasonryPlacementAnchor> | null;
 }
 ```
 
@@ -90,8 +93,8 @@ The dispatch rule is structural:
 
 | Input shape | Solver | Reason |
 |---|---|---|
-| No gesture, no column anchors, and every ordinary tile spans one column | Historical `colHeights` scalar frontier | Preserves the resting layout bit-for-bit, including strict leftmost ties |
-| Any session column anchor present | Occupancy path for the rest of the session (until the anchors' lifecycle clears them) | An anchored tile needs the interval model; measured ~2.3× the fast path at 48k items in a worker — a real but invisible tax, recorded deliberately |
+| No gesture, no placement anchors, and every ordinary tile spans one column | Historical `colHeights` scalar frontier | Preserves the resting layout bit-for-bit, including strict leftmost ties |
+| Any session placement anchor present | Occupancy path for the rest of the session (until the anchors' lifecycle clears them) | An anchored rectangle needs the interval model; measured ~2.3× the fast path at 48k items in a worker — a real but invisible tax, recorded deliberately |
 | A gesture exists or any tile spans more than one column | Per-column sorted occupied intervals | Can represent and backfill free space below wide/fixed rectangles |
 
 The occupancy path stores each column as a flat numeric sequence
@@ -105,6 +108,16 @@ feed entry in the ordinary loop. The hero is reserved through the same occupancy
 mechanism. Every other item starts its search at `y=0`, so a short tile can occupy a
 free interval below a wider obstacle instead of inheriting an irreversibly raised
 column frontier.
+
+Settled placement anchors use the same priority model. After the live footprint
+(if any), anchored tiles present in the feed reserve their complete
+`{startCol, top}` rectangles first, in feed order, before the hero and ordinary
+loop. The live footprint always owns its own ID. If a stale or overlapping pin's
+`[top, top + height + verticalGap)` window is not free in every covered column, it
+does not reserve first; that tile returns to its feed-order turn, keeps the pinned
+left column, and uses `lowestFreeY`. This collision fallback preserves the
+structural zero-overlap guarantee while valid pins make settle pixel-identical to
+the telegraph and let later tiles backfill densely around them.
 
 Invalid/non-positive source dimensions degrade to a square in the core. The image
 mapping boundary independently converts `0`, negative, non-finite, `null`, and
@@ -176,7 +189,8 @@ footprint rectangle from the gesture pack (the slot the preview displaced
 neighbours around) — never the raw pixel ghost — is scored by
 `reorderAtSpatialTarget` against the pre-gesture snapshot with the active tile
 EXCLUDED, selecting the maximum-overlap/nearest-centre neighbour for one
-ID-based insertion, and the footprint's column travels up as a session pin.
+ID-based insertion, and the footprint's `{startCol, top}` travels up as a
+session placement pin.
 The one genuine no-op is a slot comparison in the hook (same start column, top
 within half a tile height of the source): the earlier self-inclusive overlap
 scoring made every one-column multi-span move a silent no-op, because a wide
@@ -212,11 +226,11 @@ clears only after that Promise settles. There is therefore no render in which th
 preview has vanished but the feed still describes the old 1×1 span, and no geometry
 from such a gap can be adopted. It then enters `settling`: the dense pack commits
 behind the retained pixel ghost, whose transform, width, and height animate to the
-committed anchor before local gesture state clears. The commit callback also
-carries the previewed left column, which the route pins as a session column
-anchor — the settle pack keeps the tile in the column the resize preview
-showed instead of re-deriving it by global argmin (pre-fix, that re-derivation
-was the post-release ±240px "wobble").
+committed anchor before local gesture state clears. The commit callback carries
+the previewed `{startCol, top}`, which the route stores as a session placement
+anchor only after mutation success. The settle pack therefore reserves the exact
+rectangle the resize preview showed instead of re-deriving X by global argmin or
+Y from the maximum frontier across its new span (the two pre-fix release jumps).
 
 Resize uses the same view-level enable gate as drag. Opening a selected hero hides
 all neighbour grips, prevents new pointer-down transactions, and cancels an active
@@ -244,8 +258,8 @@ as a settled pack overlap.
 | Drag/resize hook | One stable-ID 2D footprint | Engine occupancy reservation |
 | Active gesture hook | Pointer-exact wrapper delta | Cosmetic direct-manipulation preview |
 | Engine | Visible `MasonryItemPlacement[]`, total height | Anchors and container |
-| Drag release | Reordered ID sequence + column pin | Route's `sessionOrder` + `columnAnchors` |
-| Resize release | ID, persisted span, previewed column | `useSetManualColSpan().mutateAsync` + `columnAnchors` |
+| Drag release | Reordered ID sequence + `{startCol, top}` pin | Route's `sessionOrder` + `placementAnchors` |
+| Resize release | ID, persisted span, previewed `{startCol, top}` | `useSetManualColSpan().mutateAsync` + `placementAnchors` |
 | Anchor data attributes | Committed x/y/w/h | Profiling-only layout monitor |
 
 ## Verification Surface
@@ -254,6 +268,9 @@ The regression surface now includes:
 
 - the 21 historical `masonryPacking.test.ts` cases;
 - typed-array/object equivalence and prefix suffix-independence;
+- grow/shrink and reorder-free resize settles that are pixel-identical to the
+  committed telegraph, full-rectangle stability across a perturbed re-pack,
+  overlapping-pin fallback, and 40 seeded random rectangle-pin non-overlap trials;
 - occupancy backfill, fixed-top resize displacement, release gap monotonicity,
   stable-ID shuffle survival, and non-intersection checks across the recorded
   `perf-1784401362`/`perf-1784401528` cursor paths at spans 1, 2, and 3;
@@ -274,6 +291,8 @@ behavioural claims live in the ordinary suites above.
 | Full occupancy recomputation is still O(N), although worker-side and coalesced | Continuous gestures in a real 100k catalogue | No main-thread catalogue transfer or FIFO backlog remains, but pointer feel still needs live WebView profiling at the full scale |
 | Visible-window materialisation scans committed geometry when a new authoritative layout lands | Frequent accepted worker results at 100k | Pointer-only renders no longer trigger it; build the deferred y-range index only if profiling shows accepted-result scans are material |
 | Resize persists; reorder does not | User expects both gestures to survive restart | Deliberate product asymmetry; reorder is session state and reshuffle clears it |
+| Placement-anchor tops are absolute pixels | Container width, column count, or `tileScale` changes | Pins CLEAR automatically when the pack's coordinate basis changes (`onGeometryBasisChanged` → the route empties the map), so a stale-space pin can never reserve a void; the arrangement is simply released on a reflow of the space it was made in |
+| Overlapping pins can swap priority | Two pins whose rects overlap plus a later feed reorder between them | Feed order decides which reserves first, so the pair can exchange slots across packs — a feel nit in a corner state, never an overlap or void |
 | Backend `set_manual_order` remains callerless | Reading Rust commands without the frontend path | Can be mistaken for live persisted reorder; no frontend uses it |
 | EXIF orientation is not normalised | A phone image stores rotated pixels plus orientation metadata | WebKit may display a different aspect from stored dimensions; separate latent image-pipeline issue, not a masonry intersection cause |
 
@@ -281,7 +300,7 @@ behavioural claims live in the ordinary suites above.
 
 - **Occupancy for structural rectangles; scalar frontier only for the proven
   equivalence case.** A scalar `colHeights[]` cannot represent a free interval
-  below a wide tile. Repeated tie-breaks, column pins, and anchor perturbations
+  below a wide tile. Repeated tie-breaks, column-only pins, and anchor perturbations
   cannot repair information the model discarded.
 - **Structural geometry and cosmetic motion have different owners.** The anchor owns
   every committed rectangle used by occupancy and telemetry. A single active child
@@ -291,9 +310,10 @@ behavioural claims live in the ordinary suites above.
 - **A spatial obstacle, not hover-order churn.** DOM hit-testing and repeated
   feed splices produced global ripple from diagonal motion. The packer now reacts
   to one 2D footprint; ordering is a single release-time tie-break.
-- **Real repack, not commit-adopt.** Holding the last preview geometry preserved
-  the exact non-dense state that needed repair. Release now removes the obstacle
-  and solves density again under a non-stranding state machine.
+- **Real repack, not commit-adopt.** Holding the entire preview geometry preserved
+  every neighbour's transient state. Release now replaces the live obstacle with
+  one settled placement pin and solves density around it under a non-stranding
+  state machine.
 - **Stable ID, never gesture index.** The feed can delta-merge and shuffle while
   a gesture is alive; numeric `ids` resolve the live row at each base revision.
 - **Promise-held resize preview.** Clearing local state in the same tick as an

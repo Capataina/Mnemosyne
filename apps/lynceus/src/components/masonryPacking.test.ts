@@ -352,12 +352,12 @@ describe("computeMasonryLayout", () => {
 });
 
 /**
- * Session column anchors: a gesture-placed tile keeps its column at its
- * feed-order turn instead of being re-derived by global argmin — the
- * position-carry half of the 2026-07-19 fix round (the settle "wobble" was
- * the packer re-arguing a just-resized tile's column on every pack).
+ * Session placement anchors make the settle pack the gesture telegraph with
+ * the ghost snapped in: pinned rectangles reserve first, then occupancy
+ * backfills densely around them. Stale/overlapping pins fall back to the
+ * pinned column's ordinary lowest-free placement, preserving non-overlap.
  */
-describe("session column anchors", () => {
+describe("session placement anchors", () => {
   const params = {
     containerWidth: 1424,
     minItemWidth: 224,
@@ -400,29 +400,133 @@ describe("session column anchors", () => {
     return Math.max(0, w) * Math.max(0, h);
   }
 
-  it("pins an anchored tile to its column and holds it across input changes", () => {
+  function placementRect(layout: ReturnType<typeof computeMasonryLayout>, id: number) {
+    const { x, y, width, height } = layout.placementById.get(id)!;
+    return { x, y, width, height };
+  }
+
+  function expectNoOverlaps(layout: ReturnType<typeof computeMasonryLayout>) {
+    const placements = layout.placements;
+    for (let i = 0; i < placements.length; i++) {
+      for (let j = i + 1; j < placements.length; j++) {
+        expect(overlapArea(placements[i], placements[j])).toBeLessThanOrEqual(
+          1,
+        );
+      }
+    }
+  }
+
+  function settleMatchesTelegraph(
+    items: ImageItem[],
+    id: number,
+    footprint: { id: number; span: number; startCol: number; top: number },
+  ) {
+    const telegraph = computeMasonryLayout({
+      items,
+      ...params,
+      gestureFootprint: footprint,
+    });
+    const settled = computeMasonryLayout({
+      items,
+      ...params,
+      placementAnchors: {
+        [id]: { startCol: footprint.startCol, top: footprint.top },
+      },
+    });
+    expect(placementRect(settled, id)).toEqual(placementRect(telegraph, id));
+    expectNoOverlaps(settled);
+  }
+
+  function unevenFrontierFeed() {
+    // Hunt2-A's uneven-frontier construct: an unrelated tall tile makes the
+    // first span window materially taller than the others before the active
+    // tile's old feed-order turn.
+    return [
+      tile(1, 224, 920),
+      ...Array.from({ length: 18 }, (_, index) =>
+        tile(index + 2, 224, 140),
+      ),
+    ];
+  }
+
+  it("keeps a grow settle pixel-exact with its telegraph rectangle", () => {
+    const growId = 100;
+    settleMatchesTelegraph(
+      [...unevenFrontierFeed(), tile(growId, 704, 420, 3)],
+      growId,
+      { id: growId, span: 3, startCol: 0, top: 624 },
+    );
+  });
+
+  it("keeps a shrink settle pixel-exact with its telegraph rectangle", () => {
+    const shrinkId = 101;
+    settleMatchesTelegraph(
+      [...unevenFrontierFeed(), tile(shrinkId, 464, 274, 2)],
+      shrinkId,
+      { id: shrinkId, span: 2, startCol: 1, top: 936 },
+    );
+  });
+
+  it("keeps a resize settle at the previewed rectangle without an order change", () => {
+    const id = 7;
+    const items = jitteredFeed(17, 18, id).map((item) =>
+      item.id === id ? { ...item, manualColSpan: 2 } : item,
+    );
+    settleMatchesTelegraph(items, id, {
+      id,
+      span: 2,
+      startCol: 1,
+      top: 200,
+    });
+  });
+
+  it("falls an overlapping second pin back to its column's lowest free y", () => {
+    const items = [tile(1, 100, 100), tile(2, 100, 100)];
+    const layout = computeMasonryLayout({
+      items,
+      containerWidth: 200,
+      minItemWidth: 100,
+      columnGap: 0,
+      verticalGap: 16,
+      columnCountOverride: 2,
+      placementAnchors: {
+        1: { startCol: 0, top: 0 },
+        2: { startCol: 0, top: 0 },
+      },
+    });
+
+    expect(placementRect(layout, 1)).toMatchObject({ x: 0, y: 0 });
+    expect(placementRect(layout, 2)).toMatchObject({ x: 0, y: 116 });
+    expectNoOverlaps(layout);
+  });
+
+  it("pins an anchored tile's full rect and holds it across input changes", () => {
     const items = jitteredFeed(7, 24, 12);
     const free = computeMasonryLayout({ items, ...params });
     const freeCol = Math.round(free.placementById.get(12)!.x / stride);
     // Anchor deliberately to a DIFFERENT column than the argmin would pick,
     // so the pin is proven to override the search rather than agree with it.
-    const anchorCol = (freeCol + 2) % 5;
-    const anchors = { 12: anchorCol };
+    const anchor = { startCol: (freeCol + 2) % 5, top: 480 };
+    const anchors = { 12: anchor };
 
-    const pinned = computeMasonryLayout({ items, ...params, columnAnchors: anchors });
-    expect(Math.round(pinned.placementById.get(12)!.x / stride)).toBe(anchorCol);
+    const pinned = computeMasonryLayout({
+      items,
+      ...params,
+      placementAnchors: anchors,
+    });
+    const pinnedRect = placementRect(pinned, 12);
+    expect(pinnedRect.x).toBe(anchor.startCol * stride);
+    expect(pinnedRect.y).toBe(anchor.top);
 
     // The settle-wobble gate: a perturbed input (one appended tile — the
-    // optimistic-patch/refetch shape) must NOT move the anchored tile's
-    // column. Pre-fix this re-derivation was the ±240px post-resize jump.
+    // optimistic-patch/refetch shape) must not move any edge of the anchored
+    // tile. The former X-only gate missed the release-time Y divergence.
     const perturbed = computeMasonryLayout({
       items: [...items, tile(99, 1280, 700)],
       ...params,
-      columnAnchors: anchors,
+      placementAnchors: anchors,
     });
-    expect(Math.round(perturbed.placementById.get(12)!.x / stride)).toBe(
-      anchorCol,
-    );
+    expect(placementRect(perturbed, 12)).toEqual(pinnedRect);
   });
 
   it("ignores anchors for absent ids and keeps unanchored packs byte-identical", () => {
@@ -431,7 +535,7 @@ describe("session column anchors", () => {
     const staleAnchor = computeMasonryLayout({
       items,
       ...params,
-      columnAnchors: { 4040: 3 },
+      placementAnchors: { 4040: { startCol: 3, top: 480 } },
     });
     for (const item of items) {
       const a = bare.placementById.get(item.id)!;
@@ -446,7 +550,7 @@ describe("session column anchors", () => {
     const layout = computeMasonryLayout({
       items,
       ...params,
-      columnAnchors: { 9: 0 },
+      placementAnchors: { 9: { startCol: 0, top: 0 } },
       gestureFootprint: { id: 9, span: 2, startCol: 3, top: 480 },
     });
     const placement = layout.placementById.get(9)!;
@@ -454,7 +558,7 @@ describe("session column anchors", () => {
     expect(placement.y).toBe(480);
   });
 
-  it("never overlaps settled tiles, anchors present or not (seeded trials)", () => {
+  it("never overlaps settled tiles with random rectangle pins (seeded trials)", () => {
     for (let trial = 0; trial < 40; trial++) {
       const rand = rng(1000 + trial);
       const items = Array.from({ length: 30 }, (_, index) =>
@@ -465,23 +569,37 @@ describe("session column anchors", () => {
           rand() < 0.2 ? 2 : undefined,
         ),
       );
-      const anchors: Record<number, number> = {};
+      const anchors: Record<number, { startCol: number; top: number }> = {};
       for (let k = 0; k < 3; k++) {
-        anchors[1 + Math.floor(rand() * 30)] = Math.floor(rand() * 6);
+        anchors[1 + Math.floor(rand() * 30)] = {
+          startCol: Math.floor(rand() * 6),
+          top: Math.floor(rand() * 12) * 48,
+        };
       }
       const layout = computeMasonryLayout({
         items,
         ...params,
-        columnAnchors: anchors,
+        placementAnchors: anchors,
       });
-      const placements = layout.placements;
-      for (let i = 0; i < placements.length; i++) {
-        for (let j = i + 1; j < placements.length; j++) {
-          expect(overlapArea(placements[i], placements[j])).toBeLessThanOrEqual(
-            1,
-          );
-        }
-      }
+      expectNoOverlaps(layout);
     }
+  });
+  it("reserves the hero before session pins so a pin can never displace it", () => {
+    // Wave-2 critique: pins-first let a {col 0, top 0} pin shove the hero
+    // down for one transient frame before the lifecycle cleared the pins.
+    // The hero now reserves first; the colliding pin falls back to its
+    // column's lowest free y beneath it.
+    const items = [tile(1, 1280, 640), tile(2, 1280, 640), tile(3, 1280, 640)];
+    const layout = computeMasonryLayout({
+      items,
+      selectedItem: items[0],
+      ...params,
+      placementAnchors: { 2: { startCol: 0, top: 0 } },
+    });
+    const hero = layout.placementById.get(1)!;
+    const pinned = layout.placementById.get(2)!;
+    expect(hero.y).toBe(0);
+    expect(Math.round(pinned.x / stride)).toBe(0);
+    expect(pinned.y).toBeGreaterThanOrEqual(hero.height);
   });
 });

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState, useMemo, Profiler } from "react";
 import Masonry from "../components/Masonry";
+import type { MasonryPlacementAnchor } from "../components/masonryPacking";
 import {
   useFeedManifest,
   useImageDetail,
@@ -140,13 +141,12 @@ export default function Home() {
   // In-session drag-reorder: a full id ordering applied on top of the
   // shuffle, NOT persisted — a reshuffle (new entry) clears it.
   const [sessionOrder, setSessionOrder] = useState<number[] | null>(null);
-  // Session column pins (tile id -> left column) for gesture-placed tiles:
-  // a dropped or resized tile keeps the column the gesture preview showed,
-  // instead of being re-derived by the packer's global argmin on every
-  // subsequent pack. Shares the session order's lifecycle exactly.
-  const [columnAnchors, setColumnAnchors] = useState<Record<number, number>>(
-    {},
-  );
+  // Session rectangle pins for gesture-placed tiles: a dropped or resized
+  // tile keeps the exact committed telegraph coordinate while occupancy
+  // backfills around it. Shares the session order's lifecycle exactly.
+  const [placementAnchors, setPlacementAnchors] = useState<
+    Record<number, MasonryPlacementAnchor>
+  >({});
   // Similarity navigation trail: the images dived through via
   // similar→click→similar. Powers back-one-hop + a breadcrumb strip so a
   // deep cascade stays navigable (the UX council's top pick). Cleared on
@@ -197,7 +197,7 @@ export default function Home() {
     if (prevResultsView.current && !isResultsView) {
       setShuffleSeed(newShuffleSeed());
       setSessionOrder(null);
-      setColumnAnchors({});
+      setPlacementAnchors({});
     }
     prevResultsView.current = isResultsView;
   }, [isResultsView]);
@@ -477,7 +477,7 @@ export default function Home() {
   useEffect(() => {
     if (!reorderEnabled) {
       setSessionOrder(null);
-      setColumnAnchors({});
+      setPlacementAnchors({});
     }
   }, [reorderEnabled]);
 
@@ -485,26 +485,51 @@ export default function Home() {
   // callbacks keep identity and the memo'd tiles hold through an indexing
   // run's route re-renders (T2-1). `recordAction` is a module import and the
   // state setter / mutation `.mutate` are referentially stable.
+  // Placement-anchor tops are pixels in the pack's coordinate basis; when
+  // the engine reports that basis changed (window resize, column count or
+  // tile scale), the pins are meaningless in the new space and must clear —
+  // a stale pin would reserve an old-space rectangle and strand its tile in
+  // a void. Identity-stable when already empty so no redundant repack fires.
+  const handleGeometryBasisChanged = useCallback(() => {
+    setPlacementAnchors((prev) => (Object.keys(prev).length ? {} : prev));
+  }, []);
+
   const handleReorder = useCallback(
-    (orderedIds: number[], anchor: { id: number; startCol: number }) => {
+    (
+      orderedIds: number[],
+      anchor: { id: number; startCol: number; top: number },
+    ) => {
       recordAction("masonry_reorder", {
         count: orderedIds.length,
         id: anchor.id,
         startCol: anchor.startCol,
+        top: anchor.top,
       });
       setSessionOrder(orderedIds);
-      setColumnAnchors((prev) => ({ ...prev, [anchor.id]: anchor.startCol }));
+      setPlacementAnchors((prev) => ({
+        ...prev,
+        [anchor.id]: { startCol: anchor.startCol, top: anchor.top },
+      }));
     },
     [],
   );
 
   const handleResizeCommit = useCallback(
-    (itemId: number, colSpan: number | null, startCol: number) => {
-      recordAction("masonry_resize", { id: itemId, colSpan, startCol });
+    (
+      itemId: number,
+      colSpan: number | null,
+      anchor: MasonryPlacementAnchor,
+    ) => {
+      recordAction("masonry_resize", {
+        id: itemId,
+        colSpan,
+        startCol: anchor.startCol,
+        top: anchor.top,
+      });
       // useTileResize retains the final footprint until this promise settles.
       // The optimistic manifest stamp therefore becomes authoritative before
       // the preview can clear; no intermediate render can repack the tile as
-      // its stale 1x1 span. The column pin lands only on SUCCESS — a failed
+      // its stale 1x1 span. The placement pin lands only on SUCCESS — a failed
       // persistence rolls the span back, and a pin surviving that rollback
       // would strand the tile in a column its span no longer justifies. The
       // footprint stays live until this promise settles, so the pin is
@@ -514,7 +539,10 @@ export default function Home() {
         colSpan,
       });
       void persisted.then(() => {
-        setColumnAnchors((prev) => ({ ...prev, [itemId]: startCol }));
+        setPlacementAnchors((prev) => ({
+          ...prev,
+          [itemId]: { startCol: anchor.startCol, top: anchor.top },
+        }));
       });
       return persisted;
     },
@@ -1061,7 +1089,8 @@ export default function Home() {
             reorderEnabled={reorderEnabled}
             onReorder={handleReorder}
             onResizeCommit={handleResizeCommit}
-            columnAnchors={columnAnchors}
+            placementAnchors={placementAnchors}
+            onGeometryBasisChanged={handleGeometryBasisChanged}
             onItemHover={prefetchSimilar}
             heroOverlay={heroOverlay}
           />

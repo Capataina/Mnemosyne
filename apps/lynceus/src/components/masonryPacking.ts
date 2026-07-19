@@ -16,6 +16,14 @@ export interface MasonryGestureFootprint {
   top: number;
 }
 
+/** Session-stable rectangle coordinate captured from a committed gesture. */
+export interface MasonryPlacementAnchor {
+  /** Physical left column of the pinned rectangle. */
+  startCol: number;
+  /** Absolute top edge in the grid's current pixel coordinate space. */
+  top: number;
+}
+
 export interface MasonryItemPlacement {
   itemData: FeedItem;
   x: number;
@@ -43,12 +51,11 @@ export interface MasonryLayoutInput {
    * span wins for its stable id. */
   spanOverrides?: Record<number, number>;
   gestureFootprint?: MasonryGestureFootprint;
-  /** Session column pins (tile id → left column) for tiles a gesture placed.
-   * An anchored tile keeps its column at its feed-order turn instead of
-   * re-deriving it by global argmin, so a release/settle pack cannot relocate
-   * what the user just positioned. A live footprint wins over its own id's
-   * anchor; unknown ids are ignored. */
-  columnAnchors?: Record<number, number>;
+  /** Session rectangle pins for tiles a gesture placed. Valid pins reserve
+   * before ordinary packing, making settle match the committed telegraph;
+   * colliding pins fall back to lowest-free placement at their pinned column.
+   * A live footprint wins over its own id's anchor; unknown ids are ignored. */
+  placementAnchors?: Record<number, MasonryPlacementAnchor>;
 }
 
 export interface MasonryLayoutOutput {
@@ -78,7 +85,7 @@ export interface MasonryPackInput {
   selectedWidth: number;
   selectedHeight: number;
   gestureFootprint: MasonryGestureFootprint | null;
-  columnAnchors: Record<number, number> | null;
+  placementAnchors: Record<number, MasonryPlacementAnchor> | null;
 }
 
 export interface MasonryHeroGeometry {
@@ -209,6 +216,23 @@ export function lowestFreeY(
   }
 }
 
+/** Whether one complete span-wide window is currently unoccupied. */
+function windowIsFree(
+  occupied: readonly (readonly number[])[],
+  start: number,
+  span: number,
+  top: number,
+  bottom: number,
+): boolean {
+  if (!Number.isFinite(top) || !Number.isFinite(bottom) || bottom <= top) {
+    return false;
+  }
+  for (let col = start; col < start + span; col++) {
+    if (firstOverlapBottom(occupied[col], top, bottom) !== null) return false;
+  }
+  return true;
+}
+
 /** Insert and merge one unavailable range into a flat sorted interval list. */
 function occupy(intervals: number[], top: number, bottom: number): void {
   if (!Number.isFinite(top) || !Number.isFinite(bottom) || bottom <= top) return;
@@ -267,13 +291,13 @@ export function computeMasonryGeometry(input: MasonryPackInput): MasonryGeometry
     selectedWidth,
     selectedHeight,
     gestureFootprint,
-    columnAnchors,
+    placementAnchors,
   } = input;
 
   const n = widths.length;
   if (containerWidth <= 0) return emptyGeometry(n);
   const hasAnchors =
-    columnAnchors !== null && Object.keys(columnAnchors).length > 0;
+    placementAnchors !== null && Object.keys(placementAnchors).length > 0;
 
   const effectiveMin = minItemWidth * tileScale;
   const safeEffectiveMin =
@@ -415,6 +439,10 @@ export function computeMasonryGeometry(input: MasonryPackInput): MasonryGeometry
     reserve(start, span, top, itemHeight);
   }
 
+  // The hero reserves BEFORE the session pins: selection clears the pins via
+  // the host's lifecycle, but that clear is a post-render effect while the
+  // hero appears in the same render — pins-first would paint one transient
+  // frame with the hero shoved down by a pin at the top of the grid.
   let hero: MasonryHeroGeometry | null = null;
   if (hasHero) {
     const heroSpan = Math.min(colCount, 3);
@@ -436,21 +464,66 @@ export function computeMasonryGeometry(input: MasonryPackInput): MasonryGeometry
     reserve(0, heroSpan, heroTop, heroHeight);
   }
 
+  // Settle uses the same priority model as the live telegraph: valid session
+  // pins reserve their complete rectangles before the ordinary feed.
+  // Feed order resolves conflicts among pins. A stale/overlapping pin is left
+  // for the main loop, where it keeps only its pinned column and takes that
+  // window's lowest free y, preserving the structural no-overlap guarantee.
+  const reservedAnchors = new Uint8Array(n);
+  if (hasAnchors) {
+    for (let i = 0; i < n; i++) {
+      if (i === selectedIndex || i === gestureIndex) continue;
+      const anchor = placementAnchors![ids[i]];
+      if (anchor === undefined) continue;
+
+      const span = resolvedSpan(i);
+      const placedWidth = columnWidth * span + columnGap * (span - 1);
+      const itemHeight = scaledHeight(widths[i], heights[i], placedWidth);
+      const start = resolveFootprintLeft(anchor.startCol, span, colCount);
+      const top =
+        Number.isFinite(anchor.top) && anchor.top > 0 ? anchor.top : 0;
+      if (
+        !windowIsFree(
+          occupied,
+          start,
+          span,
+          top,
+          top + itemHeight + verticalGap,
+        )
+      ) {
+        continue;
+      }
+
+      xs[i] = start * stride;
+      ys[i] = top;
+      outWidths[i] = placedWidth;
+      outHeights[i] = itemHeight;
+      outSpans[i] = span;
+      reserve(start, span, top, itemHeight);
+      reservedAnchors[i] = 1;
+    }
+  }
+
   for (let i = 0; i < n; i++) {
-    if (i === selectedIndex || i === gestureIndex) continue;
+    if (
+      i === selectedIndex ||
+      i === gestureIndex ||
+      reservedAnchors[i] === 1
+    ) {
+      continue;
+    }
     const span = resolvedSpan(i);
     const placedWidth = columnWidth * span + columnGap * (span - 1);
     const itemHeight = scaledHeight(widths[i], heights[i], placedWidth);
     const heightWithGap = itemHeight + verticalGap;
 
-    // A column-anchored tile keeps its gesture-placed column and takes that
-    // window's natural y at its feed-order turn; only unanchored tiles run
-    // the global argmin start-search.
-    const anchorCol = hasAnchors ? columnAnchors![ids[i]] : undefined;
+    // A stale/colliding placement pin falls back to its gesture-placed column
+    // at this feed-order turn; only unanchored tiles run the global argmin.
+    const anchor = hasAnchors ? placementAnchors![ids[i]] : undefined;
     let bestStart: number;
     let bestTop: number;
-    if (anchorCol !== undefined) {
-      bestStart = resolveFootprintLeft(anchorCol, span, colCount);
+    if (anchor !== undefined) {
+      bestStart = resolveFootprintLeft(anchor.startCol, span, colCount);
       bestTop = lowestFreeY(occupied, bestStart, span, heightWithGap);
     } else {
       bestStart = 0;
@@ -496,7 +569,7 @@ export interface MasonryPackParams {
   tileScale?: number;
   spanOverrides?: Record<number, number>;
   gestureFootprint?: MasonryGestureFootprint;
-  columnAnchors?: Record<number, number>;
+  placementAnchors?: Record<number, MasonryPlacementAnchor>;
 }
 
 /** Flatten catalogue state once per base revision. The stable id array is the
@@ -540,7 +613,7 @@ export function buildPackInput(
     selectedWidth: selectedItem?.width ?? 0,
     selectedHeight: selectedItem?.height ?? 0,
     gestureFootprint: params.gestureFootprint ?? null,
-    columnAnchors: params.columnAnchors ?? null,
+    placementAnchors: params.placementAnchors ?? null,
   };
 }
 

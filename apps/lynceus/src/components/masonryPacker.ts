@@ -4,6 +4,7 @@ import {
   type MasonryPackInput,
   type MasonryPackRequest,
   type MasonryPackResponse,
+  type MasonryPlacementAnchor,
 } from "./masonryPacking";
 
 /** Worker client with bounded queueing: one computation may be in flight and
@@ -24,6 +25,17 @@ interface PendingPack {
   input: MasonryPackInput;
 }
 
+function clonePlacementAnchors(
+  anchors: Record<number, MasonryPlacementAnchor> | null,
+): Record<number, MasonryPlacementAnchor> | null {
+  if (!anchors) return null;
+  const clone: Record<number, MasonryPlacementAnchor> = {};
+  for (const [id, anchor] of Object.entries(anchors)) {
+    clone[Number(id)] = { ...anchor };
+  }
+  return clone;
+}
+
 function cloneInputForTransfer(input: MasonryPackInput): MasonryPackInput {
   return {
     ...input,
@@ -34,7 +46,7 @@ function cloneInputForTransfer(input: MasonryPackInput): MasonryPackInput {
     gestureFootprint: input.gestureFootprint
       ? { ...input.gestureFootprint }
       : null,
-    columnAnchors: input.columnAnchors ? { ...input.columnAnchors } : null,
+    placementAnchors: clonePlacementAnchors(input.placementAnchors),
   };
 }
 

@@ -157,6 +157,29 @@ far away in feed order can settle with the right column but a divergent Y. If th
 live pass shows that, the next round solves release jointly (evaluate insertion
 candidates under the chosen column, pick the dense solution nearest the drop rect).
 
+### ROUND 2 (2026-07-19 afternoon, v0.6.3): the anchor carries the telegraph
+
+The live re-test of v0.6.2 confirmed every round-1 fix EXCEPT one new precise
+defect: span≥2 releases landed in the right column but the wrong row (6/6, usually
+one cell down, once one up — telegraph-vs-settled diffs +52…+290/−148 in
+perf-1784461028). A four-hunter blind swarm (two debuggers, a critic, a
+test-writer) converged pixel-exactly: the session anchor pinned only the COLUMN;
+the settle pack discarded `footprint.top` and re-derived Y as the max frontier
+across all N spanned columns — unsteerable by any insertion index, and proven by
+the resize path (no reorder, still wrong). Exactly the deferred "two composed
+approximations" risk from the post-fix review, caught by its own predicted
+signature. Fix (implemented by GPT-5.6 Sol xhigh from a locked design brief):
+anchors became placement pins `{startCol, top}`; the settle pack reserves pinned
+rectangles FIRST — the same priority model as the live telegraph — with a
+`windowIsFree` collision fallback to the pinned column's `lowestFreeY`, so the
+zero-overlap guarantee stays structural. Review wave: verifier 6/6; bug hunter
+clean (boundary-probed windowIsFree, traced both lifecycles); critic found one
+HIGH — pins are absolute pixels, and a window-resize/column/scale change repacked
+with old-space pins, stranding a tile in a void (1300px in its probe) — fixed by
+clearing pins whenever the pack's coordinate basis changes
+(`onGeometryBasisChanged`, pure-tested `sameGeometryBasis`), plus hero-before-pins
+ordering for the transient selection frame, both gated. tsc clean; 199/199.
+
 ### LIVE-TEST PROTOCOL (run in order; telemetry on: `just lynceus-dev-telemetry`)
 
 1. Wiggle a tile 10–20px and release at source → no movement, NO masonry_reorder.

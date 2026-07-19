@@ -92,7 +92,11 @@ describe("drag release barrier", () => {
     // The active ghost stays mounted at the literal drop rectangle until the
     // following dense geometry is authoritative.
     expect(result.current.dragItemId).toBe(1);
-    expect(onReorder).toHaveBeenCalledWith([2, 1], { id: 1, startCol: 1 });
+    expect(onReorder).toHaveBeenCalledWith([2, 1], {
+      id: 1,
+      startCol: 1,
+      top: 0,
+    });
 
     act(() => {
       result.current.onGestureSettled();
@@ -377,7 +381,11 @@ describe("drag release barrier", () => {
       result.current.onGestureGeometryCommitted(footprint, geometry, items);
     });
 
-    expect(onReorder).toHaveBeenCalledWith([2, 1], { id: 1, startCol: 0 });
+    expect(onReorder).toHaveBeenCalledWith([2, 1], {
+      id: 1,
+      startCol: 0,
+      top: footprint.top,
+    });
   });
 
   it("animates the retained drop ghost to the authoritative dense slot", () => {

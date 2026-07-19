@@ -29,10 +29,10 @@ interface UseTileDragInput {
   columnCountRef: RefObject<number>;
   columnGap: number;
   /** Fired once on a committing drop with the complete new id ordering and
-   * the released tile's column pin (the slot the gesture preview showed). */
+   * the released tile's committed rectangle coordinate. */
   onReorder?: (
     orderedIds: number[],
-    anchor: { id: number; startCol: number },
+    anchor: { id: number; startCol: number; top: number },
   ) => void;
   suppressClick: () => void;
 }
@@ -62,8 +62,8 @@ function sameIdOrder(a: readonly FeedItem[], b: readonly FeedItem[]): boolean {
  * inner wrapper. The wrapper is a cosmetic ghost; MasonryAnchor remains the
  * committed-geometry and telemetry owner. On release a single array
  * insertion is derived from the COMMITTED footprint rectangle scored against
- * the pre-gesture snapshot, and the footprint's column travels up as a
- * session pin — the commit is the slot the preview showed.
+ * the pre-gesture snapshot, and the footprint's full coordinate travels up
+ * as a session pin — the commit is the slot the preview showed.
  */
 export function useTileDrag(input: UseTileDragInput) {
   const {
@@ -450,13 +450,16 @@ export function useTileDrag(input: UseTileDragInput) {
           committedOrderRef.current = next;
           setCommittedOrder(next);
         }
-        // The column pin travels even when no insertion derives (a drop over
-        // empty space, or a feed too small to have a target) — the tile must
-        // still keep the column the preview showed instead of snapping to
-        // the argmin column.
+        // The placement pin travels even when no insertion derives (a drop
+        // over empty space, or a feed too small to have a target) — settle
+        // must keep the complete rectangle the preview showed.
         onReorderRef.current?.(
           (next ?? committedItems).map((item) => item.id),
-          { id: expected.id, startCol: committedFootprint.startCol },
+          {
+            id: expected.id,
+            startCol: committedFootprint.startCol,
+            top: committedFootprint.top,
+          },
         );
       }
 

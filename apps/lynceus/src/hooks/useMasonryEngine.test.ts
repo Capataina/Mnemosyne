@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { isWithinGuardBand } from "./useMasonryEngine";
+import { isWithinGuardBand, sameGeometryBasis } from "./useMasonryEngine";
 
 /**
  * Guard-band predicate for the scroll virtualization (T1-3).
@@ -62,5 +62,29 @@ describe("isWithinGuardBand", () => {
     // but not once it pokes past — the band is what adds the safety buffer.
     expect(isWithinGuardBand(committed, -800, 1000, 0)).toBe(true);
     expect(isWithinGuardBand(committed, -801, 999, 0)).toBe(false);
+  });
+});
+
+describe("sameGeometryBasis", () => {
+  const basis = {
+    width: 1424,
+    minItemWidth: 236,
+    columnGap: 16,
+    verticalGap: 16,
+    columnCountOverride: 6,
+    tileScale: 1,
+  };
+
+  it("treats an identical basis as unchanged", () => {
+    expect(sameGeometryBasis(basis, { ...basis })).toBe(true);
+  });
+
+  it("flags every coordinate-space field as a basis change", () => {
+    // Placement-anchor tops are pixels in this basis; any of these changing
+    // must invalidate the pins (the stale-pin void from the wave-2 critique).
+    for (const key of Object.keys(basis)) {
+      const changed = { ...basis, [key]: (basis as never)[key] + 1 };
+      expect(sameGeometryBasis(basis, changed)).toBe(false);
+    }
   });
 });

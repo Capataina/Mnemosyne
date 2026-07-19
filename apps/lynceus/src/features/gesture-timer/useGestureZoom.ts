@@ -131,6 +131,16 @@ export function naturalPixelScale(
   return clamp(naturalWidth / renderedWidth, MIN_SCALE, MAX_SCALE);
 }
 
+export type WheelGesture = "zoom" | "pan" | "none";
+
+export function resolveWheelGesture(
+  ctrlKey: boolean,
+  scale: number,
+): WheelGesture {
+  if (ctrlKey) return "zoom";
+  return scale > MIN_SCALE + ZOOM_EPSILON ? "pan" : "none";
+}
+
 function localPoint(stage: HTMLDivElement, clientX: number, clientY: number) {
   const rect = stage.getBoundingClientRect();
   return { x: clientX - rect.left, y: clientY - rect.top };
@@ -332,18 +342,34 @@ export function useGestureZoom({
       event.preventDefault();
       onInteraction();
       const lineHeight = 16;
-      const delta =
+      const normalise = (delta: number, pageSize: number) =>
         event.deltaMode === WheelEvent.DOM_DELTA_LINE
-          ? event.deltaY * lineHeight
+          ? delta * lineHeight
           : event.deltaMode === WheelEvent.DOM_DELTA_PAGE
-            ? event.deltaY * stage.clientHeight
-            : event.deltaY;
-      const sensitivity = event.ctrlKey ? 0.012 : 0.002;
-      const factor = Math.exp(-delta * sensitivity);
-      applyZoomAt(
-        transformRef.current.scale * factor,
-        localPoint(stage, event.clientX, event.clientY),
+            ? delta * pageSize
+            : delta;
+      const gesture = resolveWheelGesture(
+        event.ctrlKey,
+        transformRef.current.scale,
       );
+      if (gesture === "zoom") {
+        // A macOS trackpad pinch reaches WebKit as a ctrlKey wheel; a mouse user holds ⌃ for the same zoom.
+        const factor = Math.exp(
+          -normalise(event.deltaY, stage.clientHeight) * 0.012,
+        );
+        applyZoomAt(
+          transformRef.current.scale * factor,
+          localPoint(stage, event.clientX, event.clientY),
+        );
+        return;
+      }
+      if (gesture === "none") return;
+      // Plain two-finger scroll pans the zoomed image, content tracking the fingers; edges clamp in applyTransform.
+      applyTransform({
+        ...transformRef.current,
+        x: transformRef.current.x - normalise(event.deltaX, stage.clientWidth),
+        y: transformRef.current.y - normalise(event.deltaY, stage.clientHeight),
+      });
     };
 
     const handleGestureStart = (event: Event) => {

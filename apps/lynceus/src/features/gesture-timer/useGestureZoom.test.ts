@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   constrainZoomTransform,
   naturalPixelScale,
+  resolveWheelGesture,
   zoomTransformAroundPoint,
 } from "./useGestureZoom";
 
@@ -37,5 +38,15 @@ describe("gesture-timer zoom geometry", () => {
     expect(naturalPixelScale(2400, 800)).toBe(3);
     expect(naturalPixelScale(600, 800)).toBe(1);
     expect(naturalPixelScale(0, 0)).toBe(1);
+  });
+
+  it("routes a pinch (ctrl-wheel) to zoom at any scale", () => {
+    expect(resolveWheelGesture(true, 1)).toBe("zoom");
+    expect(resolveWheelGesture(true, 4)).toBe("zoom");
+  });
+
+  it("routes a plain two-finger scroll to pan only while zoomed", () => {
+    expect(resolveWheelGesture(false, 4)).toBe("pan");
+    expect(resolveWheelGesture(false, 1)).toBe("none");
   });
 });

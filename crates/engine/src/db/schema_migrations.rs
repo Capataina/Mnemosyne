@@ -220,6 +220,36 @@ impl ImageDatabase {
         Ok(())
     }
 
+    /// Adds `images.content_hash` (BLOB, nullable) and `images.size`
+    /// (INTEGER byte count, nullable) for existing DBs created before
+    /// content-hash move/rename detection existed. Both NULL for every
+    /// pre-existing row; the backfill pass (`get_images_without_content_hash`
+    /// → `content_hash::hash_file` → `set_content_hash`) populates them on
+    /// the next indexing run, after which a moved file can be relinked to
+    /// its orphaned row instead of stranding its tags/placement/embeddings.
+    /// Existing orphans stay non-relinkable — their on-disk file is already
+    /// gone, so there is nothing left to hash (remedy 1 caveat in the
+    /// orphan-lifecycle diagnosis ledger).
+    pub(super) fn migrate_add_content_hash_columns(&self) -> rusqlite::Result<()> {
+        let conn = self.connection.lock().unwrap();
+        let mut stmt = conn.prepare("PRAGMA table_info(images)")?;
+        let columns: Vec<String> = stmt
+            .query_map([], |row| row.get::<_, String>(1))?
+            .filter_map(|r| r.ok())
+            .collect();
+
+        if !columns.contains(&"content_hash".to_string()) {
+            info!("Migrating database: Adding content_hash column...");
+            conn.execute("ALTER TABLE images ADD COLUMN content_hash BLOB", [])?;
+        }
+        if !columns.contains(&"size".to_string()) {
+            info!("Migrating database: Adding size column...");
+            conn.execute("ALTER TABLE images ADD COLUMN size INTEGER", [])?;
+        }
+
+        Ok(())
+    }
+
     /// Adds `roots.bookmark` (BLOB, nullable) for existing DBs created
     /// before macOS security-scoped bookmark support. NULL for every
     /// pre-existing root — a root added before this migration has no

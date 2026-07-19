@@ -1,6 +1,6 @@
 [package]
 name = "mnemosyne"
-version = "0.5.1"
+version = "0.5.2"
 description = "Mnemosyne — media-agnostic catalogue + embedding-retrieval engine shared across the asset-browser products in this monorepo."
 edition = "2021"
 
@@ -25,6 +25,10 @@ rayon = "1.10"
 # demand (clean, file-backed, OS-evictable) instead of faulting +
 # copying the whole ~800 MB block up front. Pre-authorised for this task.
 memmap2 = "0.9"
+# Full-content hashing for move/rename relink detection — a file that
+# moves on disk is matched back to its orphaned DB row by BLAKE3 hash so
+# its tags/placement/embeddings survive the move (db/content_hash.rs).
+blake3 = "1"
 
 [dev-dependencies]
 tempfile = "3.27.0"

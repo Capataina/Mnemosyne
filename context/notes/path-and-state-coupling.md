@@ -52,3 +52,4 @@ If any of the following happens:
 - `systems/database.md` § Known Issues for the broader path-comparison risk.
 - `systems/paths-and-state.md` § Implementation for the single helper.
 - `systems/tauri-commands.md` § `resolve_image_id_for_cosine_path` for the consumer pattern.
+- `notes/image-identity-orphan-lifecycle.md` for the content-hash relink — the structural fix for the deeper version of this problem: path wasn't just inconsistently formatted, it was the ONLY identity signal a row had until that feature added a second one (content hash) that survives a move even when the path doesn't match.

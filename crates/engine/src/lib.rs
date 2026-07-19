@@ -26,6 +26,7 @@
 // left-aligned continuations on purpose, for terminal readability.
 #![allow(clippy::doc_lazy_continuation)]
 
+pub mod content_hash;
 pub mod cosine;
 pub mod cosine_similarity;
 pub mod db;

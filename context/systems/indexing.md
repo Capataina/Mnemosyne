@@ -4,14 +4,14 @@
 
 ## Scope / Purpose
 
-The background pipeline that turns a freshly-launched (or freshly-triggered) app into a usable catalogue. Owns the orchestration of: model download (if needed), text-encoder pre-warm (CLIP + SigLIP-2), multi-root scan (batched inserts), orphan detection, parallel thumbnail generation (base + eager higher-resolution buckets), per-encoder parallel embedding (SigLIP-2/DINOv2 batched inference, CLIP per-image), and per-encoder fusion-cache refresh + persistence. Runs on a dedicated thread spawned from the Tauri `setup` callback (or from any command that mutates the root list) and emits structured `IndexingProgress` events plus batched `feed-delta` events so the frontend renders both a live progress pill and live-updating feed tiles during a run.
+The background pipeline that turns a freshly-launched (or freshly-triggered) app into a usable catalogue. Owns the orchestration of: model download (if needed), text-encoder pre-warm (CLIP + SigLIP-2), multi-root scan (content-hash relink — a moved/renamed file is matched back to its orphaned row instead of re-indexed as new), orphan detection, parallel thumbnail generation (base + eager higher-resolution buckets), per-encoder parallel embedding (SigLIP-2/DINOv2 batched inference, CLIP per-image), and per-encoder fusion-cache refresh + persistence. Runs on a dedicated thread spawned from the Tauri `setup` callback (or from any command that mutates the root list) and emits structured `IndexingProgress` events plus batched `feed-delta` events so the frontend renders both a live progress pill and live-updating feed tiles during a run.
 
 This system is what made the Phase 5 transition from "blocking pre-Tauri startup" to "window opens immediately and progress shows in the UI" possible, and the 100k performance round is what made a 100k-image first index behave — batched scan inserts, a reverse tag index, batch inference for two of the three encoders, and per-image progress emits all trace back to this file or its call sites.
 
 ## Boundaries / Ownership
 
-- **Owns:** the pipeline lifecycle, single-flight gating (`AtomicBool`), the `IndexingProgress` event payload shape, the `feed-delta` batched event shape (`FeedDeltaRow`/`FeedDeltaBatch`), the per-phase tracing instrumentation (`pipeline.scan_phase`, `pipeline.thumbnail_phase`, `pipeline.eager_bucket_pass`, `pipeline.fusion_refresh`; each encoder's own `run_clip_encoder`/`run_trait_encoder` span covers the encode phase — see below), the shared monotonic `EncodeProgress` aggregate that keeps three concurrent encoder threads' progress emits coherent.
-- **Does not own:** any SQL (delegates to `db/`), any encoder math (delegates to `similarity_and_semantic_search::encoder`/`encoder_siglip2`/`encoder_dinov2`/`encoder_text`), any cosine retrieval or the per-encoder fusion caches themselves (delegates to `similarity_and_semantic_search::cosine_similarity::CosineIndex` and `FusionIndexState` — see `systems/multi-encoder-fusion.md`), the watcher itself (delegates to `watcher.rs`), the feed manifest's frontend-side merge/cache logic (delegates to `systems/feed-protocol.md`).
+- **Owns:** the pipeline lifecycle, single-flight gating (`AtomicBool`), the `IndexingProgress` event payload shape, the `feed-delta` batched event shape (`FeedDeltaRow`/`FeedDeltaBatch`), the per-phase tracing instrumentation (`pipeline.scan_phase`, `pipeline.content_hash_backfill`, `pipeline.thumbnail_phase`, `pipeline.eager_bucket_pass`, `pipeline.fusion_refresh`; each encoder's own `run_clip_encoder`/`run_trait_encoder` span covers the encode phase — see below), the shared monotonic `EncodeProgress` aggregate that keeps three concurrent encoder threads' progress emits coherent.
+- **Does not own:** any SQL (delegates to `db/`), any encoder math (delegates to `similarity_and_semantic_search::encoder`/`encoder_siglip2`/`encoder_dinov2`/`encoder_text`), any cosine retrieval or the per-encoder fusion caches themselves (delegates to `similarity_and_semantic_search::cosine_similarity::CosineIndex` and `FusionIndexState` — see `systems/multi-encoder-fusion.md`), the watcher itself (delegates to `watcher.rs`), the feed manifest's frontend-side merge/cache logic (delegates to `systems/feed-protocol.md`), content-hash computation itself (delegates to the engine crate's `content_hash::hash_file`, consumed via `db::content_hash::relink_or_insert` — see `systems/database.md`'s "Content-hash relink" section).
 - **Public API:** `IndexingState::new()`, `try_spawn_pipeline(app, state, db_path, fusion) -> Result<(), IndexingError>` — `fusion` is `FusionIndexState.per_encoder` (`Arc<RwLock<HashMap<String, CosineIndex>>>`), replacing the pre-100k-round `cosine_index: Arc<Mutex<CosineIndex>>` primary-index parameter now that the primary `CosineIndexState` is gone (`1514a90`) — `IndexingProgress { phase, processed, total, message }`, `Phase` enum (kebab-case serialised), `FeedDeltaRow` / `FeedDeltaBatch` (T3-1).
 
 ## Current Implemented Reality
@@ -48,15 +48,42 @@ Phase::Scan
     ──► For every enabled root:
             ImageScanner::scan_directory(root_path) → Vec<String>
             collect into all_paths + paths_per_root
-    ──► For every chunk of 256 (path, root_id) pairs (T2-2):
-            db.add_images_batch(&batch)  — one BEGIN IMMEDIATE per chunk, INSERT OR IGNORE,
-                                            row-by-row fallback on chunk failure
-            emit Phase::Scan(processed, total) — replays the per-100 cadence exactly across
-                                                  batch boundaries, so the wire behaviour is
-                                                  unchanged even though the DB writes now batch
-    ──► For every enabled root:
+    ──► A. db.get_paths_to_root_ids() (single SELECT) → diff against all_paths →
+            new_paths (the only ones needing a hash + relink/insert; everything
+            else the DB already knows by path is either alive or an orphan that
+            step B un-orphans at the SAME path — neither is a relink candidate).
+            Read BEFORE step B: mark_orphaned only flips `orphaned`, never
+            `path`, so the diff is unaffected by ordering.
+    ──► B. For every enabled root:
             db.mark_orphaned(root_id, alive_paths_for_that_root) — diff in Rust + chunked UPDATE
-    ──► emit Phase::Scan(total, total) — final tick
+            MUST run BEFORE step C: relink matches `orphaned = 1`, and a moved
+            file's SOURCE row is only flagged orphaned here — relinking first
+            would still see that row as orphaned = 0 and never match it
+            (content-hash relink — see `systems/database.md`).
+    ──► C. new_paths is empty → emit Phase::Scan(total, total) and skip to D
+            (steady-state fast path: a no-op rescan hashes and inserts
+            nothing). Otherwise:
+              rayon par_iter: content_hash::hash_file(path) → (hash, size) —
+                parallel, decode/IO-bound
+              SERIALLY, in order: db.relink_or_insert(path, root_id, hash, size)
+                → Relinked{id} (moved file, matched an orphaned row's
+                  (size, content_hash)) or Inserted{id} (genuinely new).
+                Serial is load-bearing: two identical moved files must drain
+                two distinct orphaned rows, lowest id first — only holds if
+                each call commits before the next runs its SELECT.
+              db.add_image(path, root_id) — NULL-hash fallback for any file
+                whose hash_file() call failed (unreadable, deleted mid-scan)
+              emit Phase::Scan(processed, new_count) at a total/4000-scaled interval
+    ──► D. Content-hash backfill (runs after the scan/relink pass above, still
+            before the thumbnail phase): db.get_images_without_content_hash()
+              → hash each via content_hash::hash_file → db.set_content_hash(...)
+            on a bounded rayon pool (half the cores, clamped 2-4)
+            empty/no-op on a fresh index or steady-state rescan — every row
+              already hashed; does real work only on the first launch after
+              upgrading (pre-existing rows backfilled once)
+            reuses Phase::Scan, message "Hashing existing images" — NOT a new
+              Phase variant (the frontend's phase map is a closed set; an
+              unknown phase blanks the status pill and hides it)
 
 Phase::Thumbnail
     ──► db.get_paths_to_root_ids() → HashMap<path, Option<root_id>>  (single SELECT, audit fix)
@@ -140,7 +167,7 @@ Step 7 — refresh + persist the per-encoder fusion caches (NOT a Phase:: varian
 Phase::Ready (db.get_all_images().len() in the message)
 ```
 
-Source: `indexing.rs:225-711` (`run_pipeline_inner`), `indexing.rs:800-1030` (`run_encoder_phase`), `indexing.rs:1044-1175` (CLIP) / `indexing.rs:1179-` (`run_trait_encoder`, shared by SigLIP-2 + DINOv2). The phase enum is serialised kebab-case (`#[serde(rename_all = "kebab-case")]`) so the frontend `useIndexingProgress`/`useIndexingStatus` hook keys on `"model-download" | "scan" | "thumbnail" | "encode" | "ready" | "error"`.
+Source: `indexing.rs:230-969` (`run_pipeline_inner`; the scan-phase reorder — steps A-D above — lives at `indexing.rs:411-622`), `indexing.rs:1058-1290` (`run_encoder_phase`), `indexing.rs:1302-1433` (CLIP, `run_clip_encoder_with_intra`) / `indexing.rs:1437-` (`run_trait_encoder`, shared by SigLIP-2 + DINOv2). The phase enum is serialised kebab-case (`#[serde(rename_all = "kebab-case")]`) so the frontend `useIndexingProgress`/`useIndexingStatus` hook keys on `"model-download" | "scan" | "thumbnail" | "encode" | "ready" | "error"`.
 
 ### `EncodeProgress` — the shared monotonic counter (fixes the sticky-`0/21` bug)
 
@@ -160,7 +187,7 @@ pub struct FeedDeltaBatch { pub rows: Vec<FeedDeltaRow> }
 const FEED_DELTA_BATCH: usize = 64;
 ```
 
-`indexing.rs:99-138` (types + `emit_feed_delta`), buffered and flushed inside the thumbnail phase's rayon loop (`indexing.rs:540-608`). Every successfully-thumbnailed image becomes a delta row — buffered under the same Mutex discipline as the progress high-water mark, flushed as a Tauri `feed-delta` event every 64 rows, with a terminal flush before the phase-ending `Phase::Thumbnail` progress emit (so any frontend phase-transition logic always runs after the last delta). At 100k images this yields ~1.5k events across the whole thumbnail phase; the frontend additionally throttles cache application to a ~5s cadence, so event count is an IPC-payload-size concern, not a render-frequency one. Only rows whose DB write actually landed become deltas — the manifest cache must never claim a thumbnail the DB doesn't know about (a later `Phase::Ready` reconcile would visibly un-pop the tile). This event, together with `get_feed_manifest`, is what killed the every-5s full `["images"]` refetch cycle — see `systems/feed-protocol.md` and `systems/database.md`'s "T3-1" section for the consuming/producing halves.
+`indexing.rs:99-138` (types + `emit_feed_delta`), buffered and flushed inside the thumbnail phase's rayon loop (`indexing.rs:714-769` — shifted down from the scan phase's pre-reorder line numbers by the content-hash relink round's insertions ahead of it). Every successfully-thumbnailed image becomes a delta row — buffered under the same Mutex discipline as the progress high-water mark, flushed as a Tauri `feed-delta` event every 64 rows, with a terminal flush before the phase-ending `Phase::Thumbnail` progress emit (so any frontend phase-transition logic always runs after the last delta). At 100k images this yields ~1.5k events across the whole thumbnail phase; the frontend additionally throttles cache application to a ~5s cadence, so event count is an IPC-payload-size concern, not a render-frequency one. Only rows whose DB write actually landed become deltas — the manifest cache must never claim a thumbnail the DB doesn't know about (a later `Phase::Ready` reconcile would visibly un-pop the tile). This event, together with `get_feed_manifest`, is what killed the every-5s full `["images"]` refetch cycle — see `systems/feed-protocol.md` and `systems/database.md`'s "T3-1" section for the consuming/producing halves.
 
 ### Single-flight semantics
 
@@ -231,7 +258,7 @@ The progress callback is the only `Phase::ModelDownload` event source. If models
 |-------------|------|
 | `app.emit("indexing-progress", &payload)` | Per-phase progress payloads — see below |
 | `app.emit("feed-delta", &FeedDeltaBatch)` | Batched per-thumbnail feed patches (T3-1) — see above |
-| Database `images` table | Batched INSERT OR IGNORE per scanned chunk (`add_images_batch`); UPDATE thumbnail_path/width/height; UPDATE manual layout untouched by this pipeline |
+| Database `images` table | Per-file `relink_or_insert` (UPDATE on a moved-file match, else INSERT) for genuinely-new paths, with an `add_image` NULL-hash fallback on hash failure; `set_content_hash` UPDATE for the backfill pass; UPDATE thumbnail_path/width/height; UPDATE manual layout untouched by this pipeline |
 | Database `embeddings` table | `upsert_embeddings_batch(encoder_id, rows, false)` per encode chunk, one row per (image, encoder) |
 | Database `images` table (orphan column) | UPDATE orphaned = 0/1 per `mark_orphaned` |
 | Filesystem `<app_data_dir>/thumbnails/root_<id>/thumb_<id>.jpg` | Base 480px JPEG per image |

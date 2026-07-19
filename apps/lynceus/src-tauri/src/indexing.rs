@@ -36,8 +36,13 @@ use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager};
 use tracing::{error, info, warn};
 
+use crate::db::content_hash::RelinkOutcome;
 use crate::db::ImageDatabase;
 use crate::filesystem::ImageScanner;
+// The top-level file-hashing module is not re-exported at the app crate
+// root (only `db`/`paths`/… are), so it is reached via the engine crate
+// directly — the same module the DB-side relink methods build on.
+use mnemosyne::content_hash;
 use crate::model_download;
 use crate::paths;
 use crate::similarity_and_semantic_search::cosine_similarity::CosineIndex;
@@ -403,45 +408,50 @@ fn run_pipeline_inner(
     }
     let total_found = all_paths.len();
 
-    // Second pass: insert into DB. Idempotent — INSERT OR IGNORE on the
-    // path uniqueness constraint means existing rows aren't duplicated.
-    //
-    // Batched: one BEGIN IMMEDIATE transaction per SCAN_INSERT_BATCH
-    // paths instead of one autocommit per path (see add_images_batch).
-    // The progress emit is decoupled from the insert batch size and
-    // keeps its original cadence exactly — one emit at every 100-th
-    // processed path plus one at total_found — by replaying the 100-
-    // boundaries each insert batch crosses.
-    const SCAN_INSERT_BATCH: usize = 256;
-    let mut processed = 0usize;
-    for chunk in all_paths.chunks(SCAN_INSERT_BATCH) {
-        let start = processed;
-        let batch: Vec<(String, Option<i64>)> =
-            chunk.iter().map(|(p, rid)| (p.clone(), Some(*rid))).collect();
-        database.add_images_batch(&batch)?;
-        processed += chunk.len();
+    // A. Compute the genuinely-new paths — the only ones that need
+    //    hashing and a relink/insert. Everything the DB already knows by
+    //    path is either alive (nothing to do) or an orphan that
+    //    mark_orphaned (step B) un-orphans if its file returned at the
+    //    same path; neither case is a relink candidate. Read the current
+    //    path set BEFORE mark_orphaned — it flips `orphaned` flags, not
+    //    paths, so the set is unaffected by ordering. In steady state
+    //    this collapses to empty, so a no-op rescan hashes and inserts
+    //    nothing (the fast path below).
+    let existing_paths_map = database.get_paths_to_root_ids()?;
+    let existing_paths: std::collections::HashSet<&str> =
+        existing_paths_map.keys().map(String::as_str).collect();
+    let new_paths: Vec<(String, i64)> = all_paths
+        .iter()
+        .filter(|(p, _)| !existing_paths.contains(p.as_str()))
+        .cloned()
+        .collect();
+    let new_count = new_paths.len();
 
-        // Emit at every multiple of 100 this batch crossed, matching the
-        // pre-batching per-100 cadence value-for-value.
-        let mut boundary = (start / 100 + 1) * 100;
-        while boundary <= processed {
-            emit(app, Phase::Scan, boundary, total_found, None);
-            boundary += 100;
-        }
-        // Terminal emit — only when total_found isn't itself a multiple
-        // of 100 (otherwise the boundary loop already emitted it), so we
-        // never double-emit the final value.
-        if processed == total_found && !total_found.is_multiple_of(100) {
-            emit(app, Phase::Scan, total_found, total_found, None);
-        }
-    }
-
-    // Orphan-detection pass: for each enabled root, mark any DB row
-    // whose path isn't in the just-scanned alive set as orphaned. The
-    // grid query filters orphaned rows out, so the user doesn't see
-    // tiles for files that were deleted between launches.
+    // B. Orphan-detection — MOVED AHEAD of the relink/insert below (it
+    //    used to run AFTER insertion). Relink matches on `orphaned = 1`,
+    //    and a moved file's SOURCE row (its old path) is only flagged
+    //    orphaned here. So this MUST run before the relink pass, or a move
+    //    is never detected: the source row would still read orphaned = 0
+    //    at relink time and fail the (size, content_hash) match. The
+    //    engine's relink tests assume exactly this order (orphan a row,
+    //    THEN relink). The loop body is otherwise the pre-existing one.
     for root in &enabled_roots {
-        let alive = paths_per_root.remove(&root.id).unwrap_or_default();
+        // Only orphan a root that actually SCANNED. `paths_per_root` gets an
+        // entry (possibly empty) for every root whose scan returned Ok, and NO
+        // entry for a root that failed to scan (scan_directory is fail-fast —
+        // one unreadable file or subdir aborts the whole root) or whose folder
+        // is currently missing (the `!exists` skip above). That distinction is
+        // load-bearing now that relink exists: falling through to an empty
+        // alive-set here would orphan the WHOLE root on a transient I/O hiccup,
+        // and step C would then relink those rows onto byte-identical files in
+        // OTHER enabled roots — silently migrating their tags/placement/
+        // embeddings and stranding the originals. So skip un-scanned roots
+        // entirely; their rows are left untouched and recover on the next
+        // successful scan. A root that scanned Ok-but-empty (folder genuinely
+        // emptied) still has an entry, so real deletions are still detected.
+        let Some(alive) = paths_per_root.remove(&root.id) else {
+            continue;
+        };
         match database.mark_orphaned(root.id, &alive) {
             Ok(n) if n > 0 => {
                 info!("orphan-detection: {} rows marked orphaned in root {}", n, root.path);
@@ -451,8 +461,180 @@ fn run_pipeline_inner(
         }
     }
 
-    emit(app, Phase::Scan, total_found, total_found, None);
+    // C. Hash the new files in PARALLEL, then relink/insert them SERIALLY.
+    //    Hashing is decode/IO-bound and embarrassingly parallel; the
+    //    relink is serial because determinism depends on each call
+    //    committing before the next runs its SELECT — that is what makes
+    //    two identical moved files drain two distinct orphaned rows,
+    //    lowest id first. Do not parallelise the relink calls.
+    if new_count == 0 {
+        // Steady-state fast path: nothing new. Emit one coherent
+        // scan-complete so the bar lands on 100% and skip hash/relink.
+        emit(app, Phase::Scan, total_found, total_found, None);
+    } else {
+        // Re-prime the bar with the real work total so it climbs on a
+        // first index (where every path is new).
+        emit(app, Phase::Scan, 0, new_count, None);
+
+        // Parallel hash. A hash failure (unreadable file, deleted mid-scan)
+        // is recorded so the file still enters the catalog NULL-hashed via
+        // the fallback below and gets picked up by the backfill pass or a
+        // later scan; it is never silently dropped.
+        enum HashResult {
+            Hashed(String, i64, [u8; 32], u64),
+            Failed(String, i64),
+        }
+        let hash_results: Vec<HashResult> = new_paths
+            .par_iter()
+            .map(|(path, root_id)| {
+                match content_hash::hash_file(std::path::Path::new(path)) {
+                    Ok((hash, size)) => HashResult::Hashed(path.clone(), *root_id, hash, size),
+                    Err(e) => {
+                        warn!("content hash failed for {path}: {e}");
+                        HashResult::Failed(path.clone(), *root_id)
+                    }
+                }
+            })
+            .collect();
+
+        let mut hashed: Vec<(String, i64, [u8; 32], u64)> = Vec::new();
+        let mut unhashed: Vec<(String, i64)> = Vec::new();
+        for result in hash_results {
+            match result {
+                HashResult::Hashed(p, rid, h, sz) => hashed.push((p, rid, h, sz)),
+                HashResult::Failed(p, rid) => unhashed.push((p, rid)),
+            }
+        }
+
+        // Serial relink/insert over the successfully-hashed files. Progress
+        // climbs against new_count as each file lands. A single file's
+        // failure is logged and skipped rather than aborting the pipeline.
+        let mut relinked = 0usize;
+        let mut inserted = 0usize;
+        let mut processed = 0usize;
+        let emit_every = (new_count / 4000).max(1);
+        for (path, root_id, hash, size) in &hashed {
+            match database.relink_or_insert(path, Some(*root_id), hash, *size as i64) {
+                Ok(RelinkOutcome::Relinked { .. }) => relinked += 1,
+                Ok(RelinkOutcome::Inserted { .. }) => inserted += 1,
+                Err(e) => warn!("relink/insert failed for {path}: {e}"),
+            }
+            processed += 1;
+            if processed.is_multiple_of(emit_every) || processed == new_count {
+                emit(app, Phase::Scan, processed, new_count, None);
+            }
+        }
+        info!(
+            "content-hash relink: {relinked} moved file(s) relinked, {inserted} new file(s) inserted"
+        );
+
+        // Fallback for hash failures: insert with a NULL hash so the file
+        // still shows in the grid; the backfill pass (step D) or a later
+        // scan will hash it.
+        if !unhashed.is_empty() {
+            let mut fallback = 0usize;
+            for (path, root_id) in &unhashed {
+                match database.add_image(path.clone(), Some(*root_id)) {
+                    Ok(()) => fallback += 1,
+                    Err(e) => warn!("fallback add_image failed for {path}: {e}"),
+                }
+            }
+            info!("content-hash relink: {fallback} file(s) inserted NULL-hash after hash failure");
+        }
+
+        // Terminal emit — land the bar exactly on new_count (the serial
+        // loop above may stop short of it if some inserts errored, so pin
+        // the final value explicitly).
+        emit(app, Phase::Scan, new_count, new_count, None);
+    }
+
     drop(_scan_phase);
+
+    // D. Content-hash backfill — hash existing rows that predate content
+    //    hashing (NULL hash). On a fresh index this is EMPTY (every row
+    //    inserted above already carries its hash), so it is a no-op in
+    //    steady state and on first indexes. It does real work only on the
+    //    first launch AFTER upgrading: those rows already own thumbnails
+    //    and embeddings, so hashing them here is that launch's main work
+    //    and is what lets a future move relink them. A row whose hash
+    //    fails stays NULL and is retried next run (idempotent —
+    //    get_images_without_content_hash still returns it).
+    let needs_hash = database.get_images_without_content_hash()?;
+    if !needs_hash.is_empty() {
+        let _backfill_span =
+            tracing::info_span!("pipeline.content_hash_backfill").entered();
+        let total_backfill = needs_hash.len();
+        info!("content-hash backfill: hashing {total_backfill} existing row(s)");
+
+        // Bounded pool — mirrors the eager-preview pass (step 7b). Hashing
+        // reads whole files, so an all-cores par_iter would saturate I/O
+        // against foreground use. Half the cores (min 2, max 4) keeps most
+        // of the throughput while leaving headroom; fall back to the global
+        // pool if the dedicated pool fails to build.
+        let backfill_threads = std::thread::available_parallelism()
+            .map(|n| (n.get() / 2).clamp(2, 4))
+            .unwrap_or(2);
+
+        // Reuse Phase::Scan — NOT a new Phase variant. The frontend's phase
+        // map is a closed set owned by another agent; an unknown phase
+        // blanks the status pill and hides it. This is the same reason the
+        // eager-preview pass reuses Phase::Thumbnail; the message carries
+        // the honest label into the pill.
+        emit(
+            app,
+            Phase::Scan,
+            0,
+            total_backfill,
+            Some("Hashing existing images".into()),
+        );
+
+        let completed = AtomicUsize::new(0);
+        // High-water mark guarding monotonic emits — the same discipline
+        // the thumbnail and eager-preview passes use (emit under the lock so
+        // concurrent workers report strictly increasing values).
+        let last_emit = std::sync::Mutex::new(0usize);
+        let emit_every = (total_backfill / 4000).max(1);
+
+        let run_backfill = || {
+            needs_hash.par_iter().for_each(|(id, path)| {
+                match content_hash::hash_file(std::path::Path::new(path)) {
+                    Ok((hash, size)) => {
+                        if let Err(e) = database.set_content_hash(*id, &hash, size as i64) {
+                            warn!("backfill set_content_hash for image {id} failed: {e}");
+                        }
+                    }
+                    Err(e) => warn!("backfill hash failed for {path}: {e}"),
+                }
+
+                let done = completed.fetch_add(1, Ordering::Relaxed) + 1;
+                if done.is_multiple_of(emit_every) || done == total_backfill {
+                    let mut last = last_emit.lock().unwrap();
+                    if done > *last {
+                        *last = done;
+                        emit(
+                            app,
+                            Phase::Scan,
+                            done,
+                            total_backfill,
+                            Some("Hashing existing images".into()),
+                        );
+                    }
+                }
+            });
+        };
+
+        match rayon::ThreadPoolBuilder::new()
+            .num_threads(backfill_threads)
+            .thread_name(|i| format!("backfill-{i}"))
+            .build()
+        {
+            Ok(pool) => pool.install(run_backfill),
+            Err(e) => {
+                warn!("backfill thread pool build failed ({e}); using the global pool");
+                run_backfill();
+            }
+        }
+    }
 
     // 5. Thumbnails phase (rayon-parallel, runs to completion before
     //    encoder phase begins).

@@ -12,7 +12,7 @@ The module was previously a 1.6k-line `db.rs`; it is now split into focused subm
 
 - **Owns:** the schema (5 tables), the WAL+NORMAL+FK pragma block, the embedding-BLOB encoding/decoding via `bytemuck::cast_slice` (replaces 3 unsafe blocks), the per-table CRUD, the AND/OR tag filter SQL branch, the orphan-mark chunked UPDATE, the legacy migration helper, the pipeline-stats single-SELECT.
 - **Does not own:** path normalisation (lives in `paths::strip_windows_extended_prefix`), thumbnail generation (lives in `thumbnail-pipeline`), embedding generation (lives in `clip-image-encoder`), root id resolution from cosine paths (lives in `commands::resolve_image_id_for_cosine_path`).
-- **Public API surface:** `ImageDatabase::new`, `initialize`, `default_database_path`, `read_lock` (R2 — read-only secondary connection helper for foreground SELECTs), `checkpoint_passive` (R3 — manual WAL drain between encoder batches), `add_image`, `add_images_batch` (T2-2 — chunked `BEGIN IMMEDIATE` scan-insert batching), `get_images`, `get_all_images`, `get_images_with_thumbnails`, `get_images_without_embeddings`, `get_images_without_thumbnails`, `get_image_id_by_path`, `get_images_metadata_for_ids` (T3-2/#6 — batch search-result hydration), `get_feed_manifest` / `get_image_details_by_ids` (T3-1 — compact manifest + per-id detail split), `embedding_generation_token` (T3-2/#8 — cosine-store staleness token), `get_image_source_for_thumbnail`, `get_paths_to_root_ids`, `get_pipeline_stats`, `update_image_embedding`, `get_image_embedding`, `get_all_embeddings`, `upsert_embedding`, `upsert_embeddings_batch` (R1 — BEGIN IMMEDIATE batch INSERT helper), `get_embedding`, `get_all_embeddings_for`, `get_images_without_embedding_for`, `count_embeddings_for`, `update_image_thumbnail`, `get_image_thumbnail_info`, `create_tag`, `delete_tag`, `get_tags`, `get_tag_counts` (library-drawer per-folder counts — see `systems/tag-system.md`), `add_tag_to_image`, `remove_tag_from_image`, `list_roots`, `add_root` (now takes an `Option<Vec<u8>>` macOS security-scoped bookmark), `enabled_roots_with_bookmarks`, `get_root_bookmark`, `remove_root`, `set_root_enabled`, `migrate_legacy_scan_root`, `wipe_images_for_new_root`, `get_root_id_by_path`, `mark_orphaned`, `get_image_notes`, `set_image_notes`, `set_manual_order` / `set_manual_col_span` (drag-reorder / drag-resize persistence — see the Known Issues note on `set_manual_order`'s frontend status). Plus type alias `pub type ID = i64`.
+- **Public API surface:** `ImageDatabase::new`, `initialize`, `default_database_path`, `read_lock` (R2 — read-only secondary connection helper for foreground SELECTs), `checkpoint_passive` (R3 — manual WAL drain between encoder batches), `add_image`, `add_images_batch` (T2-2 — chunked `BEGIN IMMEDIATE` scan-insert batching), `get_images`, `get_all_images`, `get_images_with_thumbnails`, `get_images_without_embeddings`, `get_images_without_thumbnails`, `get_image_id_by_path`, `get_images_metadata_for_ids` (T3-2/#6 — batch search-result hydration), `get_feed_manifest` / `get_image_details_by_ids` (T3-1 — compact manifest + per-id detail split), `embedding_generation_token` (T3-2/#8 — cosine-store staleness token), `get_image_source_for_thumbnail`, `get_paths_to_root_ids`, `get_pipeline_stats`, `update_image_embedding`, `get_image_embedding`, `get_all_embeddings`, `upsert_embedding`, `upsert_embeddings_batch` (R1 — BEGIN IMMEDIATE batch INSERT helper), `get_embedding`, `get_all_embeddings_for`, `get_images_without_embedding_for`, `count_embeddings_for`, `update_image_thumbnail`, `get_image_thumbnail_info`, `create_tag`, `delete_tag`, `get_tags`, `get_tag_counts` (library-drawer per-folder counts — see `systems/tag-system.md`), `add_tag_to_image`, `remove_tag_from_image`, `list_roots`, `add_root` (now takes an `Option<Vec<u8>>` macOS security-scoped bookmark), `enabled_roots_with_bookmarks`, `get_root_bookmark`, `remove_root`, `set_root_enabled`, `migrate_legacy_scan_root`, `wipe_images_for_new_root`, `get_root_id_by_path`, `mark_orphaned`, `relink_or_insert` / `set_content_hash` / `get_images_without_content_hash` (content-hash move/rename relink — see below), `get_image_notes`, `set_image_notes`, `set_manual_order` / `set_manual_col_span` (drag-reorder / drag-resize persistence — see the Known Issues note on `set_manual_order`'s frontend status). Plus type alias `pub type ID = i64`.
 
 ## Current Implemented Reality
 
@@ -25,7 +25,8 @@ crates/engine/src/db/
 │                            tests::initialize_is_idempotent, initialize_creates_reverse_tag_index
 ├── schema_migrations.rs  — migrate_add_thumbnail_columns, migrate_add_multifolder_columns,
 │                            migrate_add_notes_and_orphaned_columns, migrate_add_manual_order_columns
-│                            (images.manual_order / manual_col_span), migrate_add_roots_bookmark_column
+│                            (images.manual_order / manual_col_span), migrate_add_content_hash_columns
+│                            (images.content_hash / size), migrate_add_roots_bookmark_column
 │                            (roots.bookmark), migrate_embedding_pipeline_version (all PRAGMA table_info gated)
 ├── images_query.rs       — aggregate_image_rows helper (audit extraction; was duplicated 4×),
 │                            get_images / get_all_images / get_images_with_thumbnails (AND/OR + exclude branch),
@@ -48,8 +49,11 @@ crates/engine/src/db/
 │                            enabled_roots_with_bookmarks, get_root_bookmark, remove_root, set_root_enabled,
 │                            migrate_legacy_scan_root, wipe_images_for_new_root, get_root_id_by_path
 ├── notes_orphans.rs      — add_image (multi-folder aware, single-row), add_images_batch (T2-2 — chunked
-│                            batch insert, see below), get_image_notes, set_image_notes,
+│                            batch insert, see below; no longer the pipeline's live insert path — see
+│                            "Content-hash relink" below), get_image_notes, set_image_notes,
 │                            mark_orphaned (chunked UPDATE for SQLite param limit)
+├── content_hash.rs       — set_content_hash, get_images_without_content_hash, relink_or_insert
+│                            (move/rename detection via full-content BLAKE3 hash — see below)
 └── test_helpers.rs       — fresh_db() helper used by every submodule's #[cfg(test)] block
 ```
 
@@ -76,7 +80,9 @@ CREATE TABLE images (
     notes             TEXT,                    -- Phase 11 free-text annotation
     orphaned          INTEGER NOT NULL DEFAULT 0,  -- Phase 7 deleted-from-disk marker
     manual_order      INTEGER,                 -- drag-reorder position; NULL = default masonry order
-    manual_col_span   INTEGER                  -- drag-resize width in columns; NULL = default single column
+    manual_col_span   INTEGER,                 -- drag-resize width in columns; NULL = default single column
+    content_hash      BLOB,                    -- full-content BLAKE3 digest; NULL until hashed
+    size              INTEGER                  -- byte count paired with content_hash; the relink pre-filter
 );
 
 CREATE TABLE tags (
@@ -102,7 +108,7 @@ CREATE TABLE images_tags (
 -- tables total. See "Idempotent migrations" below for embeddings/meta.
 ```
 
-Source: `db/mod.rs:90-143` (original 4-table core), extended by `schema_migrations.rs`'s idempotent `ALTER TABLE` helpers for `manual_order`/`manual_col_span` (`migrate_add_manual_order_columns`) and `roots.bookmark` (`migrate_add_roots_bookmark_column`), and by `mod.rs::initialize()`'s `CREATE TABLE IF NOT EXISTS` for `embeddings` + `meta`. The `roots` table is created first because `images.root_id` references it.
+Source: `db/mod.rs:90-143` (original 4-table core), extended by `schema_migrations.rs`'s idempotent `ALTER TABLE` helpers for `manual_order`/`manual_col_span` (`migrate_add_manual_order_columns`), `content_hash`/`size` (`migrate_add_content_hash_columns` — move/rename relink, see below) and `roots.bookmark` (`migrate_add_roots_bookmark_column`), and by `mod.rs::initialize()`'s `CREATE TABLE IF NOT EXISTS` for `embeddings` + `meta`. The `roots` table is created first because `images.root_id` references it.
 
 ### Pragmas at initialize
 
@@ -134,8 +140,9 @@ Two indexes created in `initialize()` alongside the tables, both landing in the 
 |-------|---------|-----|
 | `idx_images_root_orphaned` (R9) | `images(root_id, orphaned)` | Every foreground grid SELECT filters by `orphaned = 0 AND (root_id IS NULL OR root_id IN (...))`. Without this, SQLite full-scans `images`; past a few thousand rows the scan cost becomes the dominant component of `get_images.row_iter`. `root_id` leads so both the OR-NULL and IN-list branches benefit; SQLite indexes NULLs in composite indexes, so legacy un-migrated rows still match. |
 | `idx_images_tags_tag` | `images_tags(tag_id, image_id)` | `images_tags`'s only index was the PK `(image_id, tag_id)` — nothing leads with `tag_id`. But `get_tag_counts` (tags.rs) joins on `tag_id`, and the include-filter subquery (`images_query.rs`) keys on `tag_id` too; both had to full-scan `images_tags` to resolve one tag. At 100k images × ~3 tags that's a ~300k-row scan per tag, and the library drawer requests a count for every folder at once — dozens of those scans fire together. Leading with `tag_id` and covering `image_id` turns each into an index range scan. Verified present via `initialize_creates_reverse_tag_index` (queries `sqlite_master`). |
+| `idx_images_content_hash` | `images(content_hash)` | The move/rename relink lookup (`db/content_hash.rs::relink_or_insert`) matches `WHERE orphaned = 1 AND size = ? AND content_hash = ?` once per genuinely-new path during a scan; without an index this full-scans `images`. Leading with `content_hash` (the selective column) turns each relink probe into an index seek — `size` stays a cheap post-filter on the few hash matches. |
 
-Both are `CREATE INDEX IF NOT EXISTS`, so they're idempotent on every launch like the table creation above them.
+All three are `CREATE INDEX IF NOT EXISTS`, so they're idempotent on every launch like the table creation above them.
 
 ### R2 — read-only secondary connection
 
@@ -345,17 +352,56 @@ pub fn get_image_details_by_ids(&self, ids: &[ID]) -> rusqlite::Result<Vec<Image
 
 Consumed by the Tauri commands `get_feed_manifest` and `get_image_details` (`commands/images.rs`) — see `systems/tauri-commands.md`. Cross-link: the frontend-side manifest cache, delta-merge, and shuffle logic live in `systems/feed-protocol.md`.
 
-### Batched scan inserts — `add_images_batch` (T2-2)
+### Batched scan inserts — `add_images_batch` (T2-2, superseded as the pipeline's live path)
 
-`add_image(path, root_id)` is still the single-row insertion point (`INSERT OR IGNORE`, idempotent on the path UNIQUE constraint), but the indexing pipeline's scan phase now calls a batched sibling for the first-run case where tens or hundreds of thousands of paths land in one pass:
+`add_image(path, root_id)` is still the single-row insertion point (`INSERT OR IGNORE`, idempotent on the path UNIQUE constraint) — the scan phase now calls it as the NULL-hash fallback when a genuinely-new file's content hash can't be computed (see "Content-hash relink" below). `add_images_batch` itself is **no longer called by the indexing pipeline**: the content-hash relink round replaced the scan phase's insert path, because a bare `INSERT OR IGNORE` can't distinguish "genuinely new" from "moved" the way a content hash can. The method, its chunked-transaction behaviour, and its tests remain in place and green with zero callers in `apps/lynceus/src-tauri/src/` — the same dead-from-the-caller shape `set_manual_order` is in below (see Known Issues).
 
 ```rust
 pub fn add_images_batch(&self, images: &[(String, Option<ID>)]) -> rusqlite::Result<()>
 ```
 
-`db/notes_orphans.rs:104-` — one prepared `INSERT OR IGNORE` statement executed inside a single `BEGIN IMMEDIATE` transaction per 256-path chunk (~100k autocommits collapsing to ~400 transactions on a 100k first scan). **The partial-failure fallback is mandatory, not optional**: if a chunk's transaction fails (a row hits a constraint the prepared statement can't `IGNORE`), the transaction rolls back and that chunk is replayed one row at a time through `add_image`, so a single bad row can never sink its batch-mates — proven by a test that injects an FK-violating row mid-chunk and asserts rows before it survive while the offending row's error propagates, byte-identical to the pre-batching per-path loop. `Some(root_id)` binds the two-column INSERT; `None` binds the one-column form — both produce the identical NULL `root_id` `add_image` would.
+`db/notes_orphans.rs:104-` — one prepared `INSERT OR IGNORE` statement executed inside a single `BEGIN IMMEDIATE` transaction per 256-path chunk (~100k autocommits collapsing to ~400 transactions on a 100k first scan, when this was the live path). **The partial-failure fallback is mandatory, not optional**: if a chunk's transaction fails (a row hits a constraint the prepared statement can't `IGNORE`), the transaction rolls back and that chunk is replayed one row at a time through `add_image`, so a single bad row can never sink its batch-mates — proven by a test that injects an FK-violating row mid-chunk and asserts rows before it survive while the offending row's error propagates, byte-identical to the pre-batching per-path loop. `Some(root_id)` binds the two-column INSERT; `None` binds the one-column form — both produce the identical NULL `root_id` `add_image` would.
 
-This is the same "batch with a serial fallback" shape as R1's `upsert_embeddings_batch` for embedding writes, applied one layer earlier in the pipeline (the scan phase, before any embedding exists to batch).
+This was the same "batch with a serial fallback" shape as R1's `upsert_embeddings_batch` for embedding writes, applied one layer earlier in the pipeline (the scan phase, before any embedding exists to batch). Content-hash relink (below) needed a per-file hash before it could decide relink-vs-insert, which doesn't compose with a 256-path batch INSERT the same way — the scan phase's write path moved to a per-file serial call instead.
+
+### Content-hash relink — move/rename detection at scan time
+
+The scan phase's actual write path now: a moved or renamed file's bytes are unchanged, so a full-content hash lets a genuinely-new path be matched back to the orphaned row it moved from, instead of stranding that row's tags, manual layout, and embeddings under a fresh id. Closes remedy 1 of the diagnosis in `notes/image-identity-orphan-lifecycle.md`.
+
+```rust
+pub fn relink_or_insert(
+    &self,
+    path: &str,
+    root_id: Option<ID>,
+    hash: &[u8],
+    size: i64,
+) -> rusqlite::Result<RelinkOutcome>   // Relinked { id } | Inserted { id }
+```
+
+`db/content_hash.rs:90-142`. Matches the LOWEST-id row with `orphaned = 1 AND size = ? AND content_hash = ?` and, on a hit, UPDATEs that row's `path`/`root_id`/`orphaned` in place — the id survives, so everything keyed on it (tags, `manual_col_span`, embeddings) survives too. On a miss it INSERTs a fresh row carrying the hash and size. Runs inside one `BEGIN IMMEDIATE` transaction per call and is called SERIALLY, never batched: determinism depends on each call's SELECT seeing the previous call's UPDATE already committed, so two files with identical bytes drain two distinct orphaned rows, lowest id first, rather than both matching the same one.
+
+The hash itself lives one layer up, in the `mnemosyne` engine crate's top-level `content_hash` module (not this DB submodule):
+
+```rust
+pub fn hash_file(path: &Path) -> std::io::Result<([u8; 32], u64)>
+```
+
+`crates/engine/src/content_hash.rs:30-48`. Streams the file through a 64 KiB buffer into a BLAKE3 hasher, returning the digest and the exact byte count read. BLAKE3 over SHA-256 for throughput — this runs once per file on every scan, and a first index hashes the whole library.
+
+Two supporting methods round out the feature:
+
+```rust
+pub fn set_content_hash(&self, id: ID, hash: &[u8], size: i64) -> rusqlite::Result<()>
+pub fn get_images_without_content_hash(&self) -> rusqlite::Result<Vec<(ID, String)>>
+```
+
+`db/content_hash.rs:41-66`. `get_images_without_content_hash` returns every alive (`orphaned = 0`) row whose `content_hash` is still NULL — pre-existing rows from before this feature shipped. The indexing pipeline's backfill pass (after scan/relink, before the thumbnail phase) hashes each and writes it back via `set_content_hash`; on a fresh index or a steady-state rescan this returns empty and the pass is a no-op, so it only does real work on the first launch after upgrading. A hash that fails to compute stays NULL and is retried on the next launch — idempotent.
+
+**Schema**: `images.content_hash BLOB` + `images.size INTEGER` (both nullable — see the schema section above), added for existing DBs via the idempotent `migrate_add_content_hash_columns` (`schema_migrations.rs:233-251`), plus `idx_images_content_hash ON images(content_hash)` so the relink lookup is an index seek rather than a full-table scan (see the composite-indexes table above).
+
+**The caveat that survives this feature**: an orphaned row whose file is already gone AND whose `content_hash` is NULL (indexed before this feature existed, never backfilled because there's no file left to hash) can never be retro-relinked. Only images hashed after the column existed — freshly indexed or backfilled — participate in a future relink.
+
+Test coverage is split by layer. `content_hash.rs`'s `identical_bytes_hash_equal_and_differing_bytes_differ` proves the hash function; `db/content_hash.rs`'s eight tests (`move_detected_and_relinked_preserves_row_and_attachments`, `cross_root_move_relinks_and_updates_root_id`, `duplicate_hash_picks_lowest_id_deterministically`, `null_hash_orphan_is_never_relinked`, `relink_or_insert_stores_hash_on_insert`, `backfill_is_idempotent`, `purge_and_relink_coexist`, `size_participates_in_the_relink_match`) prove the relink/backfill/purge mechanics at the DB layer. The indexing pipeline's scan-phase reorder itself (hash → serial relink → backfill, ordered around `mark_orphaned`) is NOT end-to-end runtime-tested — there's no GUI in the build environment to drive `run_pipeline_inner` against a real filesystem move.
 
 ### Manual layout persistence — `manual_order` / `manual_col_span`
 
@@ -454,7 +500,8 @@ pub fn set_image_notes(&self, image_id: ID, notes: &str) -> rusqlite::Result<()>
 | `get_embedding(id, encoder_id)` | `commands::similarity` (SigLIP-2/DINOv2 query embedding lookup) | `Vec<f32>` or `Err` |
 | `get_all_embeddings()` / `get_all_embeddings_for(encoder_id)` | `CosineIndex::populate_from_db[_for_encoder]` | `Vec<(ID, path, Vec<f32>)>` / per-encoder variant, non-null only |
 | `get_image_id_by_path(path)` | `commands::resolve_image_id_for_cosine_path` strategies 1 + 2 | `i64` or `Err(QueryReturnedNoRows)` |
-| `get_paths_to_root_ids()` | indexing pipeline thumbnail routing | `HashMap<path, Option<root_id>>` — single SELECT |
+| `get_paths_to_root_ids()` | indexing pipeline thumbnail routing; also the scan phase's genuinely-new-path diff (content-hash relink) | `HashMap<path, Option<root_id>>` — single SELECT |
+| `get_images_without_content_hash()` | indexing pipeline content-hash backfill pass | `Vec<(ID, String)>` — alive (`orphaned = 0`) rows with NULL `content_hash` |
 | `get_image_thumbnail_info(id)` | legacy enrich path | `Option<(thumbnail_path, w, h)>` |
 | `get_pipeline_stats()` | `commands::images::get_pipeline_stats` — Settings drawer StatsSection | `PipelineStats { total, with_thumbnail, with_embedding_per_encoder, orphaned }` |
 | `get_tags()` | `commands::tags::get_tags`, SearchBar + TagDropdown | `Vec<Tag>` ordered by id |
@@ -464,8 +511,10 @@ pub fn set_image_notes(&self, image_id: ID, notes: &str) -> rusqlite::Result<()>
 
 | Write path | Used by | Notes |
 |------------|---------|-------|
-| `add_image(path, root_id)` | indexing pipeline scan phase (legacy single-row path; kept for callers that don't batch) | `INSERT OR IGNORE` on path UNIQUE — idempotent. `root_id: Option<ID>` because legacy un-migrated rows are NULL. |
-| `add_images_batch(images)` | indexing pipeline scan phase (T2-2 — the live path at scale) | Chunked `BEGIN IMMEDIATE` batch INSERT with mandatory per-row fallback on chunk failure — see "Batched scan inserts" above |
+| `add_image(path, root_id)` | indexing pipeline scan phase — NULL-hash fallback when a genuinely-new file's content hash can't be computed | `INSERT OR IGNORE` on path UNIQUE — idempotent. `root_id: Option<ID>` because legacy un-migrated rows are NULL. |
+| `add_images_batch(images)` | none — superseded by `relink_or_insert` below (T2-2, no longer called by the pipeline; see "Batched scan inserts" above) | Chunked `BEGIN IMMEDIATE` batch INSERT with mandatory per-row fallback on chunk failure; method + tests remain, zero live callers |
+| `relink_or_insert(path, root_id, hash, size)` | indexing pipeline scan phase — the live per-file write path for genuinely-new paths | Matches an orphaned row by `(size, content_hash)` and UPDATEs it in place (`Relinked`), else INSERTs fresh (`Inserted`) — see "Content-hash relink" above |
+| `set_content_hash(id, hash, size)` | indexing pipeline content-hash backfill pass | Writes a computed hash/size onto a pre-existing NULL-hash row |
 | `update_image_embedding(id, Vec<f32>)` | legacy single-embedding write path | bytemuck::cast_slice; empty Vec stored as empty BLOB explicitly |
 | `upsert_embeddings_batch(encoder_id, rows, legacy_clip_too)` | indexing pipeline encode phase, all three encoders | R1 — one `BEGIN IMMEDIATE` per chunk of 32; `legacy_clip_too` always `false` now (R8 dropped the legacy double-write) |
 | `update_image_thumbnail(id, &Path, w, h)` | indexing pipeline thumbnail phase, `commands::images::get_thumbnail` on-demand generation | Single UPDATE with all 3 columns at once |
@@ -487,13 +536,14 @@ pub fn set_image_notes(&self, image_id: ID, notes: &str) -> rusqlite::Result<()>
 
 - The on-disk `<app_data_dir>/images.db` (+ `images.db-wal` + `images.db-shm` files when WAL is active). All gitignored.
 - The `default_database_path()` helper returns the platform-correct path via `paths::database_path()` — on macOS `~/Library/Application Support/com.ataca.lynceus/images.db`. Same path in dev and release as of 2026-04-26; override via `LYNCEUS_DATA_DIR` env var.
-- 60+ unit tests across the submodule `tests` blocks: schema idempotency, reverse-tag-index existence, AND/OR/exclude tag semantics, multi-folder filter, NULL-root_id legacy rows, orphan detection (incl. 1200-id chunking stress test), notes round-trip, embedding BLOB round-trip (incl. large + empty), pipeline stats correctness across each stage, manifest-membership-matches-legacy-query equivalence, batch metadata hydration (bundle-all-or-nothing + empty/missing-id cases), the embedding-generation-token population-change test, manual-order/manual-col-span persistence + NULL defaults, and the add_images_batch partial-failure fallback.
+- 60+ unit tests across the submodule `tests` blocks: schema idempotency, reverse-tag-index existence, AND/OR/exclude tag semantics, multi-folder filter, NULL-root_id legacy rows, orphan detection (incl. 1200-id chunking stress test), notes round-trip, embedding BLOB round-trip (incl. large + empty), pipeline stats correctness across each stage, manifest-membership-matches-legacy-query equivalence, batch metadata hydration (bundle-all-or-nothing + empty/missing-id cases), the embedding-generation-token population-change test, manual-order/manual-col-span persistence + NULL defaults, the add_images_batch partial-failure fallback, and content-hash relink correctness (BLAKE3 digest equality, lowest-id-first relink determinism, NULL-hash-orphan exclusion, size-gated matching, backfill idempotency, purge/relink coexistence).
 
 ## Known Issues / Active Risks
 
 | Risk | Triggered by | Downstream impact |
 |------|--------------|-------------------|
 | `set_manual_order` is backend-only, unreachable from the frontend | The v2 masonry split moved drag-reorder to an in-session route-held order with no round-trip | The command, `db.set_manual_order`, and their tests are live and green but have zero callers in `apps/lynceus/src/` — dead-from-the-frontend surface that a future cleanup pass could either wire up (a "persist custom order" feature) or retire. `manual_col_span`/`set_manual_col_span` is NOT in this category — it is fully wired (nine frontend references) and persists drag-resize. See `notes/dead-code-inventory.md`. |
+| `add_images_batch` (T2-2) is no longer called by the indexing pipeline | The content-hash relink round replaced the scan phase's insert path with per-file hash + `relink_or_insert` so a moved file can be matched to its orphaned row | The chunked `BEGIN IMMEDIATE` + per-row-fallback method and its two tests remain live and green with zero callers in `apps/lynceus/src-tauri/src/` — the same dead-from-the-pipeline shape `set_manual_order` is in above. `add_image` (single-row) is still live, as the scan phase's NULL-hash fallback when a file can't be read for hashing. |
 | `get_images_with_thumbnails` / `get_images` is wire-compat only | T3-1's manifest/detail split migrated every frontend consumer to `get_feed_manifest` + `get_image_details_by_ids` | The LEFT-JOIN-unroll query and its 200-300k-row cost at 100k images are no longer on the hot path, but the command, the SQL, and the tests remain — a future schema change to tag aggregation must still keep both `aggregate_image_rows` call sites (manifest's sibling and this one) correct even though only the manifest path is live. |
 | `save_to_disk` / `paths::cosine_cache_path` orphaned by the T3-2/#8 rework | The primary `CosineIndexState` was removed entirely in `1514a90` | Public, tested, but caller-less — flagged in `context/notes/performance-decisions.md`, left in place for the next pass through that file rather than deleted here. |
 | Endianness assumption (little-endian) | Moving the DB across architectures with different endianness (none today, but ARM64 macOS happens to match little-endian by accident not by guarantee) | Embedding round-trip silently produces garbage f32s → cosine similarity becomes meaningless. Mitigated by bytemuck's compile-time alignment proof but not endianness guard. The flat mmap embedding store (`crates/engine/src/cosine/`) carries the same native-little-endian assumption — see `systems/multi-encoder-fusion.md`. |

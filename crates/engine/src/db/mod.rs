@@ -13,6 +13,7 @@
 
 use std::sync::{Mutex, OnceLock};
 
+pub mod content_hash;
 mod embeddings;
 pub mod images_query;
 mod manual_layout;
@@ -206,19 +207,23 @@ impl ImageDatabase {
                 notes TEXT,
                 orphaned INTEGER NOT NULL DEFAULT 0,
                 manual_order INTEGER,
-                manual_col_span INTEGER
+                manual_col_span INTEGER,
+                content_hash BLOB,
+                size INTEGER
             );",
             [],
         )?;
 
         // Migrations for existing DBs: add thumbnail columns, then
         // multi-folder columns, then notes/orphaned, then the manual
-        // drag-reorder + resize columns. Each is gated by a PRAGMA
-        // table_info check so they're idempotent.
+        // drag-reorder + resize columns, then the content-hash + size
+        // columns. Each is gated by a PRAGMA table_info check so they're
+        // idempotent.
         self.migrate_add_thumbnail_columns()?;
         self.migrate_add_multifolder_columns()?;
         self.migrate_add_notes_and_orphaned_columns()?;
         self.migrate_add_manual_order_columns()?;
+        self.migrate_add_content_hash_columns()?;
 
         self.connection.lock().unwrap().execute(
             "CREATE TABLE IF NOT EXISTS tags (
@@ -301,6 +306,19 @@ impl ImageDatabase {
         self.connection.lock().unwrap().execute(
             "CREATE INDEX IF NOT EXISTS idx_images_tags_tag
              ON images_tags(tag_id, image_id);",
+            [],
+        )?;
+        // Content-hash relink lookup index. The move/rename detector
+        // (db/content_hash.rs::relink_or_insert) matches an unmatched new
+        // path against orphaned rows with
+        // `WHERE orphaned = 1 AND size = ? AND content_hash = ?`. Without
+        // an index on content_hash that predicate full-scans the images
+        // table once per new file during a scan; leading with the hash
+        // (the selective column) turns each relink probe into an index
+        // seek. `size` stays a cheap post-filter on the few hash matches.
+        self.connection.lock().unwrap().execute(
+            "CREATE INDEX IF NOT EXISTS idx_images_content_hash
+             ON images(content_hash);",
             [],
         )?;
 

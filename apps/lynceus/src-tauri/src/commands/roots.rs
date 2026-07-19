@@ -26,7 +26,12 @@ pub fn get_scan_root() -> Result<Option<String>, ApiError> {
 /// management see `add_root` / `remove_root` / `set_root_enabled`.
 ///
 /// The tag catalogue is preserved across root replacement.
-#[tauri::command]
+///
+/// `(async)` moves this off the main thread: sync commands run on the
+/// main thread in Tauri v2, and this one cascade-deletes every existing
+/// root's image rows before re-indexing — a multi-second UI freeze on a
+/// large library if run there.
+#[tauri::command(async)]
 pub fn set_scan_root(
     app: AppHandle,
     db: State<'_, ImageDatabase>,
@@ -91,7 +96,11 @@ pub fn list_roots(db: State<'_, ImageDatabase>) -> Result<Vec<Root>, ApiError> {
 /// Add a root and trigger an incremental re-index. Returns the new
 /// Root row so the UI can show it immediately without round-tripping
 /// list_roots.
-#[tauri::command]
+///
+/// `(async)`: directory validation + bookmark creation touch the
+/// filesystem; keep them off the main thread like the other root
+/// mutations.
+#[tauri::command(async)]
 pub fn add_root(
     app: AppHandle,
     db: State<'_, ImageDatabase>,
@@ -131,7 +140,12 @@ pub fn add_root(
 /// surviving image rows from other roots are unaffected. The root's
 /// dedicated thumbnail directory on disk is also recursively
 /// deleted so we don't leave orphaned cached files.
-#[tauri::command]
+///
+/// `(async)`: the CASCADE wipes every image row for the root and
+/// `remove_dir_all` walks the whole per-root thumbnail cache — both
+/// freeze the UI for seconds on the main thread, where Tauri v2 runs
+/// sync commands by default.
+#[tauri::command(async)]
 pub fn remove_root(
     db: State<'_, ImageDatabase>,
     fusion_state: State<'_, FusionIndexState>,

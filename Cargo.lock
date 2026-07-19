@@ -2740,7 +2740,7 @@ dependencies = [
 
 [[package]]
 name = "lynceus"
-version = "0.7.1"
+version = "0.7.2"
 dependencies = [
  "accelerate-src",
  "base64 0.22.1",

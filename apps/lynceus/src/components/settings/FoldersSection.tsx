@@ -59,12 +59,28 @@ export function FoldersSection() {
           >
             <Toggle
               checked={root.enabled}
-              onChange={(enabled) => {
+              onChange={async (enabled) => {
                 recordAction("folder_toggle", {
                   id: root.id,
                   enabled,
                 });
-                toggleRootMutation.mutate({ id: root.id, enabled });
+                try {
+                  await toggleRootMutation.mutateAsync({
+                    id: root.id,
+                    enabled,
+                  });
+                } catch (err) {
+                  // Same class as the remove path: the optimistic toggle
+                  // rolls back on failure, which reads as a dead switch
+                  // unless the error is surfaced.
+                  await confirm({
+                    title: "Could not update folder",
+                    description:
+                      err instanceof Error ? err.message : String(err),
+                    confirmLabel: "OK",
+                    alert: true,
+                  });
+                }
               }}
             />
             <div className="min-w-0">
@@ -98,7 +114,20 @@ export function FoldersSection() {
                     id: root.id,
                     path: root.path,
                   });
-                  removeRootMutation.mutate(root.id);
+                  try {
+                    await removeRootMutation.mutateAsync(root.id);
+                  } catch (err) {
+                    // The mutation's onError already rolled the optimistic
+                    // removal back; without this alert that rollback is
+                    // indistinguishable from "nothing happened".
+                    await confirm({
+                      title: "Could not remove folder",
+                      description:
+                        err instanceof Error ? err.message : String(err),
+                      confirmLabel: "OK",
+                      alert: true,
+                    });
+                  }
                 }
               }}
               aria-label="Remove folder"

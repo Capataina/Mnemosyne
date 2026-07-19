@@ -28,6 +28,18 @@ function DialogClose({
   return <DialogPrimitive.Close data-slot="dialog-close" {...props} />
 }
 
+/**
+ * Modal dialogs sit ABOVE every other stacked surface. The app's z-ladder
+ * (top-level stacking contexts only — all of these portal to body or mount
+ * fixed at the root): grid chrome 10-50 · perf overlay 80/81 · drawers
+ * 90/91 · detail modal 100 · popovers + gesture timer 200 · timer config
+ * panel 220 · modal dialogs 250 · boot splash 300. A dialog at z-50 opened
+ * from a drawer renders invisibly BEHIND the drawer's z-90 scrim while Radix
+ * still locks pointer events — the app appears frozen (the folder-delete
+ * no-op bug, telemetry perf-1784473085). If you add a surface above 250,
+ * dialogs must move above it: a modal confirm is the one layer nothing may
+ * cover.
+ */
 function DialogOverlay({
   className,
   ...props
@@ -36,7 +48,7 @@ function DialogOverlay({
     <DialogPrimitive.Overlay
       data-slot="dialog-overlay"
       className={cn(
-        "fixed inset-0 z-50 bg-background/78 backdrop-blur-md data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0",
+        "fixed inset-0 z-[250] bg-background/78 backdrop-blur-md data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0",
         className
       )}
       {...props}
@@ -58,7 +70,7 @@ function DialogContent({
       <DialogPrimitive.Content
         data-slot="dialog-content"
         className={cn(
-          "floating-surface fixed top-1/2 left-1/2 z-50 grid w-full max-w-[calc(100%-2rem)] -translate-x-1/2 -translate-y-1/2 gap-4 rounded-[14px] border p-5 duration-200 data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 sm:max-w-lg",
+          "floating-surface fixed top-1/2 left-1/2 z-[250] grid w-full max-w-[calc(100%-2rem)] -translate-x-1/2 -translate-y-1/2 gap-4 rounded-[14px] border p-5 duration-200 data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 sm:max-w-lg",
           className
         )}
         {...props}

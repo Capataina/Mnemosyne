@@ -92,6 +92,7 @@ Everything runs locally. Embeddings are generated on your machine using ONNX Run
 - **No accounts, no telemetry, no API keys**
 - **First-launch model download** is the only network call the app makes — once models are cached locally, the app runs fully offline
 - **Original images are never modified or moved** — only metadata, thumbnails, and embeddings are derived
+- **Store builds are sandboxed with no network entitlement** — models ship inside the app, and macOS itself enforces that nothing ever leaves the machine
 
 ---
 
@@ -99,12 +100,13 @@ Everything runs locally. Embeddings are generated on your machine using ONNX Run
 
 ### First launch
 
-1. Launch the app. On first launch it will download the three encoder model bundles from HuggingFace (~2.5 GB total). Subsequent launches read these from disk.
+1. Launch the app. A short onboarding tour (six looping demonstrations) plays on first launch and can be replayed any time from Settings → **Restart onboarding**. Store-shaped builds bundle the int8 encoder models inside the app; dev builds without local models download them from HuggingFace on first launch instead.
 2. Open the **Settings drawer** (gear icon, top-right) and add at least one folder under the **Folders** section. The folder is scanned recursively for images (`.jpg`, `.jpeg`, `.png`, `.webp`, `.gif`, `.bmp`, `.tiff`).
-3. The **indexing-status pill** in the top-right tracks progress through three phases:
-   - **Scan** — discovering image files on disk
-   - **Thumbnails** — generating 400×400 cached previews
+3. The **indexing-status pill** in the top-right tracks progress through the pipeline phases:
+   - **Scan** — discovering image files on disk (and content-hashing new ones so moved files keep their identity)
+   - **Thumbnails** — generating the 480px base previews
    - **Encoders** — generating embeddings via the enabled encoders
+   - **Previews** — pre-generating the larger 960/1440/2048 preview sizes (after search is already usable)
 4. As thumbnails finish, images appear in the grid. As embeddings finish, similarity and semantic search become available for those images. Both run in the background; the grid is browsable immediately.
 
 ### Browsing the grid
@@ -113,7 +115,7 @@ Everything runs locally. Embeddings are generated on your machine using ONNX Run
 - **Click** any image to open the inspector modal.
 - **Arrow keys** in the inspector navigate to the previous / next image.
 - **Esc** closes the inspector.
-- Use the **slideshow icon** to start a fullscreen auto-advancing slideshow over the current view — works on the main feed, tag-filtered results, and search results.
+- Use the **timer pill** on a selected image to start a fullscreen, auto-advancing reference session (the gesture timer): configurable interval, pause/resume, pinch-to-zoom, two-finger pan, and Fit — works over the main feed, tag-filtered results, and search results.
 
 ### Searching
 
@@ -126,7 +128,7 @@ Everything runs locally. Embeddings are generated on your machine using ONNX Run
 
 - Open any image in the inspector and click **View Similar** to retrieve images visually similar to it from across the library.
 - Results are ranked by fused similarity across all enabled image encoders.
-- The similarity view itself supports the slideshow icon — start a slideshow over the similarity ranking to flip through visually-related images at speed.
+- The similarity view feeds the gesture timer too — start a timed session over the similarity ranking to practise from visually-related references at speed.
 
 ### Tagging and notes
 

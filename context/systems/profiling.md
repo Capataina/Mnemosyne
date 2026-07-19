@@ -198,7 +198,11 @@ receiving non-bubbling resource errors so `<img>` failures are first-class (`img
 src/DOM path/naturalWidth); (3) a `PerformanceObserver` flags >500ms resource loads
 (`slow_resource`); (4) `state_bundle` freeze-frames — pruned DOM outline (150k-char budget,
 explicit truncation marker), react-query cache summary (keys + lifecycle, never data), and
-route — fire on errors (debounced 10s) and on demand via ⌘⇧M (`mark_moment`). Privacy is
+route — fire on errors (debounced 10s) and on demand via ⌘⇧M (`mark_moment`). Since the
+preview-desync round (cad6cfc), bundles also embed the current `pipelineStats` and
+`previewBreakdown` values from the query cache (non-sensitive numeric counts), and every
+preview-breakdown fetch records a `preview_breakdown` timeline action with per-tier
+done/eligible — so thumbnail-coverage reports carry their own evidence. Privacy is
 enforced in code and test-locked: plain typing into editable targets is never recorded, and
 descriptors/outlines never read form-control values. The module is deliberately app-logic-free
 — it is the seed of the future shared package per the extraction-on-Syrinx trigger in

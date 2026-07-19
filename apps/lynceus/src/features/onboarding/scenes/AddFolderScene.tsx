@@ -41,9 +41,13 @@ export const ADD_FOLDER_DURATION_MS = 8000;
  * two h-14 rows with mb-2 (8), then an mt-4 (16) button row of h-8
  * buttons with fixed widths. Change the markup ⇒ change these together.
  */
-const PICKER = rect(280, 146, 380, 250);
+// NB: row 2's mb-2 (8) and the button row's mt-4 (16) are adjoining
+// sibling margins — they COLLAPSE to max(8,16)=16, not sum to 24, so
+// the button row tops at 320+16=336 (an independent audit of the first
+// derivation caught the summed version landing 8px low).
+const PICKER = rect(280, 146, 380, 242);
 const PICKER_ROW_1 = rect(300, 200, 340, 56);
-const PICKER_ADD = rect(576, 344, 64, 32);
+const PICKER_ADD = rect(576, 336, 64, 32);
 const INDEXING_PILL = rect(732, 86, 208, 48);
 
 /** Arriving thumbnails: 4 masonry columns (w190, gap 16), each column

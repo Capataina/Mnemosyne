@@ -44,11 +44,17 @@ export const GESTURE_PRACTICE_DURATION_MS = 10800;
  * them. Artwork area = inset 80/80/20 band (bottom-20 left-20 right-20
  * top-20 of the 960×600 stage).
  */
-const START_BTN = rect(674, 215, 262, 40);
+// NB two audit-caught corrections to the first derivation: (a) the
+// fourth row's mb-4 (16) and the button's mt-10 (40) are adjoining
+// sibling margins that COLLAPSE to max=40 (not sum to 56), so the
+// button tops at 159+40=199; (b) flex `gap` and a flex item's own
+// margin do NOT collapse — they stack — so Exit sits after
+// gap-2 (8) + ml-2 (8) = 16px, at x 548.
+const START_BTN = rect(674, 199, 262, 40);
 const ARTWORK = rect(80, 80, 800, 440);
 const TRANSPORT_X = 364;
 const PAUSE_BTN = rect(TRANSPORT_X + 44, 548, 36, 36);
-const EXIT_BTN = rect(TRANSPORT_X + 176, 548, 56, 36);
+const EXIT_BTN = rect(TRANSPORT_X + 184, 548, 56, 36);
 const ZOOM_PLUS = rect(852, 552, 32, 32);
 const ZOOM_FIT = rect(892, 552, 48, 32);
 

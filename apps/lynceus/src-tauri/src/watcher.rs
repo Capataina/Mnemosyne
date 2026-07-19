@@ -10,12 +10,12 @@
 //! - `start` runs once during the Tauri setup callback.
 //! - The returned debouncer holds the actual watch threads. Dropping
 //!   it cancels everything (it's stored in a Tauri-managed state).
-//! - The watcher does NOT auto-reconfigure when roots are added or
-//!   removed. After add_root or remove_root we'd want to restart the
-//!   watcher; for now, the indexing pipeline that those commands
-//!   trigger handles the immediate rescan and the watcher keeps
-//!   watching whatever it had at startup. A future iteration can
-//!   rebuild the watcher on root changes.
+//! - `restart` rebuilds the watcher against the CURRENT enabled root
+//!   list and swaps it into the managed slot (dropping the old
+//!   debouncer cancels its watches). The root mutation commands call
+//!   it, so an added root is live-watched immediately and a removed or
+//!   paused root stops firing rescans — previously the watch set was
+//!   frozen at whatever startup saw until the next app launch.
 //!
 //! Implementation notes:
 //! - notify-debouncer-mini is used because raw notify events can
@@ -108,4 +108,38 @@ pub fn start(
     }
 
     Some(debouncer)
+}
+
+/// Rebuild the watcher against the CURRENT enabled root list and swap
+/// it into the managed slot. The old debouncer drops on assignment,
+/// cancelling its watch threads; a debounce callback already in flight
+/// may still fire one last rescan, which the single-flight guard in
+/// try_spawn_pipeline coalesces harmlessly. Security scopes need no
+/// handling here: an added root's picker grant covers this process,
+/// and remove_root releases its scope itself.
+#[tracing::instrument(name = "watcher.restart", skip_all)]
+pub fn restart(
+    app: AppHandle,
+    db: &crate::db::ImageDatabase,
+    db_path: String,
+    indexing_state: Arc<indexing::IndexingState>,
+    fusion: Arc<std::sync::RwLock<std::collections::HashMap<String, CosineIndex>>>,
+    slot: &std::sync::Mutex<Option<WatcherHandle>>,
+) {
+    let watch_paths: Vec<PathBuf> = db
+        .list_roots()
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|r| r.enabled)
+        .map(|r| PathBuf::from(r.path))
+        .filter(|p| p.exists())
+        .collect();
+    let handle = start(app, watch_paths, db_path, indexing_state, fusion);
+    match slot.lock() {
+        Ok(mut s) => {
+            *s = handle;
+            info!("watcher restarted against current enabled roots");
+        }
+        Err(e) => warn!("watcher restart skipped, state lock poisoned: {e}"),
+    }
 }

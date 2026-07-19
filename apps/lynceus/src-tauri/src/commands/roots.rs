@@ -1,5 +1,5 @@
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use tauri::{AppHandle, State};
 use tracing::{info, warn};
 
@@ -9,7 +9,31 @@ use crate::indexing::{self, IndexingState};
 use crate::paths;
 use crate::root_struct::Root;
 use crate::settings;
+use crate::watcher;
 use crate::FusionIndexState;
+
+/// Managed slot holding the live filesystem-watcher handle (see
+/// lib.rs setup and watcher.rs). Every root mutation ends by
+/// rebuilding the watcher through this, so the watch set tracks the
+/// enabled root list instead of freezing at whatever startup saw.
+type WatcherSlot = Arc<Mutex<Option<watcher::WatcherHandle>>>;
+
+fn restart_watcher(
+    app: &AppHandle,
+    db: &ImageDatabase,
+    indexing_state: &Arc<IndexingState>,
+    fusion_state: &FusionIndexState,
+    watcher_state: &Mutex<Option<watcher::WatcherHandle>>,
+) {
+    watcher::restart(
+        app.clone(),
+        db,
+        paths::database_path().to_string_lossy().into_owned(),
+        indexing_state.clone(),
+        fusion_state.per_encoder.clone(),
+        watcher_state,
+    );
+}
 
 /// Read the currently-configured scan root from settings.json, if any.
 /// Returns Ok(None) when no root has been picked yet (first-launch state).
@@ -37,6 +61,7 @@ pub fn set_scan_root(
     db: State<'_, ImageDatabase>,
     fusion_state: State<'_, FusionIndexState>,
     indexing_state: State<'_, Arc<IndexingState>>,
+    watcher_state: State<'_, WatcherSlot>,
     path: String,
 ) -> Result<(), ApiError> {
     let scan_root = PathBuf::from(&path);
@@ -82,6 +107,7 @@ pub fn set_scan_root(
     )
     .map_err(|e| ApiError::Internal(e.to_string()))?;
 
+    restart_watcher(&app, &db, &indexing_state, &fusion_state, watcher_state.inner());
     info!("set_scan_root replaced roots + spawned indexing.");
     Ok(())
 }
@@ -106,6 +132,7 @@ pub fn add_root(
     db: State<'_, ImageDatabase>,
     fusion_state: State<'_, FusionIndexState>,
     indexing_state: State<'_, Arc<IndexingState>>,
+    watcher_state: State<'_, WatcherSlot>,
     path: String,
 ) -> Result<Root, ApiError> {
     let scan_root = PathBuf::from(&path);
@@ -132,6 +159,7 @@ pub fn add_root(
     )
     .map_err(|e| ApiError::Internal(e.to_string()))?;
 
+    restart_watcher(&app, &db, &indexing_state, &fusion_state, watcher_state.inner());
     info!("add_root persisted ({}) and spawned re-index.", root.path);
     Ok(root)
 }
@@ -147,8 +175,11 @@ pub fn add_root(
 /// sync commands by default.
 #[tauri::command(async)]
 pub fn remove_root(
+    app: AppHandle,
     db: State<'_, ImageDatabase>,
     fusion_state: State<'_, FusionIndexState>,
+    indexing_state: State<'_, Arc<IndexingState>>,
+    watcher_state: State<'_, WatcherSlot>,
     id: i64,
 ) -> Result<(), ApiError> {
     // Release the security scope before the row (and its bookmark
@@ -182,16 +213,24 @@ pub fn remove_root(
     // Fusion caches contain entries from the removed root; drop them all
     // and let the next query cold-populate from the remaining DB rows.
     fusion_state.invalidate_all();
+    restart_watcher(&app, &db, &indexing_state, &fusion_state, watcher_state.inner());
     info!("remove_root removed root id {}", id);
     Ok(())
 }
 
 /// Toggle a root's enabled flag. No re-index needed — the grid query
 /// filters by enabled status, so the toggle is instant.
-#[tauri::command]
+///
+/// `(async)` for consistency with the other root mutations now that
+/// the toggle also rebuilds the filesystem watcher (a paused root must
+/// stop firing rescans; a resumed one must be watched again).
+#[tauri::command(async)]
 pub fn set_root_enabled(
+    app: AppHandle,
     db: State<'_, ImageDatabase>,
     fusion_state: State<'_, FusionIndexState>,
+    indexing_state: State<'_, Arc<IndexingState>>,
+    watcher_state: State<'_, WatcherSlot>,
     id: i64,
     enabled: bool,
 ) -> Result<(), ApiError> {
@@ -200,5 +239,6 @@ pub fn set_root_enabled(
     // next similarity query rebuilds with the right active (enabled) set —
     // the filtered populate query respects the new enabled flag.
     fusion_state.invalidate_all();
+    restart_watcher(&app, &db, &indexing_state, &fusion_state, watcher_state.inner());
     Ok(())
 }

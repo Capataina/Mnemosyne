@@ -4,7 +4,7 @@
 
 ## Scope / Purpose
 
-Filesystem-watching layer for live catalog integrity. Recursively watches every enabled root and triggers an incremental rescan via the indexing pipeline whenever files change on disk. Debounces noisy event streams so a "drop 100 photos" action produces one rescan, not one per file. Runs once at app startup and lives for the lifetime of the process.
+Filesystem-watching layer for live catalog integrity. Recursively watches every enabled root and triggers an incremental rescan via the indexing pipeline whenever files change on disk. Debounces noisy event streams so a "drop 100 photos" action produces one rescan, not one per file. Starts at app startup and is rebuilt by `watcher::restart` after every root mutation (`add_root` / `remove_root` / `set_root_enabled` / `set_scan_root`), so the watch set always tracks the current enabled root list.
 
 ## Boundaries / Ownership
 
@@ -93,7 +93,7 @@ The debounce closure can't carry `#[tracing::instrument]` (it's not a top-level 
 | Source | Provides |
 |--------|----------|
 | `lib.rs::run::setup` | Initial root list (enabled roots that exist on disk) |
-| `db.list_roots()` (read once at startup) | Where to watch |
+| `db.list_roots()` (read at startup and again inside `watcher::restart` on every root mutation) | Where to watch |
 | `notify::RecommendedWatcher` (per platform: `FSEvents` on macOS, `inotify` on Linux, `ReadDirectoryChangesW` on Windows) | Raw filesystem events |
 
 ### Outputs
@@ -119,7 +119,7 @@ The debounce closure can't carry `#[tracing::instrument]` (it's not a top-level 
 
 | Risk | Triggered by | Downstream impact |
 |------|--------------|-------------------|
-| **Watcher does NOT auto-reconfigure when roots change.** | `add_root` / `remove_root` / `set_root_enabled` after launch | New roots are not watched until the next launch. Removing a root leaves a dangling watch on the path. The indexing pipeline that those commands trigger covers the immediate state, but subsequent file changes in newly-added roots aren't picked up. Documented as a planned change. |
+| Old debouncer's in-flight callback can fire once after a restart swap | A root mutation racing a debounce window | One extra rescan attempt, coalesced by `try_spawn_pipeline`'s single-flight guard — harmless. (The former top risk here — the watcher not reconfiguring on root changes at all — was closed when `watcher::restart` landed; the root commands now rebuild the watch set live.) |
 | 5s debounce window is global per debouncer | Two unrelated bulk operations on different roots that happen to overlap in time | Both batches collapse into one rescan trigger. Not a correctness issue (the rescan covers all roots anyway), just a coalescing of unrelated work. |
 | Debouncer can fail to initialise on some platforms | `notify::RecommendedWatcher` returns `Err` (e.g., out of inotify watches on Linux with too many recursive subdirectories) | `start` returns `None`; the slot stays empty; the app works without live integrity. The user can still trigger rescans by switching folders or restarting. |
 | Permission errors per-root are swallowed with a warn | `watcher.watch(path, RecursiveMode::Recursive)` returns `Err` | The other roots still get watched. The unwatched root logs a warn but does not block startup. |

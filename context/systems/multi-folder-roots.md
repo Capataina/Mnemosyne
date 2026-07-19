@@ -11,7 +11,7 @@ This is what made the Phase 6 transition from "one folder, replace to switch" to
 ## Boundaries / Ownership
 
 - **Owns:** the `roots` table schema + CRUD (including the `bookmark BLOB` column, see below), `images.root_id` FK + cascade behaviour, the `set_scan_root` "replace all roots" semantic, `add_root` / `remove_root` / `set_root_enabled` granular semantics, `migrate_legacy_scan_root`, `wipe_images_for_new_root`, `paths::thumbnails_dir_for_root(root_id)`, the *wiring* of when to create/resolve/release a macOS security-scoped bookmark around a root mutation.
-- **Does not own:** the indexing pipeline that gets re-spawned after every root mutation (delegates to `indexing::try_spawn_pipeline`), the fusion cache invalidation mechanism itself (delegates to `FusionIndexState::invalidate_all` — see `systems/multi-encoder-fusion.md`), the watcher reconfiguration (today: gap — see `systems/watcher.md`), the Cocoa security-scoped-bookmark API itself (delegates to `security_scope.rs` — three free functions, no roots-table awareness; see "macOS security-scoped bookmarks" below).
+- **Does not own:** the indexing pipeline that gets re-spawned after every root mutation (delegates to `indexing::try_spawn_pipeline`), the fusion cache invalidation mechanism itself (delegates to `FusionIndexState::invalidate_all` — see `systems/multi-encoder-fusion.md`), the watcher reconfiguration (delegates to `watcher::restart`, which every root mutation now calls — see `systems/watcher.md`), the Cocoa security-scoped-bookmark API itself (delegates to `security_scope.rs` — three free functions, no roots-table awareness; see "macOS security-scoped bookmarks" below).
 - **Public API:** `db.list_roots()`, `db.add_root(path, bookmark)`, `db.remove_root(id)`, `db.set_root_enabled(id, enabled)`, `db.migrate_legacy_scan_root(path)`, `db.wipe_images_for_new_root()`, `db.get_root_id_by_path(path)`, `db.enabled_roots_with_bookmarks()`, `db.get_root_bookmark(id)`. Tauri commands: `list_roots`, `add_root`, `remove_root`, `set_root_enabled`, `set_scan_root`, `get_scan_root`.
 
 ## Current Implemented Reality
@@ -224,7 +224,6 @@ The bookmark bytes live in `roots.bookmark` (nullable — `NULL` means "no persi
 
 | Risk | Triggered by | Downstream impact |
 |------|--------------|-------------------|
-| Filesystem watcher is not rebuilt on root mutations | `add_root` / `remove_root` after launch | New roots aren't watched until the next launch (file additions to those roots aren't auto-detected). Removing a root leaves a dangling watch. The first rescan covers the immediate state. See `systems/watcher.md`. |
 | `paths.path` is stored verbatim (no normalisation) | User picks `/Users/me/Photos/` then later `/Users/me/Photos` (trailing slash) | Two distinct rows because the UNIQUE constraint compares strings literally. Cosmetic — both work, just shows up twice in the Folders list. |
 | `add_root` propagates a UNIQUE constraint error as `ApiError::Db` | User adds the same folder twice via add_root | Frontend gets a typed-but-generic DB error. Could be improved to `ApiError::BadInput("already added")`. |
 | Removing the only enabled root leaves the user with empty grid + no obvious "add another folder" CTA | Last-root removal | The grid empties cleanly but the empty-state UI uses `pickScanFolder` which goes through `set_scan_root` (replace-all semantic). User has to know to use the Settings drawer's Add Folder button to add additional roots from there. |
@@ -239,7 +238,6 @@ None.
 
 ## Planned / Missing / Likely Changes
 
-- **Watcher rebuild on root mutations** (cross-cutting with `systems/watcher.md`).
 - **Path normalisation at insert time** to deduplicate trailing-slash variants and cross-platform path differences (cross-cutting with `notes/path-and-state-coupling.md`).
 - **Specific ApiError for duplicate-path adds** instead of letting the DB UNIQUE error bubble.
 - **Per-root scan-priority or include/exclude patterns** — nothing implemented yet, but the schema could grow (`exclude_patterns TEXT NULL`, `priority INTEGER NULL`) without breaking compatibility because the grid query doesn't reference those columns.

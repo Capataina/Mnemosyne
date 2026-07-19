@@ -38,6 +38,7 @@ describe("useUserPreferences", () => {
     const { result } = renderHook(() => useUserPreferences());
     expect(result.current.prefs.columnCount).toBe(4);
     expect(result.current.prefs.tagFilterMode).toBe(PREF_DEFAULTS.tagFilterMode);
+    expect(result.current.prefs.onboardingVersionSeen).toBe(0);
     expect(result.current.prefs.theme).toBe(PREF_DEFAULTS.theme);
   });
 
@@ -57,6 +58,19 @@ describe("useUserPreferences", () => {
       localStorage.getItem("imageBrowserPrefs") as string,
     );
     expect(saved.columnCount).toBe(7);
+  });
+
+  it("persists onboarding completion in the existing preference object", () => {
+    const { result } = renderHook(() => useUserPreferences());
+    act(() => {
+      result.current.update("onboardingVersionSeen", 1);
+    });
+
+    const saved = JSON.parse(
+      localStorage.getItem("imageBrowserPrefs") as string,
+    );
+    expect(result.current.prefs.onboardingVersionSeen).toBe(1);
+    expect(saved.onboardingVersionSeen).toBe(1);
   });
 
   it("mirrors theme to its own localStorage key for main.tsx pre-mount read", () => {
@@ -116,6 +130,44 @@ describe("useUserPreferences", () => {
       result.current.resetAll();
     });
     expect(result.current.prefs).toEqual(PREF_DEFAULTS);
+  });
+
+  it("resetAll preserves completed onboarding while resetting UI preferences", () => {
+    const { result } = renderHook(() => useUserPreferences());
+    act(() => {
+      result.current.update("onboardingVersionSeen", 1);
+      result.current.update("columnCount", 4);
+    });
+    act(() => {
+      result.current.resetAll();
+    });
+
+    expect(result.current.prefs).toEqual({
+      ...PREF_DEFAULTS,
+      onboardingVersionSeen: 1,
+    });
+    expect(
+      JSON.parse(localStorage.getItem("imageBrowserPrefs") as string)
+        .onboardingVersionSeen,
+    ).toBe(1);
+  });
+
+  it("keeps working in memory when localStorage writes fail", () => {
+    const setItem = vi
+      .spyOn(localStorage, "setItem")
+      .mockImplementation(() => {
+        throw new Error("storage unavailable");
+      });
+    const { result } = renderHook(() => useUserPreferences());
+
+    expect(() => {
+      act(() => {
+        result.current.update("onboardingVersionSeen", 1);
+      });
+    }).not.toThrow();
+    expect(result.current.prefs.onboardingVersionSeen).toBe(1);
+
+    setItem.mockRestore();
   });
 
   it("preserves unrelated fields when updating one", () => {

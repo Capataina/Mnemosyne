@@ -56,6 +56,9 @@ export function BootSplash() {
 
   if (gone) return null;
 
+  // OnboardingProvider observes this node's exact role+aria-label pair to
+  // know when boot has finished (onboarding must not open behind the
+  // splash) — renaming the label silently breaks first-launch onboarding.
   return (
     <div
       role="status"

@@ -35,6 +35,8 @@ export interface UserPreferences {
   semanticResultCount: number;
   /** Whether multi-tag filter ANDs (all) or ORs (any). */
   tagFilterMode: TagFilterMode;
+  /** Most recent onboarding revision completed or skipped by the user. */
+  onboardingVersionSeen: number;
   /**
    * LEGACY (deprecated 2026-04-26 with Phase 11c).
    *
@@ -60,9 +62,12 @@ const DEFAULTS: UserPreferences = {
   similarResultCount: 35,
   semanticResultCount: 50,
   tagFilterMode: "any",
+  onboardingVersionSeen: 0,
   imageEncoder: "dinov2_base",
   textEncoder: "clip_vit_b_32",
 };
+
+export const CURRENT_ONBOARDING_VERSION = 1;
 
 const STORAGE_KEY = "imageBrowserPrefs";
 const THEME_KEY = "theme";
@@ -220,9 +225,16 @@ function updatePreference<K extends keyof UserPreferences>(
   notify();
 }
 
-/** Reset every preference to its default, persist, apply the theme, and notify. */
+/**
+ * Reset every UI preference while preserving onboarding completion. Replay is
+ * an explicit Settings action, so a preference reset must not schedule the
+ * walkthrough for the next launch.
+ */
 function resetAllPreferences() {
-  store = { ...DEFAULTS };
+  store = {
+    ...DEFAULTS,
+    onboardingVersionSeen: store.onboardingVersionSeen,
+  };
   saveToStorage(store);
   applyThemeToDom(store.theme);
   notify();

@@ -620,7 +620,7 @@ This is a proposed Stage-2 surface, not permission to restructure unrelated feat
 | Component | Responsibility | Explicit non-responsibility |
 |---|---|---|
 | `OnboardingProvider` | Auto-open rule, manual replay, active scene index, completion/skip persistence, boot-ready gate | Scene visuals and timings |
-| `OnboardingOverlay` | `z-[250]` modal shell, background inertness, focus trap, title/caption, scene mount, keyboard controls | Scene choreography |
+| `OnboardingOverlay` | `z-[240]` modal shell, background inertness, focus trap, title/caption, scene mount, keyboard controls | Scene choreography |
 | `OnboardingStage` | 960 × 600 coordinate plane, aspect-fit scale, reduced-motion switch | Window-level modal behaviour |
 | `sceneRegistry` | Stable scene order, id, title, caption, duration, component, reduced frames | Per-element animation tracks |
 | `FakeCursor` | One SVG pointer, transform track, press state, optional subtle click halo | Hit testing or real DOM interaction |
@@ -718,7 +718,7 @@ App
          └─ OnboardingProvider
             ├─ AppContent wrapper
             │  └─ Routes             inert only while onboarding is open
-            ├─ OnboardingOverlayHost  z-250
+            ├─ OnboardingOverlayHost  z-240
             └─ BootSplash             z-300
 ```
 
@@ -741,14 +741,14 @@ Current ladder, verified in source:
 300     BootSplash
 ```
 
-`z-[250]` is deliberate. At `200`, tag popovers or the gesture timer could appear over onboarding during replay. At `300+`, onboarding would cover the boot brand state and start before the app is ready. The 250 slot is the only clean layer between all runtime interaction surfaces and boot.
+`z-[240]` is deliberate. At `200`, tag popovers or the gesture timer could appear over onboarding during replay. At `250+`, onboarding would tie or cover modal confirm dialogs (raised to 250 by 244b87a), and at `300+` it would cover the boot brand state. The 240 slot is the only clean layer between all runtime interaction surfaces and the dialog/boot layers above.
 
 ### Restart entry in Settings
 
 Add a non-destructive single-line **Restart onboarding** control immediately above the existing **Reset all preferences** control in `apps/lynceus/src/components/settings/index.tsx`.
 
 - It uses a replay/rotate icon and the same 40px height, 10px radius, border, type scale, and active transform as `ResetSection`, but normal foreground/secondary colours—never destructive red and never a two-click arm.
-- `SettingsDrawer` calls its own `onClose()` first, then schedules `restart()` on the next animation frame so the drawer's focus restoration and exit animation cannot fight the onboarding focus trap.
+- `SettingsDrawer` calls `restart(trigger)` and deliberately does NOT close itself: the drawer sits under the z-240 overlay and goes inert with the rest of the app, so it cannot fight the onboarding focus trap — while its Restart button stays mounted, which is what makes the focus-restoration contract below satisfiable. (The originally-planned close-first sequence put the trigger on a one-way unmount; an adversarial integration probe showed focus silently dropping to <body> or the gear icon in every realistic timing.)
 - The provider retains a ref to this trigger and restores focus to it when replay closes. If the settings drawer has unmounted by then, focus the Settings button as the fallback.
 - The entry is present regardless of whether onboarding version 1 has been completed.
 
@@ -779,7 +779,7 @@ Execute in this dependency order. Each step is complete only when its check pass
    - Verification: every shared track fixture passes first=last and time-bound tests; a DOM test confirms scene roots are `pointer-events:none` and `aria-hidden`.
 
 3. **Build provider, overlay shell, and boot handshake before any scene-specific detail.**
-   - Add auto-open, Skip/Finish, replay state, scene navigation, focus trap/return, body lock, app inertness, `z-[250]`, and `BootSplash.onGone`.
+   - Add auto-open, Skip/Finish, replay state, scene navigation, focus trap/return, body lock, app inertness, `z-[240]`, and the BootSplash status-node observation.
    - Use a placeholder closed scene for this step.
    - Verification: tests cover boot-before-onboarding ordering, first-view auto-open, no re-open after completion, replay without persistence reset, Escape=Skip, Back/Next bounds, and focus restoration.
 
@@ -801,7 +801,7 @@ Execute in this dependency order. Each step is complete only when its check pass
    - Verification: mock `useReducedMotion=true` and `animationLevel=off`; assert no element has an animation/transition style and all six scenes still expose title/caption/navigation.
 
 8. **Add the Settings replay entry in the exact requested position.**
-   - Place it immediately above `ResetSection`, close Settings before replay, and restore focus on exit.
+   - Place it immediately above `ResetSection`, leave Settings open beneath the overlay during replay, and restore focus to the still-mounted trigger on exit.
    - Verification: rendered settings order is `... Library index → Restart onboarding → Reset all preferences`; clicking replay opens scene 1 and leaves `onboardingVersionSeen` unchanged.
 
 9. **Run the complete behavioural and compositor verification.**

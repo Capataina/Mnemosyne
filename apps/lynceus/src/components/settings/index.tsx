@@ -1,6 +1,7 @@
 import { motion, AnimatePresence } from "framer-motion";
-import { X } from "lucide-react";
-import { useEffect } from "react";
+import { RotateCcw, X } from "lucide-react";
+import { useEffect, useRef } from "react";
+import { useOnboarding } from "../../features/onboarding";
 import { ThemeSection } from "./ThemeSection";
 import { DisplaySection } from "./DisplaySection";
 import { SearchSection } from "./SearchSection";
@@ -25,7 +26,8 @@ interface SettingsDrawerProps {
  * 2. Display (column count, tile scale, animation level)
  * 3. Search (similar / semantic result counts, tag filter mode)
  * 4. Folders (add / remove / toggle / list)
- * 5. Reset (all image resizes, then all preferences)
+ * 5. Encoder and library statistics
+ * 6. Tutorial replay and reset controls
  *
  * The shell here owns purely structural concerns: enter/exit animation,
  * backdrop click-to-dismiss, the Escape-key handler, header chrome, and
@@ -34,6 +36,8 @@ interface SettingsDrawerProps {
  * isolation without prop-drilling.
  */
 export function SettingsDrawer({ open, onClose }: SettingsDrawerProps) {
+  const { restart } = useOnboarding();
+  const restartRef = useRef<HTMLButtonElement>(null);
   // Esc closes the drawer.
   useEffect(() => {
     if (!open) return;
@@ -91,6 +95,25 @@ export function SettingsDrawer({ open, onClose }: SettingsDrawerProps) {
               <EncoderSection />
               <StatsSection />
               <div className="flex flex-col gap-2 pt-6">
+                <button
+                  ref={restartRef}
+                  type="button"
+                  onClick={() => {
+                    // The drawer deliberately STAYS open: it sits under
+                    // the z-240 overlay and goes inert with the rest of
+                    // the app, so it cannot be interacted with during
+                    // the replay — but its Restart button stays mounted,
+                    // which is what lets the provider's close path
+                    // restore focus to it. Closing the drawer here put
+                    // the trigger on a one-way unmount and broke focus
+                    // restoration in every realistic timing.
+                    restart(restartRef.current);
+                  }}
+                  className="flex h-10 w-full items-center justify-start gap-2 rounded-[10px] border border-border bg-transparent px-3 text-[11.5px] font-[580] text-foreground transition-[color,background-color,border-color,transform] hover:border-border-strong hover:bg-accent active:scale-[0.98]"
+                >
+                  <RotateCcw className="h-3.5 w-3.5" strokeWidth={1.8} />
+                  Restart onboarding
+                </button>
                 <ResetSection />
               </div>
             </div>

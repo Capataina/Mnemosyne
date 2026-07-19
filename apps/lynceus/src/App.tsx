@@ -6,6 +6,7 @@ import { BrowserRouter, useRoutes } from "react-router-dom";
 import routes from "~react-pages";
 import { BootSplash } from "./components/BootSplash";
 import { ConfirmProvider } from "./components/ui/confirm";
+import { OnboardingProvider } from "./features/onboarding";
 import { queryClient } from "./queries/queryClient";
 import { isProfilingEnabled } from "./services/perf";
 import { initTelemetry } from "./services/telemetry";
@@ -28,7 +29,12 @@ function App() {
     <BrowserRouter>
       <QueryClientProvider client={queryClient}>
         <ConfirmProvider>
-          <Routes />
+          <OnboardingProvider>
+            <Routes />
+          </OnboardingProvider>
+          {/* Sibling of the provider, per the plan's architecture
+              diagram: the splash must never sit inside the wrapper
+              that goes inert while onboarding is open. */}
           <BootSplash />
         </ConfirmProvider>
       </QueryClientProvider>

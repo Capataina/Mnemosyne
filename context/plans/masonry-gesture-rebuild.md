@@ -114,6 +114,22 @@ sol-findings).
 What survived review: the occupancy packer, the release state machine (no strand found),
 and the two-layer split as architecture. The fix round targets the layers around them.
 
+### FIX ROUND OUTCOME (2026-07-19, commit 0d42833, v0.6.2)
+
+All five causes closed at the mechanism, under two design calls: **WYSIWYG release**
+(active tile excluded from targeting; the committed footprint rect — the slot the
+preview showed — is what gets scored; dropped-at-source is an explicit slot-comparison
+no-op in the hook) and **position carry** (session `columnAnchors`, set on every
+gesture commit, honoured at the tile's feed-order turn in the packer, sharing
+`sessionOrder`'s lifecycle). The even/odd `edge` convention was deleted outright
+(drag publishes the ghost's left column; `resolveFootprintLeft` is a clamp); the
+reserved slot renders a drop placeholder; the drag footprint's top steps in 48px
+quanta; the telemetry gap detector is span-aware. Deliberately deferred: mid-flight
+trajectory choreography (leg iii of cause 4) — expected to collapse to the accepted
+painter-order flip now that pack targets are stable; revisit only if the live pass
+disagrees. tsc clean, 189/189 with new gates the pre-fix code provably fails.
+**The owed proof remains the live WebView pass** — the acceptance criteria in §10.
+
 ---
 
 ## 0. THE MISSION (what the masonry is supposed to do — from the getgo)

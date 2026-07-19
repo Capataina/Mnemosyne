@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { LynceusMark } from "./LynceusMark";
 import { queryClient } from "../queries/queryClient";
 
 /**
@@ -14,9 +15,9 @@ import { queryClient } from "../queries/queryClient";
  *    behind the splash.
  *
  * Sits at z-[300], above everything in the app's z-ladder (modal
- * dialogs top out at 250 — see ui/dialog.tsx). The wordmark is a text
- * placeholder until the app has a real logo; swap the <span> for the
- * logo mark when it lands.
+ * dialogs top out at 250 — see ui/dialog.tsx). The brand mark above the
+ * wordmark is the ringed-almond eye (LynceusMark), the same mark the
+ * app icon is generated from.
  */
 
 const MIN_DISPLAY_MS = 600;
@@ -68,6 +69,7 @@ export function BootSplash() {
       ].join(" ")}
       style={{ transitionDuration: `${FADE_MS}ms` }}
     >
+      <LynceusMark className="w-[104px]" />
       <span className="select-none text-[27px] font-[650] leading-none tracking-[-0.035em] text-foreground">
         Lynceus
       </span>

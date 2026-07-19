@@ -1,0 +1,48 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#F8F8FA"/>
+      <stop offset="1" stop-color="#ECEEF2"/>
+    </linearGradient>
+    <radialGradient id="lens" cx="42%" cy="31%" r="69%">
+      <stop offset="0" stop-color="#414853"/>
+      <stop offset=".22" stop-color="#252B34"/>
+      <stop offset=".58" stop-color="#11151B"/>
+      <stop offset="1" stop-color="#080A0E"/>
+    </radialGradient>
+    <radialGradient id="iris" cx="42%" cy="34%" r="65%">
+      <stop offset="0" stop-color="#79C4DA"/>
+      <stop offset=".32" stop-color="#4DA1C0"/>
+      <stop offset=".72" stop-color="#2F7B9E"/>
+      <stop offset="1" stop-color="#173E54"/>
+    </radialGradient>
+    <radialGradient id="pupil" cx="40%" cy="31%" r="75%">
+      <stop offset="0" stop-color="#232832"/>
+      <stop offset=".52" stop-color="#0C0F14"/>
+      <stop offset="1" stop-color="#030405"/>
+    </radialGradient>
+    <filter id="shadow" x="-20%" y="-50%" width="140%" height="200%">
+      <feGaussianBlur stdDeviation="25"/>
+    </filter>
+    <filter id="soft" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur stdDeviation="12"/>
+    </filter>
+  <filter id="iconDrop" x="-20%" y="-20%" width="140%" height="140%">
+      <feGaussianBlur stdDeviation="16"/>
+    </filter>
+  </defs>
+  <rect x="100" y="114" width="824" height="824" rx="184" fill="#0A0C10" opacity="0.3" filter="url(#iconDrop)"/>
+  <g transform="translate(100 100) scale(0.8046875)">
+  <rect width="1024" height="1024" rx="229" fill="url(#bg)"/>
+  <ellipse cx="512" cy="734" rx="344" ry="42" fill="#6D7682" opacity=".22" filter="url(#shadow)"/>
+  <path d="M116 512C221 319 355 254 512 254C669 254 803 319 908 512C803 705 669 770 512 770C355 770 221 705 116 512Z" fill="url(#lens)"/>
+  <path d="M138 512C238 339 363 278 512 278C661 278 786 339 886 512C786 685 661 746 512 746C363 746 238 685 138 512Z" fill="none" stroke="#8F9AA8" stroke-opacity=".16" stroke-width="9"/>
+  <ellipse cx="393" cy="379" rx="136" ry="61" fill="#EFFAFF" opacity=".18" filter="url(#soft)" transform="rotate(-22 393 379)"/>
+  <ellipse cx="398" cy="366" rx="86" ry="27" fill="#FFFFFF" opacity=".27" transform="rotate(-22 398 366)"/>
+  <ellipse cx="512" cy="512" rx="201" ry="201" fill="#071219" opacity=".82"/>
+  <circle cx="512" cy="512" r="184" fill="url(#iris)"/>
+  <circle cx="512" cy="512" r="118" fill="url(#pupil)"/>
+  <ellipse cx="470" cy="467" rx="37" ry="22" fill="#C4F1FB" opacity=".22" transform="rotate(-35 470 467)"/>
+  <circle cx="512" cy="512" r="207" fill="none" stroke="#8DCFE4" stroke-opacity=".13" stroke-width="8"/>
+</g>
+</svg>

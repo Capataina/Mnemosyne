@@ -34,6 +34,10 @@ interface MasonryEngineInput {
   tileScale?: number;
   /** Stable-id 2D obstacle for the one active drag or resize transaction. */
   gestureFootprint?: MasonryGestureFootprint;
+  /** Session column pins (tile id → left column) for gesture-placed tiles;
+   * threaded into every pack so a settle or later steady-state pack keeps
+   * those tiles in the column the user put them in. */
+  columnAnchors?: Record<number, number>;
   /** Confirms that the current generation committed the exact active
    * footprint. Drag release uses this barrier before clearing into settle. */
   onGestureGeometryCommitted?: (
@@ -187,6 +191,7 @@ interface PackInputCache {
   verticalGap: number;
   columnCountOverride: number;
   tileScale: number;
+  columnAnchors: Record<number, number> | undefined;
   revision: number;
   input: MasonryPackInput;
 }
@@ -219,6 +224,7 @@ export function useMasonryEngine(input: MasonryEngineInput): MasonryEngine {
     columnCountOverride,
     tileScale,
     gestureFootprint,
+    columnAnchors,
     containerRef,
     placementsRef,
     placementByIdRef,
@@ -352,7 +358,8 @@ export function useMasonryEngine(input: MasonryEngineInput): MasonryEngine {
       cached.columnGap === columnGap &&
       cached.verticalGap === verticalGap &&
       cached.columnCountOverride === normalisedOverride &&
-      cached.tileScale === normalisedScale
+      cached.tileScale === normalisedScale &&
+      cached.columnAnchors === columnAnchors
     ) {
       base = cached;
     } else {
@@ -363,6 +370,7 @@ export function useMasonryEngine(input: MasonryEngineInput): MasonryEngine {
         verticalGap,
         columnCountOverride: normalisedOverride,
         tileScale: normalisedScale,
+        columnAnchors,
       };
       base = {
         items,
@@ -373,6 +381,7 @@ export function useMasonryEngine(input: MasonryEngineInput): MasonryEngine {
         verticalGap,
         columnCountOverride: normalisedOverride,
         tileScale: normalisedScale,
+        columnAnchors,
         revision: ++inputRevisionRef.current,
         input: buildPackInput(items, sel, params),
       };
@@ -395,6 +404,7 @@ export function useMasonryEngine(input: MasonryEngineInput): MasonryEngine {
       columnCountOverride: normalisedOverride,
       tileScale: normalisedScale,
       gestureFootprint,
+      columnAnchors,
     };
 
     // First paint (nothing to keep) or a large expansion (old set dwarfed):
@@ -444,6 +454,7 @@ export function useMasonryEngine(input: MasonryEngineInput): MasonryEngine {
     columnCountOverride,
     tileScale,
     gestureFootprint,
+    columnAnchors,
     containerRef,
     commit,
     finishSettling,

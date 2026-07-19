@@ -140,6 +140,13 @@ export default function Home() {
   // In-session drag-reorder: a full id ordering applied on top of the
   // shuffle, NOT persisted — a reshuffle (new entry) clears it.
   const [sessionOrder, setSessionOrder] = useState<number[] | null>(null);
+  // Session column pins (tile id -> left column) for gesture-placed tiles:
+  // a dropped or resized tile keeps the column the gesture preview showed,
+  // instead of being re-derived by the packer's global argmin on every
+  // subsequent pack. Shares the session order's lifecycle exactly.
+  const [columnAnchors, setColumnAnchors] = useState<Record<number, number>>(
+    {},
+  );
   // Similarity navigation trail: the images dived through via
   // similar→click→similar. Powers back-one-hop + a breadcrumb strip so a
   // deep cascade stays navigable (the UX council's top pick). Cleared on
@@ -190,6 +197,7 @@ export default function Home() {
     if (prevResultsView.current && !isResultsView) {
       setShuffleSeed(newShuffleSeed());
       setSessionOrder(null);
+      setColumnAnchors({});
     }
     prevResultsView.current = isResultsView;
   }, [isResultsView]);
@@ -467,21 +475,33 @@ export default function Home() {
   // clump the previously-dragged tiles at the top of a folder view. Clear
   // them whenever reorder isn't available (any filter, similar, or search).
   useEffect(() => {
-    if (!reorderEnabled) setSessionOrder(null);
+    if (!reorderEnabled) {
+      setSessionOrder(null);
+      setColumnAnchors({});
+    }
   }, [reorderEnabled]);
 
   // Stable across renders so Masonry's `handleItemClick`/reorder/resize
   // callbacks keep identity and the memo'd tiles hold through an indexing
   // run's route re-renders (T2-1). `recordAction` is a module import and the
   // state setter / mutation `.mutate` are referentially stable.
-  const handleReorder = useCallback((orderedIds: number[]) => {
-    recordAction("masonry_reorder", { count: orderedIds.length });
-    setSessionOrder(orderedIds);
-  }, []);
+  const handleReorder = useCallback(
+    (orderedIds: number[], anchor: { id: number; startCol: number }) => {
+      recordAction("masonry_reorder", {
+        count: orderedIds.length,
+        id: anchor.id,
+        startCol: anchor.startCol,
+      });
+      setSessionOrder(orderedIds);
+      setColumnAnchors((prev) => ({ ...prev, [anchor.id]: anchor.startCol }));
+    },
+    [],
+  );
 
   const handleResizeCommit = useCallback(
-    (itemId: number, colSpan: number | null) => {
-      recordAction("masonry_resize", { id: itemId, colSpan });
+    (itemId: number, colSpan: number | null, startCol: number) => {
+      recordAction("masonry_resize", { id: itemId, colSpan, startCol });
+      setColumnAnchors((prev) => ({ ...prev, [itemId]: startCol }));
       // useTileResize retains the final footprint until this promise settles.
       // The optimistic manifest stamp therefore becomes authoritative before
       // the preview can clear; no intermediate render can repack the tile as
@@ -1031,6 +1051,7 @@ export default function Home() {
             reorderEnabled={reorderEnabled}
             onReorder={handleReorder}
             onResizeCommit={handleResizeCommit}
+            columnAnchors={columnAnchors}
             onItemHover={prefetchSimilar}
             heroOverlay={heroOverlay}
           />

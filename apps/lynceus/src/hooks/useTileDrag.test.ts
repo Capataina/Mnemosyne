@@ -92,7 +92,7 @@ describe("drag release barrier", () => {
     // The active ghost stays mounted at the literal drop rectangle until the
     // following dense geometry is authoritative.
     expect(result.current.dragItemId).toBe(1);
-    expect(onReorder).toHaveBeenCalledWith([2, 1]);
+    expect(onReorder).toHaveBeenCalledWith([2, 1], { id: 1, startCol: 1 });
 
     act(() => {
       result.current.onGestureSettled();
@@ -147,7 +147,83 @@ describe("drag release barrier", () => {
     });
 
     expect(node.style.transform).toBe("translate3d(37px, 19px, 0)");
-    expect(result.current.gestureFootprint?.top).toBe(219);
+    // The ghost is pixel-exact; the published footprint's top is stepped to
+    // the 48px quantum (desiredY 219 → 240) so packs fire per step crossing.
+    expect(result.current.gestureFootprint?.top).toBe(240);
+  });
+
+  it("treats a drop back onto the source slot as a genuine no-op", () => {
+    const items: FeedItem[] = [
+      { id: 1, name: "one", width: 100, height: 100, hasThumbnail: true },
+      { id: 2, name: "two", width: 100, height: 100, hasThumbnail: true },
+    ];
+    const placements: MasonryItemPlacement[] = items.map((item, index) => ({
+      itemData: item,
+      x: index * 100,
+      y: 0,
+      width: 100,
+      height: 100,
+      colSpan: 1,
+      isSelected: false,
+    }));
+    const onReorder = vi.fn();
+    const { result } = renderHook(() =>
+      useTileDrag({
+        enabled: true,
+        items,
+        placementsRef: { current: placements },
+        placementByIdRef: {
+          current: new Map(
+            placements.map((placement) => [placement.itemData.id, placement]),
+          ),
+        },
+        tileElementsRef: { current: new Map() },
+        columnWidthRef: { current: 100 },
+        columnCountRef: { current: 2 },
+        columnGap: 0,
+        onReorder,
+        suppressClick: vi.fn(),
+      }),
+    );
+
+    act(() => {
+      result.current.onDragHandlePointerDown(1, {
+        clientX: 50,
+        clientY: 50,
+      } as React.PointerEvent<HTMLDivElement>);
+    });
+    // Wiggle within the source slot: under the drag threshold's reach but a
+    // real move, ending where it began.
+    act(() => {
+      window.dispatchEvent(
+        new PointerEvent("pointermove", { clientX: 62, clientY: 55 }),
+      );
+    });
+    act(() => {
+      window.dispatchEvent(
+        new PointerEvent("pointerup", { clientX: 62, clientY: 55 }),
+      );
+    });
+
+    const footprint = result.current.gestureFootprint!;
+    expect(footprint.startCol).toBe(0);
+    const geometry = computeMasonryGeometry(
+      buildPackInput(items, null, {
+        containerWidth: 200,
+        minItemWidth: 100,
+        columnGap: 0,
+        verticalGap: 0,
+        columnCountOverride: 2,
+        gestureFootprint: footprint,
+      }),
+    );
+    act(() => {
+      result.current.onGestureGeometryCommitted(footprint, geometry, items);
+    });
+
+    // Same slot → no reorder, no anchor; the grid settles exactly as it was.
+    expect(onReorder).not.toHaveBeenCalled();
+    expect(result.current.gestureFootprint).toBeUndefined();
   });
 
   it("animates the retained drop ghost to the authoritative dense slot", () => {

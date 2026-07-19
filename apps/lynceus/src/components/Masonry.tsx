@@ -41,16 +41,25 @@ interface MasonryProps {
   animationLevel?: "off" | "subtle" | "standard";
   /** Enables drag-to-reorder (a live in-session nudge). */
   reorderEnabled?: boolean;
-  /** Fired once, on drop, with the complete new id ordering. */
-  onReorder?: (orderedIds: number[]) => void;
+  /** Fired once, on a committing drop, with the complete new id ordering and
+   * the dropped tile's column pin (the slot the gesture preview showed). */
+  onReorder?: (
+    orderedIds: number[],
+    anchor: { id: number; startCol: number },
+  ) => void;
   /**
    * Fired once, on release, with the tile's new column span (`null` =
-   * back to single-column). Resize persists per-image (unlike reorder).
+   * back to single-column) and the previewed left column to pin. Resize
+   * persists its span per-image (unlike reorder).
    */
   onResizeCommit?: (
     itemId: number,
     colSpan: number | null,
+    startCol: number,
   ) => void | Promise<unknown>;
+  /** Session column pins (tile id → left column) for gesture-placed tiles,
+   * owned by the host alongside the session order. */
+  columnAnchors?: Record<number, number>;
   /** Fired when the pointer enters a tile — used to prefetch its
    *  similar-set so opening it is instant. */
   onItemHover?: (id: number) => void;
@@ -135,6 +144,7 @@ export default function Masonry(props: MasonryProps) {
     columnCountOverride: props.columnCountOverride,
     tileScale: props.tileScale,
     gestureFootprint,
+    columnAnchors: props.columnAnchors,
     onGestureGeometryCommitted: drag.onGestureGeometryCommitted,
     onGestureSettled: handleGestureSettled,
     containerRef,
@@ -247,6 +257,10 @@ export default function Masonry(props: MasonryProps) {
         const isDraggingThis = id === drag.dragItemId;
         return (
           <MasonryAnchor
+            // The active tile's pixels float with the pointer, so its anchor
+            // (the reserved slot neighbours pack around) would paint empty
+            // black — render the drop placeholder in it instead.
+            placeholder={isDraggingThis || id === resizingId}
             // Key by stable id alone. Keying by url too made a thumbnail-URL
             // change (base→sharp swap, re-index) unmount/remount the whole
             // anchor+item subtree, dropping useAdaptiveThumbnail state and

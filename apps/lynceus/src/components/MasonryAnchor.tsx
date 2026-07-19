@@ -13,6 +13,10 @@ interface MasonryItemProps {
   /** Disable committed-geometry transitions while the active tile's inner
    * cosmetic wrapper follows the pointer or settles to this anchor. */
   snap?: boolean;
+  /** Render a drop placeholder in this anchor's box. Used for the active
+   * gesture tile, whose pixels float with the pointer and would otherwise
+   * leave the reserved slot painting as bare background. */
+  placeholder?: boolean;
 }
 
 export function MasonryAnchor(props: MasonryItemProps) {
@@ -38,6 +42,12 @@ export function MasonryAnchor(props: MasonryItemProps) {
         height: props.height,
       }}
     >
+      {props.placeholder && (
+        <div
+          aria-hidden
+          className="pointer-events-none absolute inset-0 rounded-[14px] bg-foreground/[0.05] ring-1 ring-inset ring-foreground/15"
+        />
+      )}
       {props.children}
     </div>
   );

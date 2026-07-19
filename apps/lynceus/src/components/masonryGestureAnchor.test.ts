@@ -12,16 +12,21 @@ const item = (id: number, width = 100, height = 100): FeedItem =>
   ({ id, width, height, hasThumbnail: true, name: `tile-${id}` }) as FeedItem;
 
 describe("resolveFootprintLeft", () => {
-  it("interprets left, right, and centre references span-aware", () => {
-    expect(resolveFootprintLeft(5, 0, 3, 10)).toBe(5);
-    expect(resolveFootprintLeft(5, 1, 3, 10)).toBe(3);
-    expect(resolveFootprintLeft(5, 2, 3, 10)).toBe(4);
+  it("passes an in-range left column through unchanged for every span parity", () => {
+    // The old centre-reference mode shifted EVEN spans one column left of
+    // the rendered ghost (the 2026-07-19 diagnosis); startCol is now always
+    // the physical left column, so odd and even spans behave identically.
+    expect(resolveFootprintLeft(5, 1, 10)).toBe(5);
+    expect(resolveFootprintLeft(5, 2, 10)).toBe(5);
+    expect(resolveFootprintLeft(5, 3, 10)).toBe(5);
+    expect(resolveFootprintLeft(5, 4, 10)).toBe(5);
   });
 
   it("clamps the complete footprint at both walls", () => {
-    expect(resolveFootprintLeft(-5, 0, 3, 6)).toBe(0);
-    expect(resolveFootprintLeft(99, 2, 3, 6)).toBe(3);
-    expect(resolveFootprintLeft(2, 0, 3, 3)).toBe(0);
+    expect(resolveFootprintLeft(-5, 3, 6)).toBe(0);
+    expect(resolveFootprintLeft(99, 3, 6)).toBe(3);
+    expect(resolveFootprintLeft(5, 2, 6)).toBe(4);
+    expect(resolveFootprintLeft(2, 3, 3)).toBe(0);
   });
 });
 

@@ -75,15 +75,6 @@ export interface SpatialRect {
   height: number;
 }
 
-export interface SpatialGeometry {
-  xs: Float64Array;
-  ys: Float64Array;
-  widths: Float64Array;
-  heights: Float64Array;
-  selectedIndex: number;
-  count: number;
-}
-
 function intersectionArea(a: SpatialRect, b: SpatialRect): number {
   const width = Math.max(
     0,
@@ -97,8 +88,14 @@ function intersectionArea(a: SpatialRect, b: SpatialRect): number {
 }
 
 /** Pick the release target from geometry, independent of DOM overlap and
- * feed-index distance. Maximum rectangle overlap wins; when the pointer is in
- * empty space, nearest centre wins. */
+ * feed-index distance. Maximum rectangle overlap wins; when the rect sits
+ * over empty space, nearest centre wins. The active tile is NEVER a
+ * candidate: its own pre-gesture rectangle out-overlaps every smaller
+ * neighbour for any move shorter than its own width (a span-2 tile moved one
+ * column keeps a full column of self-overlap), which silently discarded
+ * every small multi-span move. The deliberate "dropped at its own slot is a
+ * no-op" semantic lives in the caller's source-slot guard, where it compares
+ * committed slots instead of overlap areas. */
 export function spatialTargetId(
   placements: readonly SpatialPlacement[],
   activeId: number,
@@ -112,70 +109,11 @@ export function spatialTargetId(
 
   for (const placement of placements) {
     const id = placement.itemData.id;
+    if (id === activeId) continue;
     const overlap = intersectionArea(rect, placement);
     const dx = centreX - (placement.x + placement.width / 2);
     const dy = centreY - (placement.y + placement.height / 2);
     const distance = dx * dx + dy * dy;
-    if (
-      overlap > bestOverlap ||
-      (overlap === bestOverlap && distance < bestDistance) ||
-      (overlap === bestOverlap &&
-        distance === bestDistance &&
-        (id === activeId ||
-          (bestId !== activeId && id < (bestId ?? Infinity))))
-    ) {
-      bestId = id;
-      bestOverlap = overlap;
-      bestDistance = distance;
-    }
-  }
-  return bestId;
-}
-
-/** Move the active id once, at release, to the slot selected by its final
- * spatial rectangle. The source tile remains in the snapshot deliberately:
- * dropping mostly over its original slot resolves to itself and is a no-op.
- * The stable-id lookup naturally survives index shifts. */
-export function reorderAtSpatialTarget<T extends { id: number }>(
-  items: T[],
-  placements: readonly SpatialPlacement[],
-  activeId: number,
-  rect: SpatialRect,
-): T[] | null {
-  const targetId = spatialTargetId(placements, activeId, rect);
-  if (targetId === null) return null;
-  return reorderWithinList(items, buildIndexMap(items), activeId, targetId);
-}
-
-/** Typed-array counterpart used by drag release. It grades the exact worker
- * geometry that committed the final obstacle, without materialising 100k
- * placement objects on the main thread. */
-export function reorderAtGeometryTarget<T extends { id: number }>(
-  items: T[],
-  geometry: SpatialGeometry,
-  activeId: number,
-  rect: SpatialRect,
-): T[] | null {
-  const centreX = rect.x + rect.width / 2;
-  const centreY = rect.y + rect.height / 2;
-  let bestId: number | null = null;
-  let bestOverlap = -1;
-  let bestDistance = Infinity;
-  const count = Math.min(geometry.count, items.length);
-
-  for (let index = 0; index < count; index++) {
-    if (index === geometry.selectedIndex || items[index].id === activeId) continue;
-    const candidate: SpatialRect = {
-      x: geometry.xs[index],
-      y: geometry.ys[index],
-      width: geometry.widths[index],
-      height: geometry.heights[index],
-    };
-    const overlap = intersectionArea(rect, candidate);
-    const dx = centreX - (candidate.x + candidate.width / 2);
-    const dy = centreY - (candidate.y + candidate.height / 2);
-    const distance = dx * dx + dy * dy;
-    const id = items[index].id;
     if (
       overlap > bestOverlap ||
       (overlap === bestOverlap && distance < bestDistance) ||
@@ -188,8 +126,18 @@ export function reorderAtGeometryTarget<T extends { id: number }>(
       bestDistance = distance;
     }
   }
+  return bestId;
+}
 
-  return bestId === null
-    ? null
-    : reorderWithinList(items, buildIndexMap(items), activeId, bestId);
+/** Move the active id once, at release, to the slot selected by its final
+ * spatial rectangle. The stable-id lookup naturally survives index shifts. */
+export function reorderAtSpatialTarget<T extends { id: number }>(
+  items: T[],
+  placements: readonly SpatialPlacement[],
+  activeId: number,
+  rect: SpatialRect,
+): T[] | null {
+  const targetId = spatialTargetId(placements, activeId, rect);
+  if (targetId === null) return null;
+  return reorderWithinList(items, buildIndexMap(items), activeId, targetId);
 }

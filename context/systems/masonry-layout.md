@@ -67,10 +67,14 @@ an array index.
 interface MasonryGestureFootprint {
   id: number;
   span: number;
-  startCol: number;
+  startCol: number; // always the physical LEFT column
   top: number;
-  edge?: number; // 0 left, 1 right, 2 centre reference
 }
+// The old edge-reference field (left/right/centre) is gone: its centre mode
+// was ambiguous for even spans and reserved the slot one column left of the
+// rendered ghost — the 2026-07-19 fix round deleted the convention outright.
+// Pack input also carries columnAnchors (tile id -> left column): session
+// pins for gesture-placed tiles, honoured at each tile's feed-order turn.
 
 interface MasonryPackInput {
   ids: Float64Array;
@@ -158,19 +162,29 @@ the CSS transition start frame for displaced tiles.
 A 6px threshold separates click from drag. Each animation frame converts the
 pointer delta into a stable-ID footprint:
 
-- X is expressed as a centre-column reference and span-aware clamping resolves its
-  physical left column.
-- Y is the exact non-negative desired top, not a column frontier.
+- X is the ghost rectangle's nearest left column, clamped span-aware — the
+  reserved slot is the column-quantised ghost itself.
+- Y is the desired top stepped to a 48px quantum (the ghost stays pixel-exact;
+  packs fire per step crossing rather than per pointer pixel).
 - One inner wrapper receives the exact pointer delta outside React. There is no DOM
   hit test, hover swap, or repeated array splice.
 
 Pointer-up flushes the exact final coordinate and keeps that footprint active until
-the engine confirms that exact generation. Only then does `reorderAtSpatialTarget`
-scan the pre-gesture visible snapshot, select the maximum-overlap/nearest-centre
-target, perform one ID-based insertion, and clear into settling. Keeping the source
-tile in that snapshot makes a drop over its original slot a no-op. The ghost stays at
-the literal drop rectangle while the worker computes the dense layout; once that
-geometry commits, its transform animates to zero over the snapped anchor. Concurrent
+the engine confirms that exact generation. Release is WYSIWYG: the COMMITTED
+footprint rectangle from the gesture pack (the slot the preview displaced
+neighbours around) — never the raw pixel ghost — is scored by
+`reorderAtSpatialTarget` against the pre-gesture snapshot with the active tile
+EXCLUDED, selecting the maximum-overlap/nearest-centre neighbour for one
+ID-based insertion, and the footprint's column travels up as a session pin.
+The one genuine no-op is a slot comparison in the hook (same start column, top
+within half a tile height of the source): the earlier self-inclusive overlap
+scoring made every one-column multi-span move a silent no-op, because a wide
+tile out-overlaps any smaller neighbour on its own vacated rect (the
+2026-07-19 snap-back diagnosis). The active anchor renders a drop placeholder
+in the reserved slot, which otherwise paints as bare background while the
+tile's pixels float with the pointer. The ghost stays at the literal drop
+rectangle while the worker computes the dense layout; once that geometry
+commits, its transform animates to zero over the snapped anchor. Concurrent
 feed deltas are merged by stable ID; no interaction state stores a feed index.
 
 ### `useTileResize` — all four corners and atomic span authority
@@ -197,7 +211,11 @@ clears only after that Promise settles. There is therefore no render in which th
 preview has vanished but the feed still describes the old 1×1 span, and no geometry
 from such a gap can be adopted. It then enters `settling`: the dense pack commits
 behind the retained pixel ghost, whose transform, width, and height animate to the
-committed anchor before local gesture state clears.
+committed anchor before local gesture state clears. The commit callback also
+carries the previewed left column, which the route pins as a session column
+anchor — the settle pack keeps the tile in the column the resize preview
+showed instead of re-deriving it by global argmin (pre-fix, that re-derivation
+was the post-release ±240px "wobble").
 
 Resize uses the same view-level enable gate as drag. Opening a selected hero hides
 all neighbour grips, prevents new pointer-down transactions, and cancels an active
@@ -225,8 +243,8 @@ as a settled pack overlap.
 | Drag/resize hook | One stable-ID 2D footprint | Engine occupancy reservation |
 | Active gesture hook | Pointer-exact wrapper delta | Cosmetic direct-manipulation preview |
 | Engine | Visible `MasonryItemPlacement[]`, total height | Anchors and container |
-| Drag release | Complete reordered ID sequence | Route's in-session `sessionOrder` |
-| Resize release | ID plus persisted span | `useSetManualColSpan().mutateAsync` |
+| Drag release | Reordered ID sequence + column pin | Route's `sessionOrder` + `columnAnchors` |
+| Resize release | ID, persisted span, previewed column | `useSetManualColSpan().mutateAsync` + `columnAnchors` |
 | Anchor data attributes | Committed x/y/w/h | Profiling-only layout monitor |
 
 ## Verification Surface

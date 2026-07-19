@@ -241,6 +241,9 @@ describe("occupancy-aware gesture packing", () => {
       [764, 374],
       [762, 494],
     ] as const;
+    // startCol is the footprint's physical LEFT column (the current
+    // contract); the cursor column doubles as that reference here, clamped
+    // per-span inside the packer.
     const paths = telemetryCursors.map(([screenX, screenY]) => ({
       startCol: Math.floor(Math.max(0, screenX - 40) / 240),
       top: Math.max(0, screenY - 109),
@@ -267,7 +270,6 @@ describe("occupancy-aware gesture packing", () => {
               span,
               startCol: point.startCol,
               top: point.top,
-              edge: 2,
             },
           }),
         );
@@ -308,8 +310,8 @@ describe("occupancy-aware gesture packing", () => {
         span: 3,
         startCol: 3,
         top: 12_345,
-        edge: 2,
       },
+      columnAnchors: null,
     };
     const geometry = computeMasonryGeometry(input);
     expect(geometry.count).toBe(count);

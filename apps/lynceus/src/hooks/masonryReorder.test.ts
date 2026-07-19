@@ -126,16 +126,42 @@ describe("spatial release target", () => {
     ).toEqual([2, 3, 1]);
   });
 
-  it("keeps the order when the tile is dropped over its source slot", () => {
-    const base = list(3);
+  it("never targets the active tile itself, whatever the self-overlap", () => {
+    // The source-slot no-op is the CALLER's slot-comparison guard now. At
+    // the scoring level the active tile is excluded outright: its own
+    // pre-gesture rect out-overlaps every smaller neighbour for any move
+    // shorter than its own width, which silently discarded every one-column
+    // multi-span move (the 2026-07-19 snap-back diagnosis).
+    const target = spatialTargetId(placements, 1, {
+      x: 10,
+      y: 10,
+      width: 80,
+      height: 80,
+    });
+    expect(target).not.toBe(1);
+    expect(target).toBe(2);
+  });
+
+  it("commits a span-2 tile moved one column onto the covered neighbour", () => {
+    // Live-session geometry: 224px columns, 16px gap, 240px stride. A span-2
+    // rect (464px) moved one stride right keeps 224px of self-overlap — the
+    // exact configuration that used to resolve to a self-target no-op (three
+    // hard no-op drags in perf-1784453601, zero masonry_reorder events).
+    const wide = [
+      { itemData: { id: 692 }, x: 0, y: 0, width: 464, height: 306 },
+      { itemData: { id: 24 }, x: 480, y: 0, width: 224, height: 148 },
+      { itemData: { id: 21 }, x: 480, y: 164, width: 224, height: 132 },
+      { itemData: { id: 28 }, x: 720, y: 0, width: 224, height: 132 },
+    ];
+    const base = [{ id: 692 }, { id: 24 }, { id: 21 }, { id: 28 }];
+    const dropRect = { x: 240, y: 0, width: 464, height: 306 };
+
+    expect(spatialTargetId(wide, 692, dropRect)).toBe(24);
     expect(
-      reorderAtSpatialTarget(base, placements, 1, {
-        x: 10,
-        y: 10,
-        width: 80,
-        height: 80,
-      }),
-    ).toBeNull();
+      reorderAtSpatialTarget(base, wide, 692, dropRect)?.map(
+        (item) => item.id,
+      ),
+    ).toEqual([24, 692, 21, 28]);
   });
 
   it("targets the pre-gesture slot rather than a neighbour displaced by the reservation", () => {

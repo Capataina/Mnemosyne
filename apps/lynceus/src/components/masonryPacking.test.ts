@@ -350,3 +350,138 @@ describe("computeMasonryLayout", () => {
     expect(out.columnWidth).toBe(100);
   });
 });
+
+/**
+ * Session column anchors: a gesture-placed tile keeps its column at its
+ * feed-order turn instead of being re-derived by global argmin — the
+ * position-carry half of the 2026-07-19 fix round (the settle "wobble" was
+ * the packer re-arguing a just-resized tile's column on every pack).
+ */
+describe("session column anchors", () => {
+  const params = {
+    containerWidth: 1424,
+    minItemWidth: 224,
+    columnGap: 16,
+    verticalGap: 16,
+    columnCountOverride: 6,
+  };
+  const stride = 240;
+
+  // Deterministic jitter (mulberry32) so failures reproduce run-to-run.
+  function rng(seed: number) {
+    let a = seed >>> 0;
+    return () => {
+      a = (a + 0x6d2b79f5) >>> 0;
+      let t = Math.imul(a ^ (a >>> 15), 1 | a);
+      t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+  }
+
+  function jitteredFeed(seed: number, count: number, spanTwoId: number) {
+    const rand = rng(seed);
+    return Array.from({ length: count }, (_, index) => {
+      const id = index + 1;
+      return tile(
+        id,
+        1280,
+        640 + Math.floor(rand() * 160),
+        id === spanTwoId ? 2 : undefined,
+      );
+    });
+  }
+
+  function overlapArea(
+    a: { x: number; y: number; width: number; height: number },
+    b: { x: number; y: number; width: number; height: number },
+  ) {
+    const w = Math.min(a.x + a.width, b.x + b.width) - Math.max(a.x, b.x);
+    const h = Math.min(a.y + a.height, b.y + b.height) - Math.max(a.y, b.y);
+    return Math.max(0, w) * Math.max(0, h);
+  }
+
+  it("pins an anchored tile to its column and holds it across input changes", () => {
+    const items = jitteredFeed(7, 24, 12);
+    const free = computeMasonryLayout({ items, ...params });
+    const freeCol = Math.round(free.placementById.get(12)!.x / stride);
+    // Anchor deliberately to a DIFFERENT column than the argmin would pick,
+    // so the pin is proven to override the search rather than agree with it.
+    const anchorCol = (freeCol + 2) % 5;
+    const anchors = { 12: anchorCol };
+
+    const pinned = computeMasonryLayout({ items, ...params, columnAnchors: anchors });
+    expect(Math.round(pinned.placementById.get(12)!.x / stride)).toBe(anchorCol);
+
+    // The settle-wobble gate: a perturbed input (one appended tile — the
+    // optimistic-patch/refetch shape) must NOT move the anchored tile's
+    // column. Pre-fix this re-derivation was the ±240px post-resize jump.
+    const perturbed = computeMasonryLayout({
+      items: [...items, tile(99, 1280, 700)],
+      ...params,
+      columnAnchors: anchors,
+    });
+    expect(Math.round(perturbed.placementById.get(12)!.x / stride)).toBe(
+      anchorCol,
+    );
+  });
+
+  it("ignores anchors for absent ids and keeps unanchored packs byte-identical", () => {
+    const items = jitteredFeed(11, 18, 9);
+    const bare = computeMasonryLayout({ items, ...params });
+    const staleAnchor = computeMasonryLayout({
+      items,
+      ...params,
+      columnAnchors: { 4040: 3 },
+    });
+    for (const item of items) {
+      const a = bare.placementById.get(item.id)!;
+      const b = staleAnchor.placementById.get(item.id)!;
+      expect(b.x).toBe(a.x);
+      expect(b.y).toBe(a.y);
+    }
+  });
+
+  it("lets a live footprint win over its own id's anchor", () => {
+    const items = jitteredFeed(3, 18, 9);
+    const layout = computeMasonryLayout({
+      items,
+      ...params,
+      columnAnchors: { 9: 0 },
+      gestureFootprint: { id: 9, span: 2, startCol: 3, top: 480 },
+    });
+    const placement = layout.placementById.get(9)!;
+    expect(Math.round(placement.x / stride)).toBe(3);
+    expect(placement.y).toBe(480);
+  });
+
+  it("never overlaps settled tiles, anchors present or not (seeded trials)", () => {
+    for (let trial = 0; trial < 40; trial++) {
+      const rand = rng(1000 + trial);
+      const items = Array.from({ length: 30 }, (_, index) =>
+        tile(
+          index + 1,
+          1280,
+          600 + Math.floor(rand() * 240),
+          rand() < 0.2 ? 2 : undefined,
+        ),
+      );
+      const anchors: Record<number, number> = {};
+      for (let k = 0; k < 3; k++) {
+        anchors[1 + Math.floor(rand() * 30)] = Math.floor(rand() * 6);
+      }
+      const layout = computeMasonryLayout({
+        items,
+        ...params,
+        columnAnchors: anchors,
+      });
+      const placements = layout.placements;
+      for (let i = 0; i < placements.length; i++) {
+        for (let j = i + 1; j < placements.length; j++) {
+          expect(overlapArea(placements[i], placements[j])).toBeLessThanOrEqual(
+            1,
+          );
+        }
+      }
+    }
+  });
+});

@@ -2,16 +2,18 @@ import type { FeedItem } from "../types";
 
 /** One authoritative, worker-crossable rectangle transaction for a live
  * gesture. `id` is deliberately stable across feed reorder/delta merges;
- * `span` resolves the live width without a second index-keyed override. */
+ * `span` resolves the live width without a second index-keyed override.
+ * `startCol` is always the physical LEFT column of the reserved rectangle —
+ * the old edge-reference convention (left/right/centre) is gone because its
+ * centre mode was ambiguous for even spans and reserved the slot one column
+ * away from the rendered ghost. */
 export interface MasonryGestureFootprint {
   id: number;
   span: number;
-  /** Horizontal reference column. `edge` defines how it is interpreted. */
+  /** Physical left column of the reserved rectangle. */
   startCol: number;
   /** Exact top edge of the reserved and rendered rectangle, in grid pixels. */
   top: number;
-  /** 0=left edge, 1=right edge, 2=centre column. */
-  edge?: number;
 }
 
 export interface MasonryItemPlacement {
@@ -41,6 +43,12 @@ export interface MasonryLayoutInput {
    * span wins for its stable id. */
   spanOverrides?: Record<number, number>;
   gestureFootprint?: MasonryGestureFootprint;
+  /** Session column pins (tile id → left column) for tiles a gesture placed.
+   * An anchored tile keeps its column at its feed-order turn instead of
+   * re-deriving it by global argmin, so a release/settle pack cannot relocate
+   * what the user just positioned. A live footprint wins over its own id's
+   * anchor; unknown ids are ignored. */
+  columnAnchors?: Record<number, number>;
 }
 
 export interface MasonryLayoutOutput {
@@ -70,6 +78,7 @@ export interface MasonryPackInput {
   selectedWidth: number;
   selectedHeight: number;
   gestureFootprint: MasonryGestureFootprint | null;
+  columnAnchors: Record<number, number> | null;
 }
 
 export interface MasonryHeroGeometry {
@@ -121,22 +130,15 @@ export interface MasonryPackResponse {
   geometry: MasonryGeometry;
 }
 
-/** Resolve a footprint reference into its physical left column and clamp the
- * complete span into the grid. This is horizontal interpretation only; the
- * footprint's `top` remains exact and never comes from a column frontier. */
+/** Clamp a footprint's left column so the complete span fits the grid. This
+ * is horizontal interpretation only; the footprint's `top` remains exact and
+ * never comes from a column frontier. */
 export function resolveFootprintLeft(
   startCol: number,
-  edge: number,
   span: number,
   colCount: number,
 ): number {
-  const raw =
-    edge === 1
-      ? startCol - (span - 1)
-      : edge === 2
-        ? startCol - (span >> 1)
-        : startCol;
-  return Math.max(0, Math.min(raw, colCount - span));
+  return Math.max(0, Math.min(startCol, colCount - span));
 }
 
 /** Invalid source dimensions degrade to a square rather than introducing
@@ -265,10 +267,13 @@ export function computeMasonryGeometry(input: MasonryPackInput): MasonryGeometry
     selectedWidth,
     selectedHeight,
     gestureFootprint,
+    columnAnchors,
   } = input;
 
   const n = widths.length;
   if (containerWidth <= 0) return emptyGeometry(n);
+  const hasAnchors =
+    columnAnchors !== null && Object.keys(columnAnchors).length > 0;
 
   const effectiveMin = minItemWidth * tileScale;
   const safeEffectiveMin =
@@ -310,7 +315,7 @@ export function computeMasonryGeometry(input: MasonryPackInput): MasonryGeometry
     return Math.max(1, Math.min(requested, colCount));
   };
 
-  let allSpanOne = gestureIndex < 0;
+  let allSpanOne = gestureIndex < 0 && !hasAnchors;
   if (allSpanOne) {
     for (let i = 0; i < n; i++) {
       if (i !== selectedIndex && resolvedSpan(i) !== 1) {
@@ -395,7 +400,6 @@ export function computeMasonryGeometry(input: MasonryPackInput): MasonryGeometry
     );
     const start = resolveFootprintLeft(
       gestureFootprint.startCol,
-      gestureFootprint.edge ?? 0,
       span,
       colCount,
     );
@@ -439,13 +443,24 @@ export function computeMasonryGeometry(input: MasonryPackInput): MasonryGeometry
     const itemHeight = scaledHeight(widths[i], heights[i], placedWidth);
     const heightWithGap = itemHeight + verticalGap;
 
-    let bestStart = 0;
-    let bestTop = Infinity;
-    for (let start = 0; start <= colCount - span; start++) {
-      const top = lowestFreeY(occupied, start, span, heightWithGap);
-      if (top < bestTop) {
-        bestTop = top;
-        bestStart = start;
+    // A column-anchored tile keeps its gesture-placed column and takes that
+    // window's natural y at its feed-order turn; only unanchored tiles run
+    // the global argmin start-search.
+    const anchorCol = hasAnchors ? columnAnchors![ids[i]] : undefined;
+    let bestStart: number;
+    let bestTop: number;
+    if (anchorCol !== undefined) {
+      bestStart = resolveFootprintLeft(anchorCol, span, colCount);
+      bestTop = lowestFreeY(occupied, bestStart, span, heightWithGap);
+    } else {
+      bestStart = 0;
+      bestTop = Infinity;
+      for (let start = 0; start <= colCount - span; start++) {
+        const top = lowestFreeY(occupied, start, span, heightWithGap);
+        if (top < bestTop) {
+          bestTop = top;
+          bestStart = start;
+        }
       }
     }
 
@@ -481,6 +496,7 @@ export interface MasonryPackParams {
   tileScale?: number;
   spanOverrides?: Record<number, number>;
   gestureFootprint?: MasonryGestureFootprint;
+  columnAnchors?: Record<number, number>;
 }
 
 /** Flatten catalogue state once per base revision. The stable id array is the
@@ -524,6 +540,7 @@ export function buildPackInput(
     selectedWidth: selectedItem?.width ?? 0,
     selectedHeight: selectedItem?.height ?? 0,
     gestureFootprint: params.gestureFootprint ?? null,
+    columnAnchors: params.columnAnchors ?? null,
   };
 }
 

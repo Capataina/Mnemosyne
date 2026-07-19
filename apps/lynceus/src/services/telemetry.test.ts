@@ -100,6 +100,36 @@ describe("captureGridGeometry", () => {
     expect(snapshot.mismatched).toEqual([]);
     host.remove();
   });
+
+  it("registers a multi-column tile in every column it covers — no phantom gap", () => {
+    // The 2026-07-19 diagnosis: binning tiles by left-edge x alone made a
+    // span-2 tile invisible in its second column, so that column reported a
+    // persistent "gap" exactly the tile's height (all of T2 was this
+    // artefact). Layout: column x=240 holds tile 742 (y 148-280), the span-2
+    // tile 692 (x 0-464, y 296-570 — covering column 240), and tile 753
+    // (y 586-718). Span-aware binning must see 692 between 742 and 753 and
+    // report NO gap; the pre-fix detector reported 306px here.
+    const host = build(
+      `<div data-masonry-id="742"
+            data-masonry-x="240" data-masonry-y="148"
+            data-masonry-width="224" data-masonry-height="132"
+            style="width:224px;height:132px"></div>
+       <div data-masonry-id="692"
+            data-masonry-x="0" data-masonry-y="296"
+            data-masonry-width="464" data-masonry-height="274"
+            style="width:464px;height:274px"></div>
+       <div data-masonry-id="753"
+            data-masonry-x="240" data-masonry-y="586"
+            data-masonry-width="224" data-masonry-height="132"
+            style="width:224px;height:132px"></div>`,
+    );
+
+    const snapshot = captureGridGeometry() as {
+      gaps: Array<{ x: number; gap: number }>;
+    };
+    expect(snapshot.gaps).toEqual([]);
+    host.remove();
+  });
 });
 
 function build(html: string): HTMLElement {

@@ -300,14 +300,24 @@ export function captureGridGeometry(): Record<string, unknown> | null {
 
   // Vertical gaps within a column (the "empty black square"): a tile whose
   // top sits well below the bottom of the tile above it in the same column.
-  // Some gap is inherent to spanned tiles (a wide tile sits below the taller
-  // of its columns, leaving the shorter one short); flagged here so the size
-  // and frequency are visible rather than guessed at.
+  // SPAN-AWARE: a multi-column tile is registered in EVERY column its
+  // rendered width covers, not just its left edge — binning by left `x`
+  // alone made a span-2 tile invisible in its second column, and that
+  // column then reported a phantom gap exactly the tile's height (the
+  // 2026-07-19 diagnosis: all of T2's "persistent 306px gaps" were this
+  // measurement artefact, this saga's third).
+  const columnStarts = [...new Set(tiles.map((t) => t.x))].sort(
+    (a, b) => a - b,
+  );
   const byColumn = new Map<number, TileGeometry[]>();
   for (const t of tiles) {
-    const arr = byColumn.get(t.x) ?? [];
-    arr.push(t);
-    byColumn.set(t.x, arr);
+    for (const cx of columnStarts) {
+      if (cx >= t.x && cx < t.x + t.renderW - 1) {
+        const arr = byColumn.get(cx) ?? [];
+        arr.push(t);
+        byColumn.set(cx, arr);
+      }
+    }
   }
   const gaps: Array<{ x: number; gap: number; above: number; below: number }> = [];
   for (const [x, col] of byColumn) {

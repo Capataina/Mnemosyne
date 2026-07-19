@@ -13,6 +13,11 @@ import {
 
 const DRAG_THRESHOLD_PX = 6;
 const GESTURE_SETTLE_MS = 400;
+/** Vertical step for the published footprint's `top`. The ghost stays
+ * pixel-exact; only the reserved obstacle moves in steps, so a drag re-packs
+ * the grid per step crossing instead of per pointer pixel and neighbours get
+ * transition targets they can actually reach. */
+const FOOTPRINT_TOP_QUANTUM_PX = 48;
 
 interface UseTileDragInput {
   enabled: boolean;
@@ -23,7 +28,12 @@ interface UseTileDragInput {
   columnWidthRef: RefObject<number>;
   columnCountRef: RefObject<number>;
   columnGap: number;
-  onReorder?: (orderedIds: number[]) => void;
+  /** Fired once on a committing drop with the complete new id ordering and
+   * the released tile's column pin (the slot the gesture preview showed). */
+  onReorder?: (
+    orderedIds: number[],
+    anchor: { id: number; startCol: number },
+  ) => void;
   suppressClick: () => void;
 }
 
@@ -50,8 +60,10 @@ function sameIdOrder(a: readonly FeedItem[], b: readonly FeedItem[]): boolean {
  * Spatial drag transaction. Pointer frames publish one stable-id 2D obstacle
  * for neighbour packing and imperatively translate only the active tile's
  * inner wrapper. The wrapper is a cosmetic ghost; MasonryAnchor remains the
- * committed-geometry and telemetry owner. A single array insertion is
- * derived from the pre-gesture spatial snapshot on release.
+ * committed-geometry and telemetry owner. On release a single array
+ * insertion is derived from the COMMITTED footprint rectangle scored against
+ * the pre-gesture snapshot, and the footprint's column travels up as a
+ * session pin — the commit is the slot the preview showed.
  */
 export function useTileDrag(input: UseTileDragInput) {
   const {
@@ -162,13 +174,17 @@ export function useTileDrag(input: UseTileDragInput) {
       latestRectRef.current = rect;
       writeDragVisual(base.id, rect);
       const stride = columnWidth + columnGap;
-      const centreCol = Math.floor((desiredX + base.width / 2) / stride);
+      // The reserved slot is the column-quantised ghost rectangle itself:
+      // nearest column to the ghost's left edge, top stepped so packs fire on
+      // step crossings, not per pixel. (The old centre-column reference was
+      // ambiguous for even spans and reserved one column left of the ghost.)
       const footprint: MasonryGestureFootprint = {
         id: base.id,
         span: base.span,
-        startCol: centreCol,
-        top: desiredY,
-        edge: 2,
+        startCol: Math.round(desiredX / stride),
+        top:
+          Math.round(desiredY / FOOTPRINT_TOP_QUANTUM_PX) *
+          FOOTPRINT_TOP_QUANTUM_PX,
       };
       latestFootprintRef.current = footprint;
       setGestureFootprint((previous) =>
@@ -340,39 +356,77 @@ export function useTileDrag(input: UseTileDragInput) {
   const onGestureGeometryCommitted = useCallback(
     (
       committedFootprint: MasonryGestureFootprint,
-      _geometry: MasonryGeometry,
+      geometry: MasonryGeometry,
       committedItems: FeedItem[],
     ) => {
       const expected = latestFootprintRef.current;
-      const rect = latestRectRef.current;
+      const base = baseRef.current;
       if (
         !releasePendingRef.current ||
         !expected ||
-        !rect ||
+        !base ||
         committedFootprint.id !== expected.id ||
         committedFootprint.span !== expected.span ||
         committedFootprint.startCol !== expected.startCol ||
-        committedFootprint.top !== expected.top ||
-        (committedFootprint.edge ?? 0) !== (expected.edge ?? 0)
+        committedFootprint.top !== expected.top
       ) {
         return;
       }
 
-      // The committed obstacle geometry has already displaced every tile
-      // away from the reserved rect, so overlap scoring against it always
-      // degenerates to a nearest-displaced-neighbour guess. Target the stable
-      // pre-gesture snapshot instead: the tile under the drop rect maps back
-      // to the feed slot the user actually indicated.
-      const next = reorderAtSpatialTarget(
-        committedItems,
-        dropTargetsRef.current,
-        expected.id,
-        rect,
-      );
-      if (next) {
-        committedOrderRef.current = next;
-        setCommittedOrder(next);
-        onReorderRef.current?.(next.map((item) => item.id));
+      // WYSIWYG release: the slot the user watched IS the commit. Target the
+      // committed footprint rectangle from the gesture pack (column-aligned,
+      // the reserved slot the preview displaced neighbours around), never the
+      // raw pixel ghost — so the derived insertion matches the preview.
+      // Dropping back onto the source slot is the one genuine no-op, decided
+      // by comparing slots, not by self-overlap (a span-2 moved one column
+      // still overlaps its own old rect, which used to silently discard
+      // every small multi-span move).
+      const stride =
+        columnWidthRef.current > 0
+          ? columnWidthRef.current + columnGap
+          : 0;
+      const sourceStartCol =
+        stride > 0 ? Math.round(base.x / stride) : expected.startCol;
+      const droppedAtSource =
+        expected.startCol === sourceStartCol &&
+        Math.abs(expected.top - base.y) < base.height / 2;
+
+      if (!droppedAtSource) {
+        let committedIndex = -1;
+        for (let i = 0; i < committedItems.length; i++) {
+          if (committedItems[i].id === expected.id) {
+            committedIndex = i;
+            break;
+          }
+        }
+        const committedRect: SpatialRect =
+          committedIndex >= 0
+            ? {
+                x: geometry.xs[committedIndex],
+                y: geometry.ys[committedIndex],
+                width: geometry.widths[committedIndex],
+                height: geometry.heights[committedIndex],
+              }
+            : {
+                x: expected.startCol * stride,
+                y: expected.top,
+                width: base.width,
+                height: base.height,
+              };
+        const next = reorderAtSpatialTarget(
+          committedItems,
+          dropTargetsRef.current,
+          expected.id,
+          committedRect,
+        );
+        if (next) {
+          committedOrderRef.current = next;
+          setCommittedOrder(next);
+          onReorderRef.current?.(
+            next.map((item) => item.id),
+            { id: expected.id, startCol: committedFootprint.startCol },
+          );
+        }
       }
 
       releasePendingRef.current = false;
@@ -381,7 +435,7 @@ export function useTileDrag(input: UseTileDragInput) {
       setGestureFootprint(null);
       latestFootprintRef.current = null;
     },
-    [],
+    [columnGap, columnWidthRef],
   );
 
   const onGestureSettled = useCallback(() => {

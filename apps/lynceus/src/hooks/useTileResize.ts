@@ -98,7 +98,6 @@ export function resizePreviewForSpan(
       span,
       startCol,
       top: Math.max(0, y),
-      edge: 0,
     },
     x,
     y: Math.max(0, y),
@@ -171,10 +170,13 @@ interface UseTileResizeInput {
   placementByIdRef: RefObject<Map<number, MasonryItemPlacement>>;
   tileElementsRef: RefObject<Map<number, HTMLElement>>;
   /** Resolves only after the durable/optimistic span is authoritative. The
-   * local footprint remains live until then, eliminating the 1×1 gap render. */
+   * local footprint remains live until then, eliminating the 1×1 gap render.
+   * `startCol` is the previewed left column — the caller pins it so the
+   * settle pack cannot relocate the tile the user just placed. */
   onResizeCommit?: (
     id: number,
     colSpan: number | null,
+    startCol: number,
   ) => void | Promise<unknown>;
   suppressClick: () => void;
 }
@@ -468,6 +470,7 @@ export function useTileResize(input: UseTileResizeInput) {
         result = commitRef.current?.(
           live.id,
           live.span === 1 ? null : live.span,
+          live.footprint.startCol,
         );
       } catch {
         cancelResize(sequence);

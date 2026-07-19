@@ -49,6 +49,7 @@ function input(top: number | null): MasonryPackInput {
     selectedHeight: 0,
     gestureFootprint:
       top === null ? null : { id: 1, span: 1, startCol: 0, top },
+    columnAnchors: null,
   };
 }
 

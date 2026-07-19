@@ -34,6 +34,7 @@ function cloneInputForTransfer(input: MasonryPackInput): MasonryPackInput {
     gestureFootprint: input.gestureFootprint
       ? { ...input.gestureFootprint }
       : null,
+    columnAnchors: input.columnAnchors ? { ...input.columnAnchors } : null,
   };
 }
 

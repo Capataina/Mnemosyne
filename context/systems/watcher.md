@@ -10,7 +10,7 @@ Filesystem-watching layer for live catalog integrity. Recursively watches every 
 
 - **Owns:** the `notify-debouncer-mini` debouncer setup, the per-root `watcher.watch(path, RecursiveMode::Recursive)` calls, the debounce-event closure that re-spawns the indexing pipeline.
 - **Does not own:** the indexing pipeline itself (delegates to `indexing::try_spawn_pipeline`), the single-flight gating (`indexing::IndexingState` provides that), the rescan logic itself, the per-encoder fusion refresh a rescan triggers (delegates to `CosineIndex::refresh_if_stale` inside the pipeline's step 7 — see `systems/multi-encoder-fusion.md`).
-- **Public API:** `start(app, paths_to_watch, db_path, indexing_state, fusion) -> Option<WatcherHandle>` where `fusion: Arc<RwLock<HashMap<String, CosineIndex>>>` is the same per-encoder slot map `FusionIndexState` owns, type alias `WatcherHandle = Debouncer<notify::RecommendedWatcher>`.
+- **Public API:** `start(app, paths_to_watch, db_path, indexing_state, fusion) -> Option<WatcherHandle>` and `restart(app, db, db_path, indexing_state, fusion, slot)` — restart re-reads the enabled root list from the DB, rebuilds via `start`, and swaps the managed `Mutex<Option<WatcherHandle>>` slot; `fusion: Arc<RwLock<HashMap<String, CosineIndex>>>` is the same per-encoder slot map `FusionIndexState` owns, type alias `WatcherHandle = Debouncer<notify::RecommendedWatcher>`.
 
 > **1514a90 (2026-07 perf round):** the parameter used to be `cosine_index: Arc<Mutex<CosineIndex>>` — the single primary index the pipeline populated and every legacy search command read. That primary index (`CosineIndexState`) was removed outright; every search command borrows the fusion slots now, so `watcher::start` (and every function it forwards to: `try_spawn_pipeline` / `run_pipeline_inner` / `run_encoder_phase`) was re-typed onto `Arc<RwLock<HashMap<String, CosineIndex>>>` instead. The watcher itself does nothing with the map beyond passing it through to `try_spawn_pipeline` on each debounce fire — see "Rescan trigger" below.
 
@@ -131,7 +131,6 @@ None.
 
 ## Planned / Missing / Likely Changes
 
-- **Rebuild watcher on root changes.** After `add_root` / `remove_root` / `set_root_enabled` succeeds, drop the old `WatcherHandle` from the Mutex slot and call `watcher::start(...)` again with the new enabled-root list. Today's gap is acknowledged in the source comment block at the top of `watcher.rs`. Estimated effort: small — the Mutex<Option<...>> is the right shape, just needs the swap.
 - **Per-root debounce windows.** A single 5s debounce works for the common case but a heavy ingest (dropping 1000 photos) could produce one rescan trigger 5s after the last file lands; 5s is a long time to wait for "I just added a photo and want to see it." Adaptive debounce (smaller window for small bursts, larger for large) is possible but not currently warranted.
 - **Filter events by extension.** Notify reports every metadata change including `.DS_Store`, `Thumbs.db`, etc. Today the filtering happens in the indexing pipeline (the scanner ignores non-image extensions). A pre-filter in the watcher closure could short-circuit the spawn-then-discard path if no image extensions changed.
 

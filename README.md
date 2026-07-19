@@ -25,7 +25,7 @@ Everything runs locally. Embeddings are generated on your machine using ONNX Run
 - **Infinite scroll** with virtualised loading via TanStack Query
 - **Adjustable column count, tile scale, and animation level**
 - **Shuffle-on-entry feed** — the grid shuffles fresh each time you open it or return from a search, and newly-indexed images pop into place as their thumbnails finish, without existing tiles ever jumping
-- **Drag-to-reorder and smooth drag-to-resize** — drag any tile to reposition it within the current view, or grab any of its four corners to resize it smoothly (it snaps to a whole column span on release); aspect ratio is always preserved, and a stretched tile automatically loads a higher-resolution thumbnail so it stays crisp
+- **Drag-to-reorder and smooth drag-to-resize** — drag any tile (including 2×2/3×3 spans) to reposition it, or grab any of its four corners to resize it smoothly (it snaps to a whole column span on release); a live placeholder telegraphs the landing slot and the tile settles exactly where the preview showed, with neighbours packing densely around user-placed tiles; aspect ratio is always preserved, and a stretched tile automatically loads a higher-resolution thumbnail so it stays crisp
 - **Hover micro-interactions** (toggleable for low-power preference)
 - **Fullscreen modal inspector** with prev/next navigation, keyboard shortcuts, and inline tag/note editing
 - **Slideshow mode** — fullscreen auto-advancing slideshow over any view: main feed, tag-filtered results, or search results

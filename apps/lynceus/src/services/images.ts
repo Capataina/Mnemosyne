@@ -7,7 +7,7 @@ import {
   ImageItem,
   SimilarImageItem,
 } from "../types";
-import { perfInvoke } from "./perf";
+import { perfInvoke, recordAction } from "./perf";
 import { formatApiError } from "./apiError";
 
 // Placeholder dimensions used when an image hasn't been thumbnailed
@@ -281,7 +281,14 @@ export interface PreviewBucketStat {
  */
 export async function fetchPreviewBreakdown(): Promise<PreviewBucketStat[]> {
   try {
-    return await invoke<PreviewBucketStat[]>("get_preview_breakdown");
+    const tiers = await invoke<PreviewBucketStat[]>("get_preview_breakdown");
+    // Every fetch lands in the profiling timeline (no-op outside
+    // profiling mode): per-tier done/eligible with timestamps is the
+    // evidence trail for any "previews look wrong" report.
+    recordAction("preview_breakdown", {
+      tiers: tiers.map((t) => `${t.width}:${t.done}/${t.eligible}`).join(" "),
+    });
+    return tiers;
   } catch (error) {
     throw new Error(formatApiError(error));
   }

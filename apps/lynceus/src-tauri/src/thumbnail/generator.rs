@@ -193,9 +193,9 @@ impl ThumbnailGenerator {
         image_id: i64,
         root_id: Option<i64>,
         bucket_widths: &[u32],
-    ) -> Result<usize, Box<dyn Error>> {
+    ) -> Result<Vec<u32>, Box<dyn Error>> {
         let Some(&max_bucket) = bucket_widths.iter().max() else {
-            return Ok(0); // No buckets requested.
+            return Ok(Vec::new()); // No buckets requested.
         };
         let dir = self.resolve_root_dir(root_id)?;
 
@@ -208,7 +208,7 @@ impl ThumbnailGenerator {
             .filter(|w| !dir.join(format!("thumb_{image_id}_{w}.jpg")).exists())
             .collect();
         if missing.is_empty() {
-            return Ok(0);
+            return Ok(Vec::new());
         }
 
         // One decode at the largest requested resolution; every smaller
@@ -216,7 +216,7 @@ impl ThumbnailGenerator {
         let (rgb, original_width, original_height) =
             self.decode_source(image_path, max_bucket)?;
 
-        let mut written = 0usize;
+        let mut written: Vec<u32> = Vec::new();
         for w in missing {
             // Skip buckets at or above the source width — the original is
             // served there (no upscale, no file), per get_thumbnail. A
@@ -230,13 +230,13 @@ impl ThumbnailGenerator {
             let resized = self.resize_with_fir(&rgb, thumb_width, thumb_height)?;
             image::DynamicImage::ImageRgb8(resized)
                 .save_with_format(&out_path, image::ImageFormat::Jpeg)?;
-            written += 1;
+            written.push(w);
         }
 
         debug!(
             "Eager buckets for {}: {} written ({}x{} source)",
             image_path.file_name().unwrap_or_default().to_string_lossy(),
-            written,
+            written.len(),
             original_width,
             original_height
         );

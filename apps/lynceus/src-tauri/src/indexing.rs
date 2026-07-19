@@ -929,16 +929,31 @@ fn run_pipeline_inner(
             Some("Preparing larger previews".into()),
         );
 
+        // Per-bucket written totals, aggregated across workers and logged
+        // at pass end — the "how many of each size did this run actually
+        // produce" evidence a live desync report needed and couldn't get.
+        let bucket_totals =
+            std::sync::Mutex::new(std::collections::BTreeMap::<u32, usize>::new());
         let run_preview = || {
             needs_thumbs.par_iter().for_each(|image| {
                 let root_id = path_to_root.get(&image.path).copied().flatten();
-                if let Err(e) = thumbnail_generator.generate_buckets(
+                match thumbnail_generator.generate_buckets(
                     Path::new(&image.path),
                     image.id,
                     root_id,
                     eager_buckets,
                 ) {
-                    warn!("eager bucket generation failed for {}: {e}", image.path);
+                    Ok(widths) => {
+                        if !widths.is_empty() {
+                            let mut totals = bucket_totals.lock().unwrap();
+                            for w in widths {
+                                *totals.entry(w).or_insert(0) += 1;
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        warn!("eager bucket generation failed for {}: {e}", image.path);
+                    }
                 }
 
                 let done = completed.fetch_add(1, Ordering::Relaxed) + 1;
@@ -972,6 +987,20 @@ fn run_pipeline_inner(
                 warn!("preview thread pool build failed ({e}); using the global pool");
                 run_preview();
             }
+        }
+
+        let totals = bucket_totals.lock().unwrap();
+        if totals.is_empty() {
+            info!("eager preview pass wrote nothing — every bucket already cached or capped");
+        } else {
+            info!(
+                "eager preview pass wrote {}",
+                totals
+                    .iter()
+                    .map(|(w, c)| format!("{c}×{w}px"))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            );
         }
     }
 

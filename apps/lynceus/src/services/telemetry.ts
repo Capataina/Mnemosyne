@@ -678,6 +678,11 @@ function captureStateBundle(queryClient: QueryClient, reason: string): void {
     dom: serialiseDomOutline(document.body),
     queries: summariseQueries(queryClient),
     grid: captureGridGeometry(),
+    // Thumbnail/preview coverage at this exact moment — the counts are
+    // non-sensitive numerics, and their absence is what made a
+    // "previews look wrong" report undiagnosable from a bundle alone.
+    pipelineStats: queryClient.getQueryData(["pipelineStats"]) ?? null,
+    previewBreakdown: queryClient.getQueryData(["previewBreakdown"]) ?? null,
   });
 }
 

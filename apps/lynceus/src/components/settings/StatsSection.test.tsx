@@ -1,6 +1,14 @@
 import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
+const indexingStatus = {
+  isIndexing: false,
+  phase: "ready" as string,
+  message: null,
+  eventFraction: null,
+  overall: null,
+};
+
 vi.mock("../../hooks/useIndexingStatus", () => ({
   usePipelineStats: () => ({
     total_images: 100,
@@ -8,6 +16,7 @@ vi.mock("../../hooks/useIndexingStatus", () => ({
     with_embedding_per_encoder: [],
     orphaned: 0,
   }),
+  useIndexingStatus: () => indexingStatus,
 }));
 
 const usePreviewBreakdown = vi.fn((enabled: boolean) => ({
@@ -50,5 +59,31 @@ describe("StatsSection preview breakdown", () => {
     // Per-tier denominators are ELIGIBLE counts, not the library total.
     expect(screen.getByText("40 of 60 images")).toBeDefined();
     expect(screen.getByText("2 of 5 images")).toBeDefined();
+  });
+
+  it("narrates incomplete tiers against the live pipeline phase", () => {
+    // Larger previews generate LAST — without narration, incomplete
+    // tiers during encoding read as broken zeros (the live report).
+    indexingStatus.isIndexing = true;
+    indexingStatus.phase = "encode";
+    const encoding = render(<StatsSection />);
+    fireEvent.click(
+      encoding.getByRole("button", { name: /Images with previews/ }),
+    );
+    expect(
+      encoding.getAllByText(/queued — runs after encoding/).length,
+    ).toBeGreaterThan(0);
+    encoding.unmount();
+
+    indexingStatus.phase = "previews";
+    const generating = render(<StatsSection />);
+    fireEvent.click(
+      generating.getByRole("button", { name: /Images with previews/ }),
+    );
+    expect(generating.getAllByText(/generating now/).length).toBeGreaterThan(0);
+    generating.unmount();
+
+    indexingStatus.isIndexing = false;
+    indexingStatus.phase = "ready";
   });
 });

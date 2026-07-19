@@ -168,14 +168,14 @@ fn eager_buckets_are_written_capped_at_source_width() {
     for (path, id) in [(&big, 1i64), (&mid, 2), (&small, 3)] {
         generator.generate_thumbnail(path, id, None).unwrap();
         let written = generator.generate_buckets(path, id, None, &eager).unwrap();
-        // big writes 3, mid writes 2, small writes 0 — the return count
-        // tracks the cap too.
-        let expected = match id {
-            1 => 3,
-            2 => 2,
-            _ => 0,
+        // big writes all three, mid writes two, small writes none — the
+        // returned widths track the source-width cap too.
+        let expected: Vec<u32> = match id {
+            1 => vec![960, 1440, 2048],
+            2 => vec![960, 1440],
+            _ => vec![],
         };
-        assert_eq!(written, expected, "bucket write count for id {id}");
+        assert_eq!(written, expected, "bucket widths written for id {id}");
     }
 
     let has = |name: &str| thumb_dir.join(name).exists();
@@ -204,7 +204,7 @@ fn eager_buckets_are_written_capped_at_source_width() {
     // Idempotent: a second eager pass writes nothing (all cached).
     for (path, id) in [(&big, 1i64), (&mid, 2), (&small, 3)] {
         let rewritten = generator.generate_buckets(path, id, None, &eager).unwrap();
-        assert_eq!(rewritten, 0, "second pass must be a pure cache hit for id {id}");
+        assert!(rewritten.is_empty(), "second pass must be a pure cache hit for id {id}");
     }
 }
 

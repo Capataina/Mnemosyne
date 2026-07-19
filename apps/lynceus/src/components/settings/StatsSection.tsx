@@ -1,7 +1,10 @@
 import { useState } from "react";
 import { ChevronDown } from "lucide-react";
 import { useConfirm } from "@/components/ui/confirm";
-import { usePipelineStats } from "../../hooks/useIndexingStatus";
+import {
+  useIndexingStatus,
+  usePipelineStats,
+} from "../../hooks/useIndexingStatus";
 import {
   usePreviewBreakdown,
   usePurgeOrphanedImages,
@@ -44,6 +47,7 @@ export function StatsSection() {
   const purgeOrphanedMutation = usePurgeOrphanedImages();
   const [previewsOpen, setPreviewsOpen] = useState(false);
   const breakdown = usePreviewBreakdown(previewsOpen);
+  const { isIndexing, phase } = useIndexingStatus();
 
   async function handleCleanUpOrphaned(orphanedCount: number) {
     const confirmed = await confirm({
@@ -178,11 +182,29 @@ export function StatsSection() {
                       tier.eligible > 0
                         ? Math.round((tier.done / tier.eligible) * 100)
                         : 100;
+                    // Larger sizes are deliberately generated LAST in the
+                    // pipeline (base → encode → search-ready → previews),
+                    // so an incomplete tier mid-run is expected state —
+                    // say so, or a wall of 0% bars during encoding reads
+                    // as broken (the exact live report this fixes).
+                    const incomplete =
+                      tier.width !== 480 && tier.done < tier.eligible;
+                    const status = !incomplete
+                      ? null
+                      : phase === "previews"
+                        ? "generating now…"
+                        : isIndexing
+                          ? "queued — runs after encoding"
+                          : null;
                     return (
                       <ProgressRow
                         key={tier.width}
                         label={labels.name}
-                        description={labels.description}
+                        description={
+                          status
+                            ? `${labels.description} · ${status}`
+                            : labels.description
+                        }
                         done={tier.done}
                         total={tier.eligible}
                         pct={pct}

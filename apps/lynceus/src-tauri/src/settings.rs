@@ -90,6 +90,20 @@ pub const DEFAULT_ENABLED_ENCODERS: &[&str] =
     &["clip_vit_b_32", "siglip2_base", "dinov2_base"];
 
 impl Settings {
+    /// The effective model precision: the configured value, defaulting
+    /// to "int8" — the store build bundles ONLY the int8 model files
+    /// (a quarter the size of fp32, quality validated by the
+    /// quantisation round), so int8 must be what a fresh install with
+    /// no settings.json resolves to. `model_path_for` still falls back
+    /// to the fp32 base file when a quantised variant is missing, so
+    /// dev checkouts with only fp32 weights keep working.
+    pub fn effective_model_precision(&self) -> String {
+        self.model_precision
+            .clone()
+            .unwrap_or_else(|| "int8".to_string())
+    }
+
+
     /// Returns the resolved enabled-encoder list. Falls back to
     /// `DEFAULT_ENABLED_ENCODERS` when the user hasn't set a preference.
     /// Filters out empty strings so a corrupt settings.json with

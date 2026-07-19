@@ -287,8 +287,7 @@ fn run_pipeline_inner(
     {
         let models_dir = paths::models_dir();
         let model_precision = crate::settings::Settings::load()
-            .model_precision
-            .unwrap_or_default();
+            .effective_model_precision();
         // Bind the State separately so its lifetime extends across
         // the full block. Inlining `app.state::<TextEncoderState>()
         // .encoder.lock()` produces a temporary that the borrow
@@ -664,8 +663,7 @@ fn run_pipeline_inner(
     // already sees thumbnails as they generate via the foreground
     // get_images polling, so the latency cost is small.
     let model_precision = crate::settings::Settings::load()
-        .model_precision
-        .unwrap_or_default();
+        .effective_model_precision();
     let image_model_path =
         paths::model_path_for(crate::model_download::CLIP_VISION_FILENAME, &model_precision);
 
@@ -1150,7 +1148,7 @@ fn run_encoder_phase(
     let settings = crate::settings::Settings::load();
     let enabled = settings.resolved_enabled_encoders();
     info!("encoder phase: enabled = {enabled:?}");
-    let model_precision = settings.model_precision.unwrap_or_default();
+    let model_precision = settings.effective_model_precision();
 
     let siglip2_path = paths::model_path_for(
         crate::similarity_and_semantic_search::encoder_siglip2::SIGLIP2_IMAGE_MODEL_FILENAME,

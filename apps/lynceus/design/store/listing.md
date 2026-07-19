@@ -101,7 +101,7 @@ every category.
   build; three paragraphs: nothing collected, everything local, models
   downloaded once)
 
-## Screenshot plan (sizes TBC against current requirements)
+## Screenshot plan (2880×1800 native Retina PNG, alpha flattened — per Apple's current spec)
 
 | # | Shot | Why it sells |
 |---|---|---|

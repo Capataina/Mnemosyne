@@ -19,3 +19,26 @@ lynceus-dev-telemetry:
 lynceus-release:
     bash scripts/start_lynceus.sh release
 
+# Build the store-shaped .app bundle (sandbox entitlements wired via
+# tauri.conf.json) and sign it AD-HOC for local sandbox testing. This is
+# the "does the app work inside the App Store's padded room" check — it
+# needs no Apple account. Bookmarks persist across relaunches of the
+# SAME binary; only rebuilds break ad-hoc bookmark identity.
+lynceus-sandbox-test:
+    cd apps/lynceus && pnpm tauri build --bundles app
+    codesign --force --deep --sign -       --entitlements apps/lynceus/src-tauri/Entitlements.plist       "target/release/bundle/macos/Lynceus.app"
+    codesign --display --entitlements -       "target/release/bundle/macos/Lynceus.app"
+    open "target/release/bundle/macos/Lynceus.app"
+
+# Mac App Store build + package — the real thing, once the Apple
+# Developer account exists. Fill the two identity strings from
+# Keychain Access after installing the certificates, and set
+# bundle.macOS.provisioningProfile in tauri.conf.json to the downloaded
+# profile. The .pkg this produces is what Transporter uploads.
+APP_IDENTITY := "Apple Distribution: YOUR NAME (TEAMID)"
+PKG_IDENTITY := "3rd Party Mac Developer Installer: YOUR NAME (TEAMID)"
+lynceus-mas-package:
+    cd apps/lynceus && pnpm tauri build --bundles app
+    codesign --force --deep --sign "{{APP_IDENTITY}}"       --entitlements apps/lynceus/src-tauri/Entitlements.plist       "target/release/bundle/macos/Lynceus.app"
+    xcrun productbuild --sign "{{PKG_IDENTITY}}"       --component "target/release/bundle/macos/Lynceus.app" /Applications       "target/release/bundle/macos/Lynceus.pkg"
+

@@ -169,10 +169,18 @@ where
     // Phase 1: figure out which files are missing and how big they are
     // in total. This lets the caller's progress bar be determinate
     // across the whole 2+GB download rather than per-file.
+    //
+    // "Missing" honours the effective precision: the store build ships
+    // ONLY the int8 variants, so a file whose precision variant resolves
+    // (model_path_for returns an existing quantised file) needs no
+    // download even though the fp32 base name is absent. Without this,
+    // a sandboxed store install tried to fetch the whole fp32 set on
+    // every first launch — blocked by the sandbox (no network
+    // entitlement), harmless, but noisy and dishonest in the pill.
+    let precision = crate::settings::Settings::load().effective_model_precision();
     let mut to_download: Vec<(&str, &str, u64)> = Vec::new();
     for (url, filename) in targets {
-        let dest = models_dir.join(filename);
-        if dest.exists() {
+        if crate::paths::model_path_for_in(&models_dir, filename, &precision).exists() {
             continue;
         }
         let size = head_content_length(url).unwrap_or(0);

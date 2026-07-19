@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- The App Sandbox master switch — required for every Mac App
+	     Store app. Everything the app touches outside its own container
+	     must be granted by one of the entitlements below. -->
+	<key>com.apple.security.app-sandbox</key>
+	<true/>
+	<!-- Read-only access to folders the user picks in the system Open
+	     panel. Lynceus never writes into user folders — its database,
+	     previews, and models all live in the app's own container, which
+	     the sandbox grants by default with no entitlement. -->
+	<key>com.apple.security.files.user-selected.read-only</key>
+	<true/>
+	<!-- App-scoped security-scoped bookmarks: lets the folder access
+	     the user granted persist across relaunches (security_scope.rs
+	     creates/resolves these). Without this key, every launch would
+	     re-ask for every folder. -->
+	<key>com.apple.security.files.bookmarks.app-scope</key>
+	<true/>
+	<!-- Deliberately ABSENT: com.apple.security.network.client. The
+	     store build bundles the AI models as resources, so the app makes
+	     zero network requests — and the sandbox now enforces that,
+	     which is the strongest possible form of the privacy claim. -->
+</dict>
+</plist>

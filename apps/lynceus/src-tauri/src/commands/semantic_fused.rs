@@ -311,8 +311,7 @@ fn encode_query(
             if lock.is_none() {
                 let models_dir = paths::models_dir();
                 let model_precision = crate::settings::Settings::load()
-                    .model_precision
-                    .unwrap_or_default();
+                    .effective_model_precision();
                 let model_path = paths::model_path_for(
                     crate::model_download::CLIP_TEXT_FILENAME,
                     &model_precision,
@@ -332,8 +331,7 @@ fn encode_query(
             if lock.is_none() {
                 let models_dir = paths::models_dir();
                 let model_precision = crate::settings::Settings::load()
-                    .model_precision
-                    .unwrap_or_default();
+                    .effective_model_precision();
                 let model_path =
                     paths::model_path_for(SIGLIP2_TEXT_MODEL_FILENAME, &model_precision);
                 let tokenizer_path = models_dir.join(SIGLIP2_TOKENIZER_FILENAME);

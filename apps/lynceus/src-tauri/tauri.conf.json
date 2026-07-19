@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "Lynceus",
-  "version": "0.7.12",
+  "version": "0.7.13",
   "identifier": "com.ataca.lynceus",
   "build": {
     "beforeDevCommand": "pnpm run dev",
@@ -32,6 +32,11 @@
   "bundle": {
     "active": true,
     "targets": "all",
+    "category": "GraphicsAndDesign",
+    "macOS": {
+      "entitlements": "./Entitlements.plist",
+      "minimumSystemVersion": "12.0"
+    },
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
@@ -40,7 +45,13 @@
       "icons/icon.ico"
     ],
     "resources": {
-      "../../../models/image": "models"
+      "../../../models/image/clip_vision_int8.onnx": "models/clip_vision_int8.onnx",
+      "../../../models/image/clip_text_int8.onnx": "models/clip_text_int8.onnx",
+      "../../../models/image/clip_tokenizer.json": "models/clip_tokenizer.json",
+      "../../../models/image/siglip2_vision_int8.onnx": "models/siglip2_vision_int8.onnx",
+      "../../../models/image/siglip2_text_int8.onnx": "models/siglip2_text_int8.onnx",
+      "../../../models/image/siglip2_tokenizer.json": "models/siglip2_tokenizer.json",
+      "../../../models/image/dinov2_base_image_int8.onnx": "models/dinov2_base_image_int8.onnx"
     }
   }
 }

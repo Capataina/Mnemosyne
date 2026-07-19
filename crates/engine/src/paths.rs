@@ -242,7 +242,20 @@ pub fn models_dir() -> PathBuf {
 /// fp32" as a one-time settings-drawer notice rather than silently
 /// falling back; not done here since there's no UI surface for it yet.
 pub fn model_path_for(base_filename: &str, precision: &str) -> PathBuf {
-    let dir = models_dir();
+    model_path_for_in(&models_dir(), base_filename, precision)
+}
+
+/// Same precision-variant resolution as `model_path_for`, against an
+/// explicit directory — for callers that already hold a models dir.
+/// The first-launch presence check uses this so "is this model
+/// satisfied" is judged by the same rule the loaders use; without it, a
+/// store build shipping only int8 files looked perpetually incomplete
+/// and tried to download the whole fp32 set on every launch.
+pub fn model_path_for_in(
+    dir: &std::path::Path,
+    base_filename: &str,
+    precision: &str,
+) -> PathBuf {
     let suffix = match precision {
         "fp16" => "_fp16",
         "int8" => "_int8",

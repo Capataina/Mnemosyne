@@ -1,0 +1,118 @@
+# Lynceus — App Store release runbook (plain English)
+
+> Written 2026-07-19. This is the "what actually happens and who does
+> what" guide for putting Lynceus on the Mac App Store, assuming no
+> prior experience with Apple's release machinery. Jargon is defined
+> the first time it appears and never assumed.
+
+## The five words you need
+
+- **Code signing** — a cryptographic wax seal on the app proving who
+  made it and that nobody tampered with it. macOS checks the seal every
+  launch. Seals come from **certificates** that Apple issues to
+  enrolled developers.
+- **Entitlements** — a permission slip bundled inside the app listing
+  exactly what it's allowed to do (read user-picked folders, remember
+  them, and nothing else). Ours is
+  `apps/lynceus/src-tauri/Entitlements.plist` — three permissions, all
+  commented.
+- **App Sandbox** — the padded room every App Store app must run in.
+  The app can freely use its own private folder (where the library
+  index, previews, and AI models live) but can touch nothing else
+  except what the entitlements grant. Required for the store; also the
+  strongest form of our privacy pitch — with no network permission in
+  the slip, the OS itself enforces "nothing ever leaves your Mac".
+- **Provisioning profile** — a laminated pass from Apple tying together
+  your identity, the app's ID (com.ataca.lynceus), and its permission
+  slip. Downloaded from Apple's site, referenced in the build config.
+- **App Review** — the human + automated check Apple runs after you
+  upload. Store apps do NOT need "notarisation" (that's the separate
+  seal-checking service for apps distributed outside the store) —
+  review replaces it.
+
+## What is already done (nothing here needs you)
+
+| Piece | State |
+|---|---|
+| Real app icon, all sizes | ✅ generated from the ringed-almond mark |
+| Entitlements (permission slip) | ✅ written, three permissions, commented |
+| Build config (`tauri.conf.json`) | ✅ sandbox wired, category Graphics & Design, minimum macOS 12 |
+| Store-shaped build recipe | ✅ `just lynceus-sandbox-test` (free local test) and `just lynceus-mas-package` (the real thing, two blanks to fill) |
+| AI models bundled inside the app | ✅ so the shipped app makes zero network requests |
+| Listing copy (name, description, keywords) | ✅ drafted — `listing.md` next to this file, awaiting your sign-off |
+| Support + privacy pages | ✅ built into the capataina.dev site (deploy pending) |
+| Sandbox smoke test | ✅/⏳ app boots and runs inside the sandbox; the folder-permission persistence check is a 5-minute live test with you (below) |
+
+## The 5-minute live test (you + me, before paying Apple anything)
+
+The one thing only a human can do: grant a folder through the system
+picker inside the sandboxed build.
+
+1. I build and launch the sandboxed app (`just lynceus-sandbox-test`).
+2. You: add a folder, watch it index, quit the app fully (⌘Q).
+3. You: reopen the same app. **The folder should load without asking
+   again.** That single observation proves the whole
+   remember-my-folders machinery works inside the padded room.
+
+One caveat from research: with the free local signing we use for this
+test, that memory survives relaunches but not REBUILDS of the app —
+that's a known property of test signing, not a bug. The real
+certificate makes it permanent.
+
+## What you do, when you're ready (~1 hour of your time + waiting)
+
+1. **Enrol**: developer.apple.com → Account → enrol in the Apple
+   Developer Program as an individual. $99/year. Approval usually
+   24–48h. ⚠️ Your **legal name** (not "Capataina") appears as the
+   seller on the store listing for individual accounts — decide if
+   that's fine before paying.
+2. **Two certificates** (Apple's site → Certificates): "Apple
+   Distribution" (seals the app) and "Mac Installer Distribution"
+   (seals the installer package). Xcode can generate both for you via
+   Settings → Accounts → Manage Certificates.
+3. **One provisioning profile** (Apple's site → Profiles): type
+   "Mac App Store", for App ID com.ataca.lynceus. Download it.
+4. Tell me — I fill the two identity names into the justfile, point
+   the config at the profile, and run `just lynceus-mas-package`. Out
+   comes `Lynceus.pkg`: the sealed box we upload.
+5. **App Store Connect** (appstoreconnect.apple.com): create the app
+   record, paste the listing copy, upload screenshots (spec below),
+   set the privacy answers to **"Data Not Collected"** everywhere
+   (true, and OS-enforced), add the support + privacy URLs, pick the
+   price.
+6. **Upload**: Apple's free "Transporter" app from the Mac App Store —
+   drag the .pkg in, press Deliver.
+7. **Submit for review.** First reviews typically take 1–2 days;
+   first-time apps often get one bounce-and-fix round — normal, not
+   failure. Realistic end-to-end: about a week; budget two.
+
+## Screenshots (spec, from Apple's current rules)
+
+- Native Retina resolution — **2880×1800** for a full-screen capture on
+  this MacBook Pro.
+- PNG with **no transparency** (alpha channel must be flattened, or the
+  upload is rejected).
+- The six planned shots are in `listing.md`; capture once the library
+  is dressed with good art.
+
+## Decisions still open (yours)
+
+1. **Price** — see the pricing block in `listing.md` (recommendation:
+   paid up front with a launch price).
+2. **Apple Silicon only vs Intel too** — recommendation: Apple Silicon
+   only at launch (every Mac since 2020; halves build complexity); the
+   store simply lists the requirement. Intel can be added later.
+3. **Seller name** — the legal-name point in step 1 above.
+
+## Known watch-items (flagged honestly)
+
+- The "folder memory survives under the REAL certificate" check
+  (runbook step 4) re-runs the 5-minute live test once — research
+  says it will pass, but it's inference until observed.
+- Apple's per-file upload size cap for macOS builds is unconfirmed
+  (iOS's cap is 4GB; our .pkg with bundled models will be well under
+  half that, so this is a note, not a worry).
+- If review ever mentions "privacy manifests" for third-party
+  libraries: that rule mostly targets iOS SDKs; our dependencies are
+  Rust crates compiled into one binary. Handle if raised, don't
+  pre-engineer.

@@ -342,7 +342,6 @@ Override the state directory with `LYNCEUS_DATA_DIR`, and the model-weights dire
 |--------|---------|
 | [`README.md`](./README.md) | This file — project intent, features, usage, high-level architecture |
 | [`docs/`](./docs/) | Durable architecture, engineering decisions, research, proposals, plans, and audit history; operational constraints live in per-folder `CLAUDE.md` files |
-| [`learning/`](./learning/) | Teaching material covering the project and surrounding domain (CLIP, DINOv2, SigLIP-2, RRF, Tauri, ONNX Runtime, …) |
 
 ---
 

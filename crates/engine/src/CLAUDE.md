@@ -4,15 +4,33 @@ Engine public composition plus asset identity, paths, performance, tags, and sim
 
 ## Map
 
-- `lib.rs` — crate doc (the canonical statement of what is engine-side vs product-side) and the module list; nothing else lives here.
-- `db/` — SQLite catalogue: schema, migrations, all persistence queries (own CLAUDE.md).
-- `cosine/` — retrieval: flat stores, cosine index, RRF fusion, filename matching, diagnostics (own CLAUDE.md).
-- `cosine_similarity.rs` — re-export shim preserving the pre-split `crate::cosine_similarity::CosineIndex` import path; add nothing here.
-- `content_hash.rs` — streamed BLAKE3 `hash_file` (64 KiB chunks), the content fingerprint behind move/rename relinking; BLAKE3 over SHA-256 for throughput, since a first index hashes the whole library. The DB side lives in `db/content_hash.rs`.
-- `image_struct.rs` / `root_struct.rs` / `tag_struct.rs` — serde row shapes the catalogue stores; a root is a user-added folder toggleable without losing its index.
-- `paths.rs` — platform data-dir resolution and the `Settings` struct; every state path in the app goes through here (see below).
-- `perf.rs` — opt-in tracing Layer: per-span-name aggregates plus a recent- sample ringbuffer for on-demand p50/p95; one process-global enable flag set once at startup (see Profiling below).
-- `perf_report.rs` — pure renderer: `timeline.jsonl` + the aggregate snapshot → `report.md` + `raw.json` in the session's export dir.
+```
+src/
+├── lib.rs                  crate doc (the canonical statement of what is engine-side vs
+│                           product-side) and the module list; nothing else lives here.
+├── db/                     SQLite catalogue: schema, migrations, all persistence queries
+│                           (own CLAUDE.md).
+├── cosine/                 retrieval: flat stores, cosine index, RRF fusion, filename
+│                           matching, diagnostics (own CLAUDE.md).
+├── cosine_similarity.rs    re-export shim preserving the pre-split
+│                           `crate::cosine_similarity::CosineIndex` import path; add
+│                           nothing here.
+├── content_hash.rs         streamed BLAKE3 `hash_file` (64 KiB chunks), the content
+│                           fingerprint behind move/rename relinking; BLAKE3 over SHA-256
+│                           for throughput, since a first index hashes the whole library.
+│                           The DB side lives in `db/content_hash.rs`.
+├── image_struct.rs / root_struct.rs / tag_struct.rs
+│                           serde row shapes the catalogue stores; a root is a user-added
+│                           folder toggleable without losing its index.
+├── paths.rs                platform data-dir resolution and the `Settings` struct; every
+│                           state path in the app goes through here (see below).
+├── perf.rs                 opt-in tracing Layer: per-span-name aggregates plus a
+│                           recent-sample ringbuffer for on-demand p50/p95; one
+│                           process-global enable flag set once at startup (see Profiling
+│                           below).
+└── perf_report.rs          pure renderer: `timeline.jsonl` + the aggregate snapshot →
+                            `report.md` + `raw.json` in the session's export dir.
+```
 
 ## Paths and state (`paths.rs`)
 

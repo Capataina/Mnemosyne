@@ -15,17 +15,18 @@ Version **0.7.14** — kept in lockstep across `package.json`, `src-tauri/Cargo.
 ## Map
 
 ```
-design/            brand mark + App Store materials (see design/CLAUDE.md)
-src/               React frontend (see src/CLAUDE.md)
-src-tauri/         Rust app crate; Entitlements.plist, tauri.conf.json, icons/
-public/            static assets served by Vite — only the vite.svg scaffold file today
-dist/              built frontend (gitignored output), what src-tauri bundles
-index.html         Vite entry
-package.json       lynceus-ui manifest, v0.7.14; dev/build/test/tauri scripts
-vite.config.ts     Vite + React + Tailwind 4 + vite-plugin-pages
-vitest.config.ts   happy-dom test environment
-components.json    shadcn/ui generator config
-tsconfig.json / tsconfig.node.json
+apps/lynceus/
+├── design/            brand mark + App Store materials (see design/CLAUDE.md)
+├── src/               React frontend (see src/CLAUDE.md)
+├── src-tauri/         Rust app crate; Entitlements.plist, tauri.conf.json, icons/
+├── public/            static assets served by Vite — only the vite.svg scaffold file today
+├── dist/              built frontend (gitignored output), what src-tauri bundles
+├── index.html         Vite entry
+├── package.json       lynceus-ui manifest, v0.7.14; dev/build/test/tauri scripts
+├── vite.config.ts     Vite + React + Tailwind 4 + vite-plugin-pages
+├── vitest.config.ts   happy-dom test environment
+├── components.json    shadcn/ui generator config
+└── tsconfig.json / tsconfig.node.json
 ```
 
 ## Commands

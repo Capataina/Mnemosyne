@@ -13,8 +13,13 @@ Domain types are named `Image*` for the image vertical for now; the recorded dec
 
 ## Map
 
-- `Cargo.toml` — package `mnemosyne` v0.5.4; notable deps: rusqlite (bundled), memmap2 (mmap stores, confined to cosine/cache.rs), blake3 (relink hashing), rayon, ndarray, tracing. Dep comments carry rationale.
-- `src/` — the whole implementation; see `src/CLAUDE.md` for the module map.
+```
+engine/
+├── Cargo.toml   package `mnemosyne` v0.5.4; notable deps: rusqlite (bundled), memmap2
+│                (mmap stores, confined to cosine/cache.rs), blake3 (relink hashing),
+│                rayon, ndarray, tracing. Dep comments carry rationale.
+└── src/         the whole implementation; see `src/CLAUDE.md` for the module map.
+```
 
 ## Current state — 2026-08-02
 

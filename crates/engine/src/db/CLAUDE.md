@@ -4,17 +4,50 @@ SQLite schema/migrations and persistence queries for assets, roots, embeddings, 
 
 ## Map
 
-- `mod.rs` — the struct, `type ID = i64`, connection management, and `initialize()`: schema creation, pragmas, indexes, migrations, and the dual-connection topology (writer + read-only secondary).
-- `schema_migrations.rs` — idempotent ALTER TABLE helpers, each gated by a `PRAGMA table_info` check so it only fires when the column is missing; safe to run every launch. New columns for old DBs go here, never inline. Also `migrate_embedding_pipeline_version` (see below).
-- `images_query.rs` — the grid SELECTs (largest submodule, ~1.5k lines); four queries share one images↔images_tags↔tags row shape rolled up by `aggregate_image_rows` (extracted from 4 duplicated ~25-line copies). Includes the manifest-first feed reads, chunked details-by-ID fetches, batch search-result hydration (`get_images_metadata_for_ids`), `get_pipeline_stats`, and `embedding_generation_token`.
-- `notes_orphans.rs` — `add_image` (single-row `INSERT OR IGNORE`, now the NULL-hash fallback), `add_images_batch` (superseded — see Traps), per-image notes, `mark_orphaned`, `purge_orphaned` + `list_orphaned_locations` (the orphan lifecycle).
-- `content_hash.rs` — the DB side of move relinking: store `(size, content_hash)`, and `relink_or_insert` matching orphaned rows in an IMMEDIATE transaction, lowest-id-first. Hashing itself is `crate::content_hash`.
-- `embeddings.rs` — per-encoder embeddings as raw LE f32 BLOBs via `bytemuck::cast_slice`, single-SELECT bulk reads for the cosine stores, and `upsert_embeddings_batch` (the encoder pipeline's batched write).
-- `roots.rs` — roots CRUD; `images.root_id` FK with `ON DELETE CASCADE`; macOS security-scoped bookmark storage (`roots.bookmark BLOB`, NULL on other platforms); `migrate_legacy_scan_root`, `wipe_images_for_new_root`.
-- `tags.rs` — tag catalogue + `images_tags` many-to-many mutations + `get_tag_counts`; the JOINing feed reads live in `images_query.rs`.
-- `manual_layout.rs` — drag-reorder/resize persistence; `set_manual_order` rewrites the whole visible ordering 0..N-1 instead of fractional indexing.
-- `thumbnails.rs` — thumbnail path + original dimensions (generation itself is product-side).
-- `test_helpers.rs` — shared `fresh_db()` for the submodule tests.
+```
+db/
+├── mod.rs                  the struct, `type ID = i64`, connection management, and
+│                           `initialize()`: schema creation, pragmas, indexes, migrations,
+│                           and the dual-connection topology (writer + read-only
+│                           secondary).
+├── schema_migrations.rs    idempotent ALTER TABLE helpers, each gated by a `PRAGMA
+│                           table_info` check so it only fires when the column is missing;
+│                           safe to run every launch. New columns for old DBs go here,
+│                           never inline. Also `migrate_embedding_pipeline_version` (see
+│                           below).
+├── images_query.rs         the grid SELECTs (largest submodule, ~1.5k lines); four
+│                           queries share one images↔images_tags↔tags row shape rolled up
+│                           by `aggregate_image_rows` (extracted from 4 duplicated
+│                           ~25-line copies). Includes the manifest-first feed reads,
+│                           chunked details-by-ID fetches, batch search-result hydration
+│                           (`get_images_metadata_for_ids`), `get_pipeline_stats`, and
+│                           `embedding_generation_token`.
+├── notes_orphans.rs        `add_image` (single-row `INSERT OR IGNORE`, now the NULL-hash
+│                           fallback), `add_images_batch` (superseded — see Traps),
+│                           per-image notes, `mark_orphaned`, `purge_orphaned` +
+│                           `list_orphaned_locations` (the orphan lifecycle).
+├── content_hash.rs         the DB side of move relinking: store `(size, content_hash)`,
+│                           and `relink_or_insert` matching orphaned rows in an IMMEDIATE
+│                           transaction, lowest-id-first. Hashing itself is
+│                           `crate::content_hash`.
+├── embeddings.rs           per-encoder embeddings as raw LE f32 BLOBs via
+│                           `bytemuck::cast_slice`, single-SELECT bulk reads for the
+│                           cosine stores, and `upsert_embeddings_batch` (the encoder
+│                           pipeline's batched write).
+├── roots.rs                roots CRUD; `images.root_id` FK with `ON DELETE CASCADE`;
+│                           macOS security-scoped bookmark storage (`roots.bookmark BLOB`,
+│                           NULL on other platforms); `migrate_legacy_scan_root`,
+│                           `wipe_images_for_new_root`.
+├── tags.rs                 tag catalogue + `images_tags` many-to-many mutations +
+│                           `get_tag_counts`; the JOINing feed reads live in
+│                           `images_query.rs`.
+├── manual_layout.rs        drag-reorder/resize persistence; `set_manual_order` rewrites
+│                           the whole visible ordering 0..N-1 instead of fractional
+│                           indexing.
+├── thumbnails.rs           thumbnail path + original dimensions (generation itself is
+│                           product-side).
+└── test_helpers.rs         shared `fresh_db()` for the submodule tests.
+```
 
 ## Schema — 6 tables, created/migrated in `initialize()`
 

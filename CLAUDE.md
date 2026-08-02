@@ -25,19 +25,20 @@ One deliberate trade-off rides on the single-user assumption: the Tauri shell ru
 ## Map
 
 ```
-apps/                 product tier — one app per folder (see apps/CLAUDE.md)
-crates/
-  engine/             Mnemosyne the engine, v0.5.4 (own CLAUDE.md tree)
-scripts/              Python/bash helpers: model download/quantize, test corpus, launcher
-models/               gitignored ONNX weights, models/<modality>/ (image|audio|3d);
-                      populated by scripts/download_models.py, bundled by Tauri at build
-justfile              command runner — thin wrappers over scripts/ and cargo/pnpm
-Cargo.toml            Rust workspace: crates/engine + apps/lynceus/src-tauri
-package.json          pnpm monorepo manifest (v0.2.0 — its own version line)
-pnpm-workspace.yaml   packages: apps/*; allows esbuild's postinstall
-README.md             public-facing summary — the one non-CLAUDE.md doc sibling
-target/               shared workspace build dir (gitignored) — bundles land HERE,
-                      target/release/bundle/macos/, not under src-tauri/
+Mnemosyne/
+├── apps/                 product tier — one app per folder (see apps/CLAUDE.md)
+├── crates/
+│   └── engine/           Mnemosyne the engine, v0.5.4 (own CLAUDE.md tree)
+├── scripts/              Python/bash helpers: model download/quantize, test corpus, launcher
+├── models/               gitignored ONNX weights, models/<modality>/ (image|audio|3d);
+│                         populated by scripts/download_models.py, bundled by Tauri at build
+├── justfile              command runner — thin wrappers over scripts/ and cargo/pnpm
+├── Cargo.toml            Rust workspace: crates/engine + apps/lynceus/src-tauri
+├── package.json          pnpm monorepo manifest (v0.2.0 — its own version line)
+├── pnpm-workspace.yaml   packages: apps/*; allows esbuild's postinstall
+├── README.md             public-facing summary — the one non-CLAUDE.md doc sibling
+└── target/               shared workspace build dir (gitignored) — bundles land HERE,
+                          target/release/bundle/macos/, not under src-tauri/
 ```
 
 ## Global commands (verbatim)

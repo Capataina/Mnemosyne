@@ -3,27 +3,28 @@
 Python 3 stdlib-or-near helpers plus the launch wrapper. Nothing here runs in the shipped product; `download_models.py` and `quantize_models.py` produce the weights the Tauri bundler packages.
 
 ```
-download_models.py       fetches every ONNX encoder + tokenizer into models/<modality>/
-                         (--modality image|audio|3d; audio and 3d are empty until
-                         Syrinx/Daedalus exist). All weights commercially licensed —
-                         the non-commercial OpenAI CLIP weights were replaced by the
-                         MIT immich-app LAION-2B re-export at the commercial pivot;
-                         provenance notes live in its docstring
-quantize_models.py       makes lower-precision variants beside the fp32 originals,
-                         additive only. int8: static QDQ calibrated on ~300 real
-                         images (--calibration-dir, Splash Arts corpus), dynamic for
-                         the two text encoders; 1129MB -> 283MB verified with real
-                         ORT forward passes. fp16: see trap below
-download_lol_splashes.py the canonical test corpus: ~1500 LoL splash arts (1280x720
-                         JPG, ~3-4GB) from Riot's public DDragon CDN into
-                         ~/Documents/Splash Arts/ (--output overrides; --workers up
-                         to ~32 tolerated by the CDN); resumable, stdlib-only.
-                         Distinct images, clean CLIP clusters — the shared baseline
-                         for cross-machine search-quality comparison
-start_lynceus.sh         the launcher behind just lynceus-dev/-dev-telemetry/-release;
-                         resolves the repo root, exports LYNCEUS_MODELS_DIR, and
-                         documents the pnpm `--` trap inline. Never invoked directly
-__pycache__/             gitignored bytecode; no memory file, ever
+scripts/
+├── download_models.py         fetches every ONNX encoder + tokenizer into models/<modality>/
+│                              (--modality image|audio|3d; audio and 3d are empty until
+│                              Syrinx/Daedalus exist). All weights commercially licensed —
+│                              the non-commercial OpenAI CLIP weights were replaced by the
+│                              MIT immich-app LAION-2B re-export at the commercial pivot;
+│                              provenance notes live in its docstring
+├── quantize_models.py         makes lower-precision variants beside the fp32 originals,
+│                              additive only. int8: static QDQ calibrated on ~300 real
+│                              images (--calibration-dir, Splash Arts corpus), dynamic for
+│                              the two text encoders; 1129MB -> 283MB verified with real
+│                              ORT forward passes. fp16: see trap below
+├── download_lol_splashes.py   the canonical test corpus: ~1500 LoL splash arts (1280x720
+│                              JPG, ~3-4GB) from Riot's public DDragon CDN into
+│                              ~/Documents/Splash Arts/ (--output overrides; --workers up
+│                              to ~32 tolerated by the CDN); resumable, stdlib-only.
+│                              Distinct images, clean CLIP clusters — the shared baseline
+│                              for cross-machine search-quality comparison
+├── start_lynceus.sh           the launcher behind just lynceus-dev/-dev-telemetry/-release;
+│                              resolves the repo root, exports LYNCEUS_MODELS_DIR, and
+│                              documents the pnpm `--` trap inline. Never invoked directly
+└── __pycache__/               gitignored bytecode; no memory file, ever
 ```
 
 ## Traps

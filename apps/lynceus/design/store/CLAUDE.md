@@ -3,15 +3,16 @@
 The two working documents for putting Lynceus on the Mac App Store.
 
 ```
-listing.md           App Store Connect copy, drafted 2026-07-19: name / subtitle /
-                     promo / description / keywords, each within Apple's hard
-                     character budget (counts inline); categories, privacy label
-                     ("Data Not Collected"), support+privacy URLs (site repo builds
-                     them), six-shot screenshot plan at 2880x1800 flattened PNG,
-                     and the OPEN pricing decision block
-release-runbook.md   plain-English signing/notarisation runbook (2026-07-19) for a
-                     first-time Mac publisher: defines the five terms, tables what
-                     is already done, then the founder's ~1-hour enrolment path
+store/
+├── listing.md           App Store Connect copy, drafted 2026-07-19: name / subtitle /
+│                        promo / description / keywords, each within Apple's hard
+│                        character budget (counts inline); categories, privacy label
+│                        ("Data Not Collected"), support+privacy URLs (site repo builds
+│                        them), six-shot screenshot plan at 2880x1800 flattened PNG,
+│                        and the OPEN pricing decision block
+└── release-runbook.md   plain-English signing/notarisation runbook (2026-07-19) for a
+                         first-time Mac publisher: defines the five terms, tables what
+                         is already done, then the founder's ~1-hour enrolment path
 ```
 
 ## Open decisions (founder's, not the agent's)

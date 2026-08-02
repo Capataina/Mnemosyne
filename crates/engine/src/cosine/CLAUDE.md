@@ -4,15 +4,54 @@ Cosine retrieval, cache/store, diagnostics, name matching, top-k indexing, and r
 
 ## Map
 
-- `mod.rs` — the split's rationale and re-export wiring; `cache` is in scope purely for its `impl CosineIndex` side-effect.
-- `math.rs` — pure helpers: the cosine formula, `dot_slice`, `inv_norm`, and the shared `score_cmp_desc` NaN-aware comparator. `dot_slice` is deliberately a plain sequential fold, not a BLAS reduction: the hot scan and the serial-reference equivalence tests route through the same function, so summation order — and therefore the bit pattern — is identical, which is what makes the equivalence tests meaningful rather than "close enough". `cosine_similarity_slice` (recomputes both norms) is the reference formula for tests and diagnostics, NOT the hot path.
-- `store.rs` — `FlatStore`: `dim` + `ids: Vec<i64>` + `inv_norms: Vec<f32>`
-  - one row-major f32 block, `Block::Owned(Vec<f32>)` or `Block::Mapped` (zero-copy `Arc<Mmap>` view, alignment-validated at load). Replaced the per-row `Vec<(PathBuf, Array1<f32>)>` — ~400k boxed allocations at 100k images × 3 encoders. `push_owned` computes the inverse norm at append time; `row(r)` slices `block[r*dim..(r+1)*dim]`. Memory shape: ~2 KB/row at 512-d, ~3 KB/row at 768-d, ~800 MB total at 100k × 3 encoders — but a warm launch maps rather than allocates it, so RSS tracks what the OS pages in.
-- `index.rs` — `CosineIndex { cached_images: FlatStore, encoder_id, gen_token }`: ingestion (`add_image`, `populate_from_db_for_encoder`), the shared `score_all` scan, the three retrieval methods, and `refresh_if_stale` (the token-gated repopulate the indexing pipeline calls at Ready). The `cached_images` field name is preserved (not renamed to `store`) so product-crate call sites like `idx.cached_images.is_empty()` keep resolving — only the type changed.
-- `cache.rs` — persistence: `embstore_<encoder_id>.bin` per encoder, 64-byte versioned header (magic `LYNEMB01`, format version, encoder FNV hash, dim, row count, generation token), 64-aligned sections, temp-file + atomic rename, mmap load. The full byte layout is in this file's module doc. `memmap2` is confined entirely to this file.
-- `rrf.rs` — Reciprocal Rank Fusion (Cormack/Clarke/Büttcher 2009, `k_rrf = 60`) over per-encoder rankings, ID-native (`RankedList.items: Vec<(i64, f32)>`); replaced the old tiered sampler because encoder disagreement supplies diversity for free.
-- `name_match.rs` — fuzzy filename scoring (containment + token + Levenshtein, dependency-free), producing a `RankedList` so filename relevance enters the same RRF as the encoders; ranks even never-encoded images.
-- `diagnostics.rs` — embedding-quality statistics (norms, NaNs, pairwise distances, self-similarity) emitted into the profiling report; four stateless helpers taking `&FlatStore` (migrated from the old tuple-vec signature in 1514a90 — same algorithms, same output shapes; samples are tagged `image_id` instead of path, consistent with ID-native identity).
+```
+cosine/
+├── mod.rs           the split's rationale and re-export wiring; `cache` is in scope purely
+│                    for its `impl CosineIndex` side-effect.
+├── math.rs          pure helpers: the cosine formula, `dot_slice`, `inv_norm`, and the
+│                    shared `score_cmp_desc` NaN-aware comparator. `dot_slice` is
+│                    deliberately a plain sequential fold, not a BLAS reduction: the hot
+│                    scan and the serial-reference equivalence tests route through the
+│                    same function, so summation order — and therefore the bit pattern —
+│                    is identical, which is what makes the equivalence tests meaningful
+│                    rather than "close enough". `cosine_similarity_slice` (recomputes
+│                    both norms) is the reference formula for tests and diagnostics, NOT
+│                    the hot path.
+├── store.rs         `FlatStore`: `dim` + `ids: Vec<i64>` + `inv_norms: Vec<f32>` - one
+│                    row-major f32 block, `Block::Owned(Vec<f32>)` or `Block::Mapped`
+│                    (zero-copy `Arc<Mmap>` view, alignment-validated at load). Replaced
+│                    the per-row `Vec<(PathBuf, Array1<f32>)>` — ~400k boxed allocations
+│                    at 100k images × 3 encoders. `push_owned` computes the inverse norm
+│                    at append time; `row(r)` slices `block[r*dim..(r+1)*dim]`. Memory
+│                    shape: ~2 KB/row at 512-d, ~3 KB/row at 768-d, ~800 MB total at
+│                    100k × 3 encoders — but a warm launch maps rather than allocates it,
+│                    so RSS tracks what the OS pages in.
+├── index.rs         `CosineIndex { cached_images: FlatStore, encoder_id, gen_token }`:
+│                    ingestion (`add_image`, `populate_from_db_for_encoder`), the shared
+│                    `score_all` scan, the three retrieval methods, and `refresh_if_stale`
+│                    (the token-gated repopulate the indexing pipeline calls at Ready).
+│                    The `cached_images` field name is preserved (not renamed to `store`)
+│                    so product-crate call sites like `idx.cached_images.is_empty()` keep
+│                    resolving — only the type changed.
+├── cache.rs         persistence: `embstore_<encoder_id>.bin` per encoder, 64-byte
+│                    versioned header (magic `LYNEMB01`, format version, encoder FNV hash,
+│                    dim, row count, generation token), 64-aligned sections, temp-file +
+│                    atomic rename, mmap load. The full byte layout is in this file's
+│                    module doc. `memmap2` is confined entirely to this file.
+├── rrf.rs           Reciprocal Rank Fusion (Cormack/Clarke/Büttcher 2009, `k_rrf = 60`)
+│                    over per-encoder rankings, ID-native (`RankedList.items:
+│                    Vec<(i64, f32)>`); replaced the old tiered sampler because encoder
+│                    disagreement supplies diversity for free.
+├── name_match.rs    fuzzy filename scoring (containment + token + Levenshtein,
+│                    dependency-free), producing a `RankedList` so filename relevance
+│                    enters the same RRF as the encoders; ranks even never-encoded images.
+└── diagnostics.rs   embedding-quality statistics (norms, NaNs, pairwise distances,
+                     self-similarity) emitted into the profiling report; four stateless
+                     helpers taking `&FlatStore` (migrated from the old tuple-vec
+                     signature in 1514a90 — same algorithms, same output shapes; samples
+                     are tagged `image_id` instead of path, consistent with ID-native
+                     identity).
+```
 
 `crates/engine/src/cosine_similarity.rs` (the sibling shim) plus the product crate's `similarity_and_semantic_search/mod.rs` re-export stack to keep pre-split import paths alive; neither needs to change when internals move, only when public names do.
 

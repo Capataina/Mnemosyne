@@ -23,7 +23,7 @@
   strongest form of our privacy pitch — with no network permission in
   the slip, the OS itself enforces "nothing ever leaves your Mac".
 - **Provisioning profile** — a laminated pass from Apple tying together
-  your identity, the app's ID (com.ataca.lynceus), and its permission
+  your identity, the app's ID (com.capataina.lynceus), and its permission
   slip. Downloaded from Apple's site, referenced in the build config.
 - **App Review** — the human + automated check Apple runs after you
   upload. Store apps do NOT need "notarisation" (that's the separate
@@ -71,7 +71,7 @@ certificate makes it permanent.
    (seals the installer package). Xcode can generate both for you via
    Settings → Accounts → Manage Certificates.
 3. **One provisioning profile** (Apple's site → Profiles): type
-   "Mac App Store", for App ID com.ataca.lynceus. Download it.
+   "Mac App Store", for App ID com.capataina.lynceus. Download it.
 4. Tell me — I fill the two identity names into the justfile, point
    the config at the profile, and run `just lynceus-mas-package`. Out
    comes `Lynceus.pkg`: the sealed box we upload.

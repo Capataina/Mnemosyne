@@ -49,11 +49,11 @@ Every state file lives under one root, the platform's standard app-data director
 
 Where `<app_data_dir>` resolves to (in order):
 1. `$LYNCEUS_DATA_DIR` if set and non-empty (env-var override for testing / multi-instance / CI fixtures)
-2. `dirs::data_dir()/com.ataca.lynceus/` — the platform default:
-   - **macOS:** `~/Library/Application Support/com.ataca.lynceus/`
-   - **Linux:** `$XDG_DATA_HOME/com.ataca.lynceus/` (typically `~/.local/share/...`)
-   - **Windows:** `%APPDATA%/com.ataca.lynceus/`
-3. `./app-data/com.ataca.lynceus/` if `dirs::data_dir()` returns `None` (rare — only on stripped-down environments where the standard data dir can't be resolved). Logged at warn level.
+2. `dirs::data_dir()/com.capataina.lynceus/` — the platform default:
+   - **macOS:** `~/Library/Application Support/com.capataina.lynceus/`
+   - **Linux:** `$XDG_DATA_HOME/com.capataina.lynceus/` (typically `~/.local/share/...`)
+   - **Windows:** `%APPDATA%/com.capataina.lynceus/`
+3. `./app-data/com.capataina.lynceus/` if `dirs::data_dir()` returns `None` (rare — only on stripped-down environments where the standard data dir can't be resolved). Logged at warn level.
 
 ### Why the dev-vs-release split was removed
 
@@ -184,9 +184,10 @@ Frontend `useUserPreferences` (theme, columns, sortMode, animation, similar/sema
 | `ensure_dir` failure swallowed | Filesystem full or permissions error | Returns the path anyway; subsequent file open fails. Gives a confusing error message that doesn't hint at the directory creation failure. |
 | Settings.json corruption | Manual edit + invalid JSON | `Settings::load` logs error and returns `Settings::default()` — silently drops the legacy `scan_root` field. The migration path won't fire. Acceptable. |
 | Atomic save uses `rename` not `fsync` | Power loss between `write` and `rename` | The `.tmp` file may exist on disk; on next launch settings.json is unchanged. If the rename succeeded but the directory entry didn't fsync, the new file may be partial. macOS / Linux ext4 / Windows NTFS handle this well in practice but no explicit fsync. |
-| Hardcoded bundle id `com.ataca.lynceus` in release fallback | A future bundle-id rename | Two places to update: tauri.conf.json + this constant. There is no compile-time check that they match. |
+| Hardcoded bundle id `com.capataina.lynceus` in release fallback | A future bundle-id rename | Two places to update: tauri.conf.json + this constant. There is no compile-time check that they match. |
 | Per-root thumbnail dir creation is lazy | Calling `thumbnails_dir_for_root(99)` for a root that doesn't exist | Creates the subfolder anyway. Cleanup happens in `remove_root`; orphan subfolders for roots that were never used would persist. |
 | Bundle id changed `com.ataca.image-browser` → `com.ataca.lynceus` (commercialisation rename) | Any pre-rename install launching the renamed binary | A library indexed under the old bundle id is orphaned — still on disk under `com.ataca.image-browser/`, unreferenced by the app. First launch under the new id starts from an empty catalogue (no DB, no cache) rather than migrating the old one. Acceptable at this stage (portfolio project, no external users yet): models now live in the repo tree rather than app-data, and DB re-indexing is cheap. See `notes/local-first-philosophy.md`. |
+| Bundle id changed `com.ataca.lynceus` → `com.capataina.lynceus` (App Store rename, 2026-08-02 — Apple rejects personal-looking bundle IDs on non-personal teams) | Any pre-rename install launching the renamed binary | Same orphaning consequence as the row above, same acceptable-cost reasoning: no external users yet, models live in the repo tree, re-indexing is cheap. Both functional sites (tauri.conf.json + the `BUNDLE_ID` constant in `crates/engine/src/paths.rs`) were updated in the same commit. |
 
 ## Partial / In Progress
 

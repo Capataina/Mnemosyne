@@ -6,7 +6,7 @@ Lynceus is local-first by construction. Every piece of computation, persistence,
 
 Concrete manifestations:
 
-- SQLite file lives in `<app_data_dir>/images.db` — on macOS that's `~/Library/Application Support/com.ataca.lynceus/images.db`. Same path in dev and release; override via `LYNCEUS_DATA_DIR` env var.
+- SQLite file lives in `<app_data_dir>/images.db` — on macOS that's `~/Library/Application Support/com.capataina.lynceus/images.db`. Same path in dev and release; override via `LYNCEUS_DATA_DIR` env var.
 - Embeddings are generated locally via ONNX Runtime across three encoders (OpenCLIP, SigLIP-2, DINOv2); models are auto-downloaded on first launch (or pre-fetched into the repo tree in dev).
 - Thumbnails are cached locally under `<app_data_dir>/thumbnails/root_<id>/`.
 - The Tauri config disables CSP (`csp: null`) and grants asset-protocol scope to the entire filesystem (`scope: ["**"]`) — fine for a single-user local tool, dangerous for any multi-user deployment. Documented as a hardening target in `enhancements/recommendations/08-tauri-csp-asset-scope-hardening.md`.

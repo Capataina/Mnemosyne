@@ -535,7 +535,7 @@ pub fn set_image_notes(&self, image_id: ID, notes: &str) -> rusqlite::Result<()>
 ## Implemented Outputs / Artifacts
 
 - The on-disk `<app_data_dir>/images.db` (+ `images.db-wal` + `images.db-shm` files when WAL is active). All gitignored.
-- The `default_database_path()` helper returns the platform-correct path via `paths::database_path()` — on macOS `~/Library/Application Support/com.ataca.lynceus/images.db`. Same path in dev and release as of 2026-04-26; override via `LYNCEUS_DATA_DIR` env var.
+- The `default_database_path()` helper returns the platform-correct path via `paths::database_path()` — on macOS `~/Library/Application Support/com.capataina.lynceus/images.db`. Same path in dev and release as of 2026-04-26; override via `LYNCEUS_DATA_DIR` env var.
 - 60+ unit tests across the submodule `tests` blocks: schema idempotency, reverse-tag-index existence, AND/OR/exclude tag semantics, multi-folder filter, NULL-root_id legacy rows, orphan detection (incl. 1200-id chunking stress test), notes round-trip, embedding BLOB round-trip (incl. large + empty), pipeline stats correctness across each stage, manifest-membership-matches-legacy-query equivalence, batch metadata hydration (bundle-all-or-nothing + empty/missing-id cases), the embedding-generation-token population-change test, manual-order/manual-col-span persistence + NULL defaults, the add_images_batch partial-failure fallback, and content-hash relink correctness (BLAKE3 digest equality, lowest-id-first relink determinism, NULL-hash-orphan exclusion, size-gated matching, backfill idempotency, purge/relink coexistence).
 
 ## Known Issues / Active Risks

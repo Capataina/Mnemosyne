@@ -52,7 +52,7 @@ __pycache__/
 # Belt-and-braces: any user-state files that might have accidentally
 # been authored into the repo. Everything user-state-related lives in
 # the platform app data directory (~/Library/Application Support/
-# com.ataca.image-browser/ on macOS), but in case someone copies a
+# com.capataina.lynceus/ on macOS), but in case someone copies a
 # stale .onnx or .db file in here while debugging:
 *.onnx
 *.db

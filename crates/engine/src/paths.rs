@@ -5,7 +5,7 @@
 //! directory regardless of build mode (debug or release). Layout:
 //!
 //! ```text
-//! <platform_data_dir>/com.ataca.lynceus/
+//! <platform_data_dir>/com.capataina.lynceus/
 //!   images.db
 //!   settings.json
 //!   cosine_cache.bin
@@ -57,15 +57,15 @@ pub fn strip_windows_extended_prefix(path_str: &str) -> Cow<'_, str> {
 use tracing::warn;
 
 /// Tauri bundle identifier — must stay in sync with `tauri.conf.json::identifier`.
-const BUNDLE_ID: &str = "com.ataca.lynceus";
+const BUNDLE_ID: &str = "com.capataina.lynceus";
 
 /// Root of all app-managed state.
 ///
 /// Always resolves to the platform's standard app-data directory so
 /// debug and release builds share state. On macOS that's
-/// `~/Library/Application Support/com.ataca.lynceus/`; on
-/// Linux `$XDG_DATA_HOME/com.ataca.lynceus/`; on Windows
-/// `%APPDATA%/com.ataca.lynceus/`.
+/// `~/Library/Application Support/com.capataina.lynceus/`; on
+/// Linux `$XDG_DATA_HOME/com.capataina.lynceus/`; on Windows
+/// `%APPDATA%/com.capataina.lynceus/`.
 ///
 /// The `LYNCEUS_DATA_DIR` env var overrides this for ad-hoc
 /// redirection (testing against a separate state, running multiple

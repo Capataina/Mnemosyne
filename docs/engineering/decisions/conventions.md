@@ -127,7 +127,7 @@ Every file the backend reads or writes goes through a helper in `crates/engine/s
 
 | Helper | Returns |
 |--------|---------|
-| `paths::app_data_dir()` | Root of all app-managed state. Always the platform default (`dirs::data_dir()/com.ataca.lynceus/` — on macOS that's `~/Library/Application Support/com.ataca.lynceus/`). Override via `LYNCEUS_DATA_DIR` env var. **No dev/release split** as of 2026-04-26. |
+| `paths::app_data_dir()` | Root of all app-managed state. Always the platform default (`dirs::data_dir()/com.capataina.lynceus/` — on macOS that's `~/Library/Application Support/com.capataina.lynceus/`). Override via `LYNCEUS_DATA_DIR` env var. **No dev/release split** as of 2026-04-26. |
 | `paths::database_path()` | `app_data_dir / "images.db"` |
 | `paths::thumbnails_dir()` | `app_data_dir / "thumbnails"` |
 | `paths::thumbnails_dir_for_root(id)` | `thumbnails / "root_<id>"` (Phase 9 reorg) |

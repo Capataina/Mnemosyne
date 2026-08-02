@@ -17,7 +17,7 @@
 //!
 //! ## Why this exists
 //!
-//! Outside its own container (`~/Library/Containers/com.ataca.lynceus/
+//! Outside its own container (`~/Library/Containers/com.capataina.lynceus/
 //! Data/`), a sandboxed app has no filesystem access by default — not
 //! even to a folder the user explicitly picked, past the current
 //! process's lifetime. When the user picks a folder via the native

@@ -370,7 +370,7 @@ impl ImageDatabase {
     }
 
     /// Default path to the SQLite database file in the platform-correct
-    /// app data directory (e.g. `~/Library/Application Support/com.ataca.lynceus/images.db`
+    /// app data directory (e.g. `~/Library/Application Support/com.capataina.lynceus/images.db`
     /// on macOS). Created on first launch.
     pub fn default_database_path() -> String {
         crate::paths::database_path()

@@ -88,7 +88,7 @@ Everything runs locally. Embeddings are generated on your machine using ONNX Run
 
 ### Privacy and offline operation
 
-- **Local-only storage** — SQLite database, thumbnail cache, and ONNX model files all live in your platform's app-data directory (`~/Library/Application Support/com.ataca.lynceus/` on macOS)
+- **Local-only storage** — SQLite database, thumbnail cache, and ONNX model files all live in your platform's app-data directory (`~/Library/Application Support/com.capataina.lynceus/` on macOS)
 - **No accounts, no telemetry, no API keys**
 - **First-launch model download** is the only network call the app makes — once models are cached locally, the app runs fully offline
 - **Original images are never modified or moved** — only metadata, thumbnails, and embeddings are derived
@@ -328,9 +328,9 @@ Derived state (SQLite DB, thumbnails, cosine cache, settings) lives under:
 
 | Platform | Path |
 |----------|------|
-| macOS | `~/Library/Application Support/com.ataca.lynceus/` |
-| Linux | `~/.local/share/com.ataca.lynceus/` |
-| Windows | `%APPDATA%\com.ataca.lynceus\` |
+| macOS | `~/Library/Application Support/com.capataina.lynceus/` |
+| Linux | `~/.local/share/com.capataina.lynceus/` |
+| Windows | `%APPDATA%\com.capataina.lynceus\` |
 
 Override the state directory with `LYNCEUS_DATA_DIR`, and the model-weights directory with `LYNCEUS_MODELS_DIR` (used above to point the app at the repo-local `models/image`). There is no separate dev-vs-release state path.
 

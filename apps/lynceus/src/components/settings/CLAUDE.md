@@ -1,7 +1,6 @@
 # src/components/settings/
 
-The right-edge settings drawer (⌘, or the gear icon), one file per section so
-each stays focused on its own controls.
+The right-edge settings drawer (⌘, or the gear icon), one file per section so each stays focused on its own controls.
 
 ## Map
 
@@ -39,9 +38,5 @@ settings/
 
 ## Traps
 
-- The preview breakdown's tier totals shrinking as size grows is CORRECT
-  (eligibility), and all-zeros mid-pipeline is correct too (previews run last).
-  Both were once reported as bugs; the UI now explains itself — don't "fix" the
-  numbers, extend the narration.
-- Base-480 completion is what `with_thumbnail` tracks; the "previews" phase is
-  separate (1ac1ea5). Don't conflate the pill's phase with the base count.
+- The preview breakdown's tier totals shrinking as size grows is CORRECT (eligibility), and all-zeros mid-pipeline is correct too (previews run last). Both were once reported as bugs; the UI now explains itself — don't "fix" the numbers, extend the narration.
+- Base-480 completion is what `with_thumbnail` tracks; the "previews" phase is separate (1ac1ea5). Don't conflate the pill's phase with the base count.

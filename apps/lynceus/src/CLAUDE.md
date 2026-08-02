@@ -1,8 +1,6 @@
 # apps/lynceus/src/
 
-React application shell and frontend type declarations. Lynceus is a local-first
-image browser: React 19 + Vite + TanStack Query 5 + Tailwind 4, talking to the
-Mnemosyne engine through Tauri IPC (`src-tauri/` owns the host side).
+React application shell and frontend type declarations. Lynceus is a local-first image browser: React 19 + Vite + TanStack Query 5 + Tailwind 4, talking to the Mnemosyne engine through Tauri IPC (`src-tauri/` owns the host side).
 
 ## Map
 
@@ -32,29 +30,17 @@ src/
 
 ## Current state — 2026-08-02
 
-v0.7.14 (`lynceus-ui`). Store-shaped: sandboxed 674MB bundle boots clean. The
-masonry gesture saga is closed (4009be0; the decision ledger lives in
-`components/CLAUDE.md`); motion tuned at 3d72951; onboarding shipped
-(19e5621) and geometry-hardened (48f1e2c, 370e80d). Frontend suite: 250/250
-vitest tests. Remaining before release is repo-external (Apple enrolment,
-live folder test).
+v0.7.14 (`lynceus-ui`). Store-shaped: sandboxed 674MB bundle boots clean. The masonry gesture saga is closed (4009be0; the decision ledger lives in `components/CLAUDE.md`); motion tuned at 3d72951; onboarding shipped (19e5621) and geometry-hardened (48f1e2c, 370e80d). Frontend suite: 250/250 vitest tests. Remaining before release is repo-external (Apple enrolment, live folder test).
 
 ## State architecture
 
-Three layers cover every state need; no global store exists (`zustand` was
-declared-but-unused from early planning and has been dropped from
-`package.json` entirely):
+Three layers cover every state need; no global store exists (`zustand` was declared-but-unused from early planning and has been dropped from `package.json` entirely):
 
-1. **TanStack Query** — server state, via the manifest/detail entity model
-   (`queries/CLAUDE.md`).
-2. **`useUserPreferences`** — localStorage-backed persisted prefs
-   (`hooks/CLAUDE.md`).
+1. **TanStack Query** — server state, via the manifest/detail entity model (`queries/CLAUDE.md`).
+2. **`useUserPreferences`** — localStorage-backed persisted prefs (`hooks/CLAUDE.md`).
 3. **Per-page `useState`** — transient UI state, owned by components.
 
-`sortMode` and its `SortSection` settings UI were deleted, not deprecated,
-when the four sort modes collapsed to the one always-shuffled feed — nothing
-reads a sort preference anywhere; the shuffle model lives in
-`hooks/CLAUDE.md`.
+`sortMode` and its `SortSection` settings UI were deleted, not deprecated, when the four sort modes collapsed to the one always-shuffled feed — nothing reads a sort preference anywhere; the shuffle model lives in `hooks/CLAUDE.md`.
 
 ## Invariants
 
@@ -73,7 +59,4 @@ reads a sort preference anywhere; the shuffle model lives in
 
 ## Place in the whole
 
-This tree is the entire UI of the Lynceus app. It draws on `src-tauri/`
-commands (payload shapes mirrored in `services/`) and the shared design tokens
-in `App.css`/Tailwind config. Product/design context lives in
-`apps/lynceus/design/` — not here.
+This tree is the entire UI of the Lynceus app. It draws on `src-tauri/` commands (payload shapes mirrored in `services/`) and the shared design tokens in `App.css`/Tailwind config. Product/design context lives in `apps/lynceus/design/` — not here.

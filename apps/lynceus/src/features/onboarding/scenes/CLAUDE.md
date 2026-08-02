@@ -2,12 +2,8 @@
 
 The six demo scenes. Each file follows one fixed pattern:
 
-- a GEOM block declaring the scene's layout ONCE as rects/grid cells, with
-  derivation comments where a constant comes from Tailwind flow arithmetic;
-- exported `<NAME>_DURATION_MS`, `<NAME>_TRACKS` (all closed loops),
-  `<NAME>_REDUCED_FRAMES` (three static frames), the component, and a
-  `SceneGeometryManifest` (bounds, clicks with declared targets, disjoint
-  layout sets) that `__tests__/sceneGeometry.test.ts` verifies.
+- a GEOM block declaring the scene's layout ONCE as rects/grid cells, with derivation comments where a constant comes from Tailwind flow arithmetic;
+- exported `<NAME>_DURATION_MS`, `<NAME>_TRACKS` (all closed loops), `<NAME>_REDUCED_FRAMES` (three static frames), the component, and a `SceneGeometryManifest` (bounds, clicks with declared targets, disjoint layout sets) that `__tests__/sceneGeometry.test.ts` verifies.
 
 ```
 scenes/
@@ -28,12 +24,7 @@ scenes/
 
 Rules when editing (the parent file's traps apply in full here):
 
-- Never type a coordinate that can be derived; never duplicate one between a
-  style and a track.
-- Margin-collapse: adjoining sibling margins collapse to max; flex gap + own
-  margin stack. The derivation comments at the AddFolder button row and the
-  GesturePractice Start/Exit buttons record the two junctions this bit (370e80d).
-- Changing a scene's duration or the scene order breaks
-  `sceneRegistry.test.ts` on purpose — update both deliberately.
-- Every new track must close (last value === first, times 0→1) or
-  closedTracks.test.ts fails.
+- Never type a coordinate that can be derived; never duplicate one between a style and a track.
+- Margin-collapse: adjoining sibling margins collapse to max; flex gap + own margin stack. The derivation comments at the AddFolder button row and the GesturePractice Start/Exit buttons record the two junctions this bit (370e80d).
+- Changing a scene's duration or the scene order breaks `sceneRegistry.test.ts` on purpose — update both deliberately.
+- Every new track must close (last value === first, times 0→1) or closedTracks.test.ts fails.

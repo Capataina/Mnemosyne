@@ -71,7 +71,7 @@ Everything runs locally. Embeddings are generated on your machine using ONNX Run
 - **Manual tags** with optional colours, added and removed per image from the inspector or search bar
 - **Tag autocomplete** with `#tag` syntax in the search bar; tags can be created on the fly by typing a new name
 - **AND / OR tag filtering** — show images that match all selected tags or any of them
-- **Library drawer (folders-as-tags)** — a slide-in left drawer where every tag *is* a folder (no separate folder concept); open a folder to browse it, or compose the feed with include ("must have") and exclude ("must not have") filters, each showing a live per-folder image count. Applying a filter always acts on the visible feed, leaving any open similar-set or search
+- **Library drawer (folders-as-tags)** — a slide-in left drawer where every tag _is_ a folder (no separate folder concept); open a folder to browse it, or compose the feed with include ("must have") and exclude ("must not have") filters, each showing a live per-folder image count. Applying a filter always acts on the visible feed, leaving any open similar-set or search
 - **Tag deletion** from the search bar dropdown, with optimistic UI updates throughout
 
 ### Notes
@@ -262,7 +262,7 @@ All durable architecture and engineering knowledge lives in per-folder `CLAUDE.m
 
 ## Design principles
 
-- **Local-first** — all computation, storage, and inference runs on your machine. No cloud dependencies, no API keys, and in store builds no network *capability* at all.
+- **Local-first** — all computation, storage, and inference runs on your machine. No cloud dependencies, no API keys, and in store builds no network _capability_ at all.
 - **Privacy by construction** — original images are never modified or uploaded; thumbnails, notes, and embeddings are derived locally and stored in a local SQLite database.
 - **Performance at scale** — adaptive preview buckets, batched encoder inference, per-encoder versioned mmap embedding stores, ID-native fused retrieval, a feed manifest/delta protocol, and off-main-thread masonry packing keep the UI responsive at large-library scale.
 - **Offline ML inference** — every encoder runs entirely via ONNX Runtime. No Python, no external ML service, no GPU required (CUDA used on non-macOS when available).
@@ -275,7 +275,7 @@ All durable architecture and engineering knowledge lives in per-folder `CLAUDE.m
 ## Tech stack
 
 | Layer | Tools |
-|-------|-------|
+| --- | --- |
 | Desktop shell | Tauri 2 |
 | Frontend | React 19, Vite 7, TanStack Query 5, Tailwind CSS 4, Radix UI, framer-motion, cmdk, lucide-react |
 | Frontend testing | Vitest 4, Testing Library, JSDOM |
@@ -305,9 +305,7 @@ pnpm install
 python3 scripts/download_models.py --modality image
 ```
 
-The fastest way to run Lynceus — a `just`/`pnpm` wrapper that points
-`LYNCEUS_MODELS_DIR` at the repo-local weights automatically, so you
-never type that env var:
+The fastest way to run Lynceus — a `just`/`pnpm` wrapper that points `LYNCEUS_MODELS_DIR` at the repo-local weights automatically, so you never type that env var:
 
 ```bash
 just lynceus-dev       # dev mode, hot-reloading frontend
@@ -317,8 +315,7 @@ pnpm run lynceus:dev
 pnpm run lynceus:release
 ```
 
-For everything else — profiling mode, a manual release bundle, a sealed sandbox test, or
-targeting a non-default models directory — the underlying commands:
+For everything else — profiling mode, a manual release bundle, a sealed sandbox test, or targeting a non-default models directory — the underlying commands:
 
 ```bash
 # Dev mode, explicit models path
@@ -347,11 +344,11 @@ No API keys required, and no internet connection required once the weights are f
 
 Derived state (SQLite DB, thumbnails, embedding stores, settings) lives under:
 
-| Platform | Path |
-|----------|------|
-| macOS | `~/Library/Application Support/com.capataina.lynceus/` |
-| Linux | `~/.local/share/com.capataina.lynceus/` |
-| Windows | `%APPDATA%\com.capataina.lynceus\` |
+| Platform | Path                                                   |
+| -------- | ------------------------------------------------------ |
+| macOS    | `~/Library/Application Support/com.capataina.lynceus/` |
+| Linux    | `~/.local/share/com.capataina.lynceus/`                |
+| Windows  | `%APPDATA%\com.capataina.lynceus\`                     |
 
 Override the state directory with `LYNCEUS_DATA_DIR`, and the model-weights directory with `LYNCEUS_MODELS_DIR` (used above to point the app at the repo-local `models/image`). There is no separate dev-vs-release state path.
 
@@ -360,7 +357,7 @@ Override the state directory with `LYNCEUS_DATA_DIR`, and the model-weights dire
 ## Project documentation
 
 | Artefact | Purpose |
-|--------|---------|
+| --- | --- |
 | [`README.md`](./README.md) | This file — monorepo intent, Lynceus features, usage, high-level architecture |
 | per-folder `CLAUDE.md` | Each folder's complete knowledge — purpose, architecture, invariants, decisions, traps, and current state, kept beside the code it describes |
 | git history | The full narrative record — every decision's story lives in its commit body |

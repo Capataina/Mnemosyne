@@ -1,7 +1,6 @@
 # src/features/onboarding/primitives/
 
-Reusable skeleton scenery the scenes compose. Nothing here is interactive —
-every surface is `pointer-events: none`, aria-hidden demo art.
+Reusable skeleton scenery the scenes compose. Nothing here is interactive — every surface is `pointer-events: none`, aria-hidden demo art.
 
 ```
 primitives/
@@ -16,5 +15,4 @@ primitives/
                                by StaticFrameKind — the reduced-motion/small-stage path.
 ```
 
-Adding a control a scene will click: give it a rect in `sceneGeometry.ts`
-CHROME and position it absolutely here — never let flex compute its x/y.
+Adding a control a scene will click: give it a rect in `sceneGeometry.ts` CHROME and position it absolutely here — never let flex compute its x/y.

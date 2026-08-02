@@ -30,6 +30,7 @@ The regression pin for exactly this class of bug is `tests/audit_openclip_io_nam
 - **CoreML is deliberately skipped for text on macOS.** Transformer node coverage is poor and CoreML session-create (6-15s) dominates inference; plain CPU via the shared `ort_session::build_tuned_session` creates in ~1-2s and is faster end-to-end. The image encoders' rationale differs — don't copy accelerator code between the two.
 - **Do not switch back to a multilingual text model** without swapping the image encoder into the same embedding space: the multilingual distillation lives in a different space, and using it for text→image produced effectively-random rankings (the "blue fish → Tristana" bug class).
 - `pooling.rs`'s docstrings still describe the retired multilingual/DistilBERT export shapes (`[1, seq, 768]` mean-pool, first-512 truncation). Against the current export only the exact `[1, 512]` branch fires; the rest is defensive fallback, kept because output-shape drift across re-exports is the observed failure mode here.
+- **The first-512-dims fallback converts the loud failure into a silent one** (`pooling.rs:27-29`): a future re-export with a different output shape that happens to produce ≥512 floats gets truncated into a wrong-space "embedding" that *succeeds* — no error, corrupt rows persisted, rankings quietly degraded — the exact silent-wrong-output class this folder calls worst. Needs a recorded decision when next touched: keep-with-warning vs delete the truncation branch. [code-health-audit 2026-08-02]
 
 ## Place in the whole
 

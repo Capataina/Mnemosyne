@@ -46,7 +46,7 @@ Store-shaped and waiting on the founder's Apple Developer enrolment. Sandbox ent
 
 ## Gaps and planned work
 
-- **April 2026 audit's unresolved top-3 — re-audit planned.** Legacy single-encoder commands and their frontend wrappers, unreachable from the UI (~600 Rust + ~80 TS lines); `Settings::priority_image_encoder`'s "deprecated; ignored" docstring contradicting its live read; `db.get_embedding` on the writer mutex instead of `read_lock()`. Last verified unresolved 2026-07-15 — re-check against current code before acting.
+- **April 2026 audit's top-3 — adjudicated by the 2026-08-02 re-audit.** (1) Legacy single-encoder commands: still present, now a gate-promoted removal batch (~870 Rust + ~80 TS lines) in `src-tauri/src/commands/CLAUDE.md`'s planned work. (2) `priority_image_encoder`: RESOLVED — no live read exists any more; the settings field stays only for deserialisation compat. (3) `db.get_embedding` writer-mutex routing: still open (I-DB-1/2, pinned by the ignored diagnostic), but landing (1) deletes all three foreground callers, collapsing most of its surface. The 2026-07-15 "all three unresolved" claim above is superseded. [code-health-audit 2026-08-02]
 
 ### Enhancement ideas ledger (Hermes-era research, 2026-07, unverified)
 

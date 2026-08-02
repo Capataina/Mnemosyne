@@ -32,3 +32,9 @@ blake3 = "1"
 
 [dev-dependencies]
 tempfile = "3.27.0"
+# Test-only: the code-health-audit proof suites (tests/cha_b_*.rs) open a
+# sibling connection to file-backed fixture DBs to run raw comparison SQL
+# (COUNT(*) equivalents, WAL measurements) that the public ImageDatabase
+# surface deliberately does not expose. Same version/features as the main
+# dependency, so no second SQLite build enters the tree.
+rusqlite = { version = "0.37.0", features = ["bundled"] }

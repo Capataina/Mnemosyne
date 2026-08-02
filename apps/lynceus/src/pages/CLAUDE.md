@@ -38,6 +38,11 @@ The manifest carries no tags or full-res URL, so selection is two-phase: **seed*
 - **Lazy notes loader** — fetches on selection with a `cancelled` flag so a slow IPC can't clobber a fast follow-up during rapid prev/next.
 - **`recordAction` breadcrumbs** fire at user-action sites throughout (fire-and-forget; no-op when profiling is off). The `Profiler` wrapper around Masonry runs its callback in production too — it short-circuits internally, minor overhead accepted.
 
+## Planned work
+
+- **Split the route's four JSX blocks out of `[...slug].tsx` (1102 lines)** (modularisation; gate-promoted). The router convention is the only consumer (grep: no import of the route anywhere in src), every extracted symbol is file-internal, and all four blocks consume only prop-passable values. Gate corrections to honour: TopBar needs ~15 props as-is (or the two fat handlers — add-folder and `onSearchChange` — pass as prebuilt callbacks, keeping it near 10); the `onSearchChange` closure (843-853) carries the leave-first invariant and must stay BUILT in the route, passed down, never moved into TopBar; the empty-state block's prop is `manifestCount: number | undefined` (undefined/0/>0 are three states). Settle: suite 250/250 + a manual filter/search/similar pass (no mounted route tests exist — documented gap above). [code-health-audit 2026-08-02]
+- **Fix the three stale `--profile` comments** at lines 73, 76, 85 (doc rot; the real flag is `--profiling`) — refuter-verified plain `//` comments, not template literals. [code-health-audit 2026-08-02]
+
 ## Gaps and known limits
 
 - **No route-level React test harness**: the seed→upgrade effect and worker swap behaviours are unit/trace-verified, never mounted. Trigger to invest in a harness rather than more tracing: route regressions recurring.

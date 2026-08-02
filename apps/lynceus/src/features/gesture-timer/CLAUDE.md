@@ -51,6 +51,15 @@ gesture-timer/
 - The pill (`components/SelectedImageTimerPill.tsx`) and `GestureTimerSetup` are two independent config UIs sharing session.ts's pure merge/normalise functions — behaviour stays identical by construction, but a new `GestureTimerConfig` field needs input markup added to BOTH by hand.
 - `disabled` and `onOpenChange` have no caller at the only real mount site (PinterestModal passes just startingImage/candidateImages/autoStart) — live, tested surface, safe to build on, just unexercised.
 
+## Planned work
+
+- **Delete the importer-less barrel `index.ts`** (dead code; refuter-proven: no bare-directory/alias/dynamic/glob import resolves through it — every consumer deep-imports (`PinterestModal.tsx:7-8`, `SelectedImageTimerPill.tsx:18,22`, `pages/[...slug].tsx:38`); worktree deletion → `tsc --noEmit` exit 0, suite green). [code-health-audit 2026-08-02]
+- **Split `useGestureZoom.ts` (609 lines): the pure layer (lines 12-197, plus `isDoubleTap` at 547-567) moves to `zoomGeometry.ts`** (modularisation; gate-promoted). Zero React references in the block (DOM-element parameters are arguments, not coupling); two importers total (`GestureTimerView.tsx:24` hook-only, `useGestureZoom.test.ts` pure names). Strengthens this folder's documented pure-layer decision. Settle: suite + `grep 'from "./useGestureZoom"'` shows only the hook import. [code-health-audit 2026-08-02]
+
+## Knowledge (2026-08-02 audit)
+
+- **The three validation surfaces are NOT identical — the Pill diverges.** ConfigPanel:41-65 ↔ Setup:36-61 are token-identical, but `SelectedImageTimerPill.tsx:42-45`'s `availableInRange` lacks the `candidateCount === 0 ? 0 :` guard the other two carry — at zero candidates the Pill computes 1 where the others compute 0. Masked twice today (`Math.max(2, ·+1)` absorbs the difference, and the Pill is `inert` when `similarCount === 0`) — dormant, not dead. A dedup into session.ts was audited and refuted over exactly this unnamed divergence; if resubmitted, extract the ConfigPanel↔Setup pair only, or include the Pill with the guard delta explicitly decided. [code-health-audit 2026-08-02]
+
 ## Operating notes
 
 - `similarityRange` is one-based inclusive over the candidate list's rank order — off-by-ones here were real bugs; the session.ts clamps are the contract.

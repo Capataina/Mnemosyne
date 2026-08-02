@@ -57,6 +57,11 @@ Three layers cover every state need; no global store exists (`zustand` was decla
 - Profiling/telemetry mode is the CLI flag `--profiling` (NOT `--profile` — that collides with cargo's flag; see `src-tauri/src/main.rs`). Dev entry: `just lynceus-dev-telemetry`.
 - Path aliases: both `@/x` and relative imports appear; match the file you're editing.
 
+## Planned work (2026-08-02 audit — tree-wide batches; single-folder entries live in the owning folders' files)
+
+- **The zero-importer export batch across six files** (dead code / API surface; refuter-proven — the entire batch un-exported/deleted in one worktree state → `tsc --noEmit` exit 0, suite 247/247 incl. the onboarding and masonry suites): un-export `lowestFreeY` (components/masonryPacking.ts — 3 intra-file calls stay), `tileUnderPoint` (services/telemetry.ts), `useIndexingPhase`/`IndexingPhaseState` (hooks/useIndexingStatus.ts — 1 intra-file call), the four `*_GRID` scene exports (features/onboarding/scenes/ — intra-file only), and `PRESS_DOWN_MS`/`PRESS_UP_MS`/`FADE_MS` (features/onboarding/onboardingMotion.ts — defs only; BootSplash's `FADE_MS` is a separate local const); delete `MasonryItemData` (components/Masonry.tsx) and `ARRANGE_TILE_FIXTURES` outright (defs only). [code-health-audit 2026-08-02]
+- **The remaining four meaning-renames** (naming batch; gate-verified contradictions, not style): `persistNotesSoon` → `persistNotes` (components/PinterestModal.tsx:112-115 — the body is synchronous; the name promises a debounce); the `pickContrastingText` comment says "Threshold 0.5", code is `luma > 0.6` (PinterestModal.tsx:298 vs 305 — comment fix); services.test.ts:290/328 describe blocks name non-existent modules (`services/fusedSemantic`/`fusedSimilar` — both functions live in images.ts); masonryPacking.test.ts:5-10's header still says "shortest-column packing" (pre-occupancy) and its fixture types `ImageItem` where every sibling uses `FeedItem`. The fifth item (the `setupView` track rename) lives in `features/onboarding/CLAUDE.md`. [code-health-audit 2026-08-02]
+
 ## Place in the whole
 
 This tree is the entire UI of the Lynceus app. It draws on `src-tauri/` commands (payload shapes mirrored in `services/`) and the shared design tokens in `App.css`/Tailwind config. Product/design context lives in `apps/lynceus/design/` — not here.

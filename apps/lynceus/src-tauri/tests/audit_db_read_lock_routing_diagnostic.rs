@@ -1,7 +1,7 @@
 //! Audit diagnostic for `db/embeddings.rs` writer-vs-reader routing.
 //!
 //! Documented in
-//! `context/plans/code-health-audit/area-4-database.md` § I-DB-1, I-DB-2
+//! `docs/history/code-health-audit/area-4-database.md` § I-DB-1, I-DB-2
 //! and `area-3-encoders.md` § I-ENC-4.
 //!
 //! `notes/conventions.md` § "Read-only secondary read_lock() for

@@ -1,7 +1,7 @@
 //! Audit diagnostic for `indexing.rs::run_encoder_phase`.
 //!
 //! Pins the dead-parameter situation documented in
-//! `context/plans/code-health-audit/area-1-indexing.md` § D-IDX-1.
+//! `docs/history/code-health-audit/area-1-indexing.md` § D-IDX-1.
 //!
 //! `run_encoder_phase` is private to `indexing.rs`, so this test
 //! cannot call it directly. Instead, the test exercises the closest

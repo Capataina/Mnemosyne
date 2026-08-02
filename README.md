@@ -194,7 +194,7 @@ Image Browser runs as a Tauri 2 desktop application — React 19 frontend, Rust 
 │                                  embeddings, roots, meta    │
 │    thumbnails/<root>/...      — 400×400 JPEG previews       │
 │    models/                    — CLIP, DINOv2, SigLIP-2      │
-│    cosine_cache.bin           — persistent ranking cache    │
+│    embeddings_<encoder>.bin    — versioned flat mmap stores     │
 └──────────────────────────────┬──────────────────────────────┘
                                │
 ┌──────────────────────────────▼──────────────────────────────┐
@@ -209,7 +209,7 @@ Image Browser runs as a Tauri 2 desktop application — React 19 frontend, Rust 
 └─────────────────────────────────────────────────────────────┘
 ```
 
-For the full structural map — module-by-module responsibilities, table layouts, lifecycle diagrams, command surfaces — see [`context/architecture.md`](./context/architecture.md). For per-subsystem detail, see [`context/systems/`](./context/systems/).
+For durable architecture material, see [`docs/architecture/systems/`](./docs/architecture/systems/) (one file per subsystem). Current scoped implementation constraints live in the `CLAUDE.md` files nearest each source area.
 
 ---
 
@@ -247,7 +247,7 @@ Future asset browsers — **Syrinx** (audio) and **Daedalus** (3D) — join as s
 
 - **Local-first** — all computation, storage, and inference runs on your machine. No cloud dependencies, no API keys, no network required after first-launch model download.
 - **Privacy by construction** — original images are never modified or uploaded; thumbnails, notes, and embeddings are derived locally and stored in a local SQLite database.
-- **Performance at scale** — thumbnail caching, embedding precomputation, cosine cache persistence, and parallel encoder execution mean the UI stays fast regardless of library size.
+- **Performance at scale** — adaptive thumbnail caching, batched encoder inference, per-encoder versioned mmap embedding stores, ID-native fused retrieval, a feed manifest/delta protocol, and off-main-thread masonry packing keep the UI responsive at large-library scale.
 - **Offline ML inference** — every encoder runs entirely via ONNX Runtime. No Python, no external ML service, no GPU required (CUDA used on non-macOS when available).
 - **Modularity and toggleability** — encoders are swappable; per-encoder toggles let you enable any subset without rebuilding. The fusion ranker adapts to whichever encoders are active.
 - **Separation of concerns** — React frontend, Tauri IPC layer, Rust backend logic, and SQLite persistence are cleanly separated and independently testable. 156 Rust tests + 72 Vitest tests gate every change.
@@ -341,7 +341,7 @@ Override the state directory with `LYNCEUS_DATA_DIR`, and the model-weights dire
 | Folder | Purpose |
 |--------|---------|
 | [`README.md`](./README.md) | This file — project intent, features, usage, high-level architecture |
-| [`context/`](./context/) | Implementation memory — architecture map, per-subsystem docs, durable design notes, active plan files, research references |
+| [`docs/`](./docs/) | Durable architecture, engineering decisions, research, proposals, plans, and audit history; operational constraints live in per-folder `CLAUDE.md` files |
 | [`learning/`](./learning/) | Teaching material covering the project and surrounding domain (CLIP, DINOv2, SigLIP-2, RRF, Tauri, ONNX Runtime, …) |
 
 ---

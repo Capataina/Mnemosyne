@@ -327,7 +327,7 @@ fn remove_thumbnail_files(id: ID, root_id: Option<ID>) {
 /// Permanently delete every orphaned image row — the explicit "clean up
 /// missing files" affordance next to the orphan count in Settings
 /// (remedy option 2 in
-/// context/notes/image-identity-orphan-lifecycle.md; option 1,
+/// `docs/engineering/decisions/image-identity-orphan-lifecycle.md`; option 1,
 /// content-hash relinking, would additionally *preserve* tags/placement/
 /// embeddings across a restructure instead of just discarding the
 /// debris, but that's a bigger structural change tracked separately).

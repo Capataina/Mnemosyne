@@ -6,7 +6,7 @@
 //! fresh — losing the tags, masonry placement (`manual_order` /
 //! `manual_col_span`), and embeddings keyed on the old id. Remedy 1 from
 //! the orphan-lifecycle diagnosis ledger
-//! (`context/notes/image-identity-orphan-lifecycle.md`) fixes this by
+//! (`docs/engineering/decisions/image-identity-orphan-lifecycle.md`) fixes this by
 //! giving every image a full-content BLAKE3 hash: when the scan pass
 //! finds a genuinely-new path, it first looks for an orphaned row whose
 //! stored `(size, content_hash)` matches and, if found, UPDATEs that

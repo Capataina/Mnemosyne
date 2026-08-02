@@ -17,7 +17,7 @@
 //! frequency. This is documented in [ONNX Runtime threading
 //! docs](https://onnxruntime.ai/docs/performance/tune-performance/threading.html)
 //! and confirmed by the m2-perf-options research at
-//! `context/references/m2-perf-options-2026-04.md` § A7.
+//! `docs/research/m2-perf-options-2026-04.md` § A7.
 //!
 //! `with_inter_threads(1)` — we batch sequentially, not as parallel
 //! sub-graphs. inter_threads > 1 only helps graphs with independent

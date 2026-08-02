@@ -95,7 +95,7 @@ impl ImageDatabase {
 
     /// Permanently delete every orphaned image row — remedy option 2 from
     /// the orphan-lifecycle diagnosis ledger
-    /// (context/notes/image-identity-orphan-lifecycle.md): a scoped
+    /// (docs/engineering/decisions/image-identity-orphan-lifecycle.md): a scoped
     /// DELETE for rows whose backing file vanished from disk and never
     /// came back (`mark_orphaned` above only un-marks a row if the SAME
     /// path reappears, so without this these rows are permanent debris).

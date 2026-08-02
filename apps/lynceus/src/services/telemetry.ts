@@ -25,7 +25,7 @@
  *
  * The event vocabulary is deliberately flat snake_case (`ui_click`,
  * `js_error`, `state_bundle`, …) per the telemetry-architecture note in
- * context/notes/performance-decisions.md — app-specific names stay at
+ * docs/engineering/decisions/performance-decisions.md — app-specific names stay at
  * call sites; this module stays generic and extraction-ready for the
  * future shared package.
  */

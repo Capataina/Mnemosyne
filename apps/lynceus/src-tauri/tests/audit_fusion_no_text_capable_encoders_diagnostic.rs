@@ -1,7 +1,7 @@
 //! Audit diagnostic for `commands/semantic_fused.rs` empty-result
 //! branch.
 //!
-//! Documented in `context/plans/code-health-audit/area-2-fusion-and-search.md` § K-FUS-1.
+//! Documented in `docs/history/code-health-audit/area-2-fusion-and-search.md` § K-FUS-1.
 //!
 //! `get_fused_semantic_search` returns `Ok(Vec::new())` when no enabled
 //! encoder is text-capable (DINOv2 is image-only). The audit flagged

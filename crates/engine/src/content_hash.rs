@@ -5,7 +5,7 @@
 //! path (`images.path UNIQUE`), so a move would otherwise orphan the old
 //! row and insert the new path as a brand-new id — stranding the moved
 //! file's tags, masonry placement, and embeddings (see the diagnosis in
-//! `context/notes/image-identity-orphan-lifecycle.md`).
+//! `docs/engineering/decisions/image-identity-orphan-lifecycle.md`).
 //!
 //! `hash_file` gives every image a stable content fingerprint. The scan
 //! pipeline stores it (`db::ImageDatabase::set_content_hash`) and looks

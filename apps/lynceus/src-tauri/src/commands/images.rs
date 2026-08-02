@@ -326,11 +326,12 @@ fn remove_thumbnail_files(id: ID, root_id: Option<ID>) {
 
 /// Permanently delete every orphaned image row — the explicit "clean up
 /// missing files" affordance next to the orphan count in Settings
-/// (remedy option 2 in
-/// `docs/engineering/decisions/image-identity-orphan-lifecycle.md`; option 1,
-/// content-hash relinking, would additionally *preserve* tags/placement/
-/// embeddings across a restructure instead of just discarding the
-/// debris, but that's a bigger structural change tracked separately).
+/// (the "discard the debris" remedy from the orphan-lifecycle
+/// diagnosis; the complementary preserving remedy — BLAKE3
+/// content-hash relinking, which matches a moved/renamed file back to
+/// its orphaned row so tags/placement/embeddings survive a
+/// restructure — is implemented in the scan pipeline, so what this
+/// purge deletes is rows whose content genuinely left the library).
 ///
 /// `images_tags` and `embeddings` rows for the purged ids cascade away
 /// inside `db.purge_orphaned()` itself (`ON DELETE CASCADE`, verified

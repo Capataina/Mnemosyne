@@ -33,15 +33,33 @@ src/
 ## Current state — 2026-08-02
 
 v0.7.14 (`lynceus-ui`). Store-shaped: sandboxed 674MB bundle boots clean. The
-masonry gesture saga is closed (4009be0, decisions ledger in
-`docs/engineering/decisions/`); motion tuned at 3d72951; onboarding shipped
+masonry gesture saga is closed (4009be0; the decision ledger lives in
+`components/CLAUDE.md`); motion tuned at 3d72951; onboarding shipped
 (19e5621) and geometry-hardened (48f1e2c, 370e80d). Frontend suite: 250/250
 vitest tests. Remaining before release is repo-external (Apple enrolment,
 live folder test).
 
+## State architecture
+
+Three layers cover every state need; no global store exists (`zustand` was
+declared-but-unused from early planning and has been dropped from
+`package.json` entirely):
+
+1. **TanStack Query** — server state, via the manifest/detail entity model
+   (`queries/CLAUDE.md`).
+2. **`useUserPreferences`** — localStorage-backed persisted prefs
+   (`hooks/CLAUDE.md`).
+3. **Per-page `useState`** — transient UI state, owned by components.
+
+`sortMode` and its `SortSection` settings UI were deleted, not deprecated,
+when the four sort modes collapsed to the one always-shuffled feed — nothing
+reads a sort preference anywhere; the shuffle model lives in
+`hooks/CLAUDE.md`.
+
 ## Invariants
 
-- The single shuffled feed is driven by a compact manifest plus feed-delta reconciliation — never restore whole-library rematerialisation.
+- The single shuffled feed is driven by a compact manifest plus feed-delta reconciliation — never restore whole-library rematerialisation. The grid is never paginated: packing is prefix-dependent and shuffle order is global, so scaling the feed means compact manifests + deltas, not pages.
+- No route/chunk lazy-loading (`React.lazy` on Settings/modal/timer): a web instinct that doesn't transfer — JS loads from local disk and JSC lazily compiles unused bodies, so the win is single-digit ms of pre-parse against a cold-shortcut await regression. Reopen only if a web-served build ever ships.
 - Masonry packing stays off the main thread over typed arrays with generation-tagged responses; stale worker results must be discarded.
 - Indexing status uses a module-singleton `useSyncExternalStore` source, never component-owned polling state.
 - The z-index ladder documented in `components/ui/dialog.tsx` is the single authority for stacking; any new fixed/portalled surface slots into it there first.
@@ -57,5 +75,5 @@ live folder test).
 
 This tree is the entire UI of the Lynceus app. It draws on `src-tauri/`
 commands (payload shapes mirrored in `services/`) and the shared design tokens
-in `App.css`/Tailwind config. Product/design context lives in `design/` and
-`docs/` at the repo root — not here.
+in `App.css`/Tailwind config. Product/design context lives in
+`apps/lynceus/design/` — not here.

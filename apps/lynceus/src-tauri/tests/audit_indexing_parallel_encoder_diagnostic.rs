@@ -1,7 +1,18 @@
-//! Audit diagnostic for `indexing.rs::run_encoder_phase`.
+//! Audit diagnostic for `indexing.rs::run_encoder_phase` — finding
+//! D-IDX-1 of the April 2026 code-health audit (the full audit corpus
+//! lives in git history; this doc-comment is the finding's current
+//! home).
 //!
-//! Pins the dead-parameter situation documented in
-//! `docs/history/code-health-audit/area-1-indexing.md` § D-IDX-1.
+//! Finding: `run_encoder_phase` takes `cosine_index:
+//! &Arc<Mutex<CosineIndex>>` and `cosine_current_encoder:
+//! &Arc<Mutex<String>>` but none of its per-encoder threads use
+//! either — both are discarded at the end via
+//! `let _ = (cosine_index, cosine_current_encoder);`. They are
+//! leftovers of the retired priority-encoder hot-populate
+//! (`FusionIndexState` lazy-populates per encoder instead), and the
+//! signature falsely suggests the phase mutates the cosine cache.
+//! Dropping both parameters plus the single call site in
+//! `run_pipeline_inner` is a zero-behaviour-change cleanup; unresolved.
 //!
 //! `run_encoder_phase` is private to `indexing.rs`, so this test
 //! cannot call it directly. Instead, the test exercises the closest

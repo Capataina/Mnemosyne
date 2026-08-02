@@ -299,8 +299,8 @@ impl ImageDatabase {
     ) -> rusqlite::Result<Vec<ImageData>> {
         // Sub-span instrumentation for the `get_images` IPC path.
         //
-        // Context: `docs/engineering/decisions/performance-decisions.md` shows
-        // `ipc.get_images` is normally 70-125ms but produced two
+        // Context: profiling showed `ipc.get_images` normally 70-125ms
+        // but it produced two
         // ~22-second outliers during heavy SigLIP-2 phases. The raw
         // SQL runs in ~58ms on a quiet system, so the 22s is
         // contention rather than query plan. To attribute correctly

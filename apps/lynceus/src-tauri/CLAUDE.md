@@ -56,8 +56,7 @@ sandboxed build attempting a model download is a bug in precision/presence resol
 - **tauri.conf.json `identifier` ↔ engine `BUNDLE_ID` have no compile-time check.**
   The identifier here and the release-fallback constant in
   `crates/engine/src/paths.rs` must match or release builds resolve app-data paths
-  into a different container than Tauri runs in. Documented in
-  `docs/architecture/systems/paths-and-state.md`; both moved together in f14aaa8.
+  into a different container than Tauri runs in. Both moved together in f14aaa8.
   Any future rename moves both plus every doc path reference, and orphans the
   previous install's library on disk (accepted twice already).
 - **`bundle.resources` names files, not the directory.** Mapping the whole

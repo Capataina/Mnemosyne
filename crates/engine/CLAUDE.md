@@ -74,6 +74,8 @@ cargo clippy -p mnemosyne -- -D warnings
 ## Place in the whole
 
 `apps/lynceus/src-tauri` is the only consumer; it depends on this crate by
-path and re-exposes engine behaviour through Tauri commands. Docs that rule
-on engine internals live under `docs/architecture/systems/` (paths-and-state,
-database) — on disagreement the code wins and the doc gets fixed.
+path and re-exposes engine behaviour through Tauri commands. Engine
+knowledge lives in the per-folder CLAUDE.md files under `src/` — on
+disagreement about current state the code wins and the file gets fixed,
+but a recorded decision (a rejected alternative, a reopen trigger) stays
+true as a decision even after the code moves on.

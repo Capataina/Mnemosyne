@@ -233,7 +233,7 @@ describe("computeMasonryLayout", () => {
   it("emits a per-placement height matching aspect-ratio scaling", () => {
     // 200x100 source tile in a 100-wide column should render at 50px
     // tall. Used by the Masonry viewport-culling pass — see
-    // Masonry.tsx and docs/engineering/decisions/performance-decisions.md.
+    // Masonry.tsx and the perf-decision notes in src/components/CLAUDE.md.
     const out = computeMasonryLayout({
       items: [tile(1, 200, 100)],
       containerWidth: 100,

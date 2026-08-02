@@ -93,9 +93,9 @@ impl ImageDatabase {
         rows.collect()
     }
 
-    /// Permanently delete every orphaned image row — remedy option 2 from
-    /// the orphan-lifecycle diagnosis ledger
-    /// (docs/engineering/decisions/image-identity-orphan-lifecycle.md): a scoped
+    /// Permanently delete every orphaned image row — the orphan-lifecycle
+    /// diagnosis's second remedy (this folder's CLAUDE.md carries the
+    /// full lifecycle): a scoped
     /// DELETE for rows whose backing file vanished from disk and never
     /// came back (`mark_orphaned` above only un-marks a row if the SAME
     /// path reappears, so without this these rows are permanent debris).

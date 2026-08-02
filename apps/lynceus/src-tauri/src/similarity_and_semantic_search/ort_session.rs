@@ -16,8 +16,11 @@
 //! active cluster). 4 keeps every active core on the P-cluster at full
 //! frequency. This is documented in [ONNX Runtime threading
 //! docs](https://onnxruntime.ai/docs/performance/tune-performance/threading.html)
-//! and confirmed by the m2-perf-options research at
-//! `docs/research/m2-perf-options-2026-04.md` § A7.
+//! and was confirmed by the April 2026 M2-performance research round
+//! finding: ORT's thread auto-detect picks all 8 cores, which is
+//! actively wrong on a hybrid cluster; explicit 4-thread pinning is a
+//! ~5-20% class of win, and ORT's exponential-backoff spin mode is
+//! "particularly beneficial on hybrid platforms".
 //!
 //! `with_inter_threads(1)` — we batch sequentially, not as parallel
 //! sub-graphs. inter_threads > 1 only helps graphs with independent

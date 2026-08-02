@@ -39,11 +39,59 @@ services/
 └── services.test.ts  IPC wrapper tests over the shared mockInvoke.
 ```
 
+## Telemetry architecture (decided 2026-07-17)
+
+The profiling system is deliberately split: the **sink lives in the engine**
+(`crates/engine/src/perf.rs` + `perf_report.rs` — timeline, JSONL flush,
+on-exit report), the **capture layer is app-local** (`perf.ts`, `telemetry.ts`,
+`components/PerfOverlay.tsx`), and the **event vocabulary is per-app by
+design** — breadcrumb names live at call sites, this layer stays generic.
+Do NOT extract the TS capture layer into a shared workspace package while it
+has one consumer; the trigger is the session that scaffolds Syrinx lifting
+`perf.ts` + `PerfOverlay` into `packages/` in the same pass (the pnpm
+workspace was adopted partly for this). Until then: keep `perf.ts` free of
+app-specific logic, use consistent event names when instrumenting new
+surfaces (timer setup panel and pill controls are currently uninstrumented).
+Boundary: this is local, opt-in diagnostics written to the user's own disk —
+never conflate with phone-home product analytics, which would be a separate
+consented system.
+
+`perfInvoke` is opt-in per call site, not an automatic interceptor — a global
+interceptor would profile every IPC including uninteresting ones; the explicit
+wrapper makes profiling intent visible where it's used. `recordAction`
+breadcrumbs are fire-and-forget (awaiting the IPC would add latency to every
+user-action handler for nothing); the backend correlates the next ≤500ms of
+span activity to each action in the on-exit report.
+
+## The masonry layout monitor
+
+The telemetry surface that made reflow bugs observable rather than guessed
+(the instrument behind the teleport and reorder-drift fixes,
+91564f0/e3adc2e). Event-armed, never free-running: capture-phase
+pointerdown/held-pointermove arm it for gestures, a masonry-scoped
+MutationObserver catches non-pointer reflows (feed-delta merges). It samples
+every second animation frame while motion is live or was seen within 1.5s,
+then stops completely — the earlier free-running version read every visible
+tile at 60fps forever, allocated fresh maps per frame, and interleaved
+geometry with computed-style reads, both costing frames and manufacturing the
+jank it reported. It emits ONE `reflow` event per reflow (after ~6 still
+frames): trigger context, per-tile `moved` list with a `classifyMove`
+verdict, mounted/unmounted ids, `teleportCount`, and a settled geometry
+snapshot. The teleport threshold is capped at 0.75 of the displacement per
+two-frame sample, not 1.0 — requiring the entire displacement in one sample
+silently missed teleports diluted by co-occurring motion (detection
+SENSITIVITY changes with sampling cadence, not just cost; 0.75 sits above the
+steepest smooth ease's measured ~59%-per-sample peak). It reads committed
+geometry from `data-masonry-*` attributes, never live visual transforms.
+Reading traps that each cost a wrong diagnosis once: gap events' `above`/
+`below` are tile IDS, not y-coordinates; a left-edge-binned gap detector is
+blind to span-2 tiles (the phantom "306px gaps").
+
 ## Invariants
 
 - Mirror Tauri command payloads exactly; keep optimistic updates reconcilable with authoritative host state.
 - `feedDelta.ts` is the canonical incremental feed-reconciliation boundary; preserve ordered, idempotent insert/remove handling and test out-of-order or repeated events.
-- Telemetry keeps a flat snake_case event vocabulary and remains opt-in with zero overhead when disabled.
+- Telemetry keeps a flat snake_case event vocabulary and remains opt-in with zero overhead when disabled. Privacy is enforced in code and test-locked: plain typing into editable targets is never recorded; descriptors and DOM outlines never read form-control values.
 
 ## Traps
 
@@ -54,3 +102,20 @@ services/
 - Identity preservation in mergeFeedDeltaRows is a performance contract, not a
   style choice — replacing untouched entries re-renders every tile during
   indexing churn.
+- The filtered-vs-unfiltered split is deliberate: a delta row's tag membership
+  is unknown client-side, so patching a filtered manifest could show an image
+  that doesn't match the filter — filtered queries are invalidated instead,
+  keeping "a filter always acts on what you can see" honest. But the
+  `isUnfiltered` predicate hardcodes the key shape
+  `["feed-manifest", [], false, []]`: adding a fourth filter dimension to
+  `useFeedManifest`'s key without updating it would silently misclassify the
+  new dimension as unfiltered and patch it with unknown-membership rows. No
+  test pins this against a hypothetical extra key segment.
+- Deltas deliberately omit `manual_col_span` at the TYPE level
+  (`Omit<…, "manual_col_span">`): a delta only asserts "this image now has a
+  thumbnail with these dims" — carrying the field would tempt a merge-path
+  write that clobbers a persisted resize on re-thumbnail; the type makes that
+  a compile error instead of runtime data loss.
+- New-id inserts merge at the id-sorted position via one linear merge (sort
+  the small batch, one O(N + k log k) splice) so a delta-patched cache and a
+  fresh refetch produce the identical array.

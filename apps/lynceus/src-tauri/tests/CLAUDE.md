@@ -41,11 +41,40 @@ tests/
                                                   cosine_index parameters (D-IDX-1)
 ```
 
+## The audit findings the diagnostics pin
+
+From the April 2026 code-health audit; the full audit corpus lives in git history.
+
+Each `audit_*` test's doc-comment states its finding inline and is the finding's
+current home. Delete the test when its finding lands (a resolved diagnostic left
+running documents a lie). The three findings, with status as of 2026-08-02:
+
+- **K-FUS-1** (`audit_fusion_no_text_capable_encoders_diagnostic.rs`) —
+  `get_fused_semantic_search` returns `Ok(Vec::new())` when no enabled encoder is
+  text-capable. `decide_enabled_write` blocks disabling *every* encoder but
+  permits a DINOv2-only config (valid for image→image, silently bricks text
+  search); the empty result is indistinguishable from "no matches". Proposed
+  remedy was a typed `ApiError::BadInput` naming the fix ("enable CLIP or
+  SigLIP-2"); **unresolved by choice** — an Ok→Err change to the IPC contract.
+- **I-DB-1 / I-DB-2 / I-ENC-4** (`audit_db_read_lock_routing_diagnostic.rs`) —
+  the codebase convention routes foreground IPC SELECTs through `read_lock()`
+  (the read-only secondary connection), but three `db/embeddings.rs` methods
+  still take the writer mutex: `get_embedding` (called from four foreground
+  paths including the `get_fused_similar_images` hot path), `get_image_embedding`
+  (reads the legacy column R8 stopped populating — itself a dead-code candidate),
+  and `get_images_without_embedding_for` (indexing-thread-only, which already
+  owns its writer, so convention-only there). The test pins that the switch is
+  behaviour-free (`:memory:` DBs fall back to the writer under `read_lock()`);
+  the win is freeing the writer at encode-batch boundaries. **Unresolved.**
+- **D-IDX-1** (`audit_indexing_parallel_encoder_diagnostic.rs`) —
+  `run_encoder_phase` still takes `cosine_index` + `cosine_current_encoder` Arcs
+  and discards both (`let _ = (…)`) — leftovers of the retired priority-encoder
+  hot-populate (fusion slots lazy-populate instead). The signature falsely
+  suggests the phase mutates the cosine cache; dropping both parameters plus the
+  single call site is a zero-behaviour-change cleanup. **Unresolved.**
+
 ## Conventions and traps
 
-- Audit diagnostics cite their findings in `docs/history/code-health-audit/area-*.md`;
-  keep the docstring citation current if a finding is resolved, and delete the test
-  when its finding lands (a resolved diagnostic left running documents a lie).
 - Test JPEGs are generated in-code via the image crate (gradient fill so the file has
   heft) — no fixtures are committed; keep it that way.
 - The encoder phase is deliberately untested at the integration level without models;

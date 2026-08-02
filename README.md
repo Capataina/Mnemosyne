@@ -27,7 +27,6 @@ Mnemosyne/                         monorepo root
 │   ├── image/                     OpenCLIP · DINOv2 · SigLIP-2
 │   ├── audio/                     (future — Syrinx)
 │   └── 3d/                        (future — Daedalus)
-├── docs/                          durable architecture, decisions, research, and history
 ├── scripts/                       model download / quantisation utilities
 └── Cargo.toml                     workspace manifest
 ```
@@ -257,7 +256,7 @@ Lynceus runs as a Tauri 2 desktop application — React 19 frontend, Rust backen
 └─────────────────────────────────────────────────────────────┘
 ```
 
-For durable architecture material, see [`docs/architecture/systems/`](./docs/architecture/systems/) (one file per subsystem). Current scoped implementation constraints live in the `CLAUDE.md` files nearest each source area.
+All durable architecture and engineering knowledge lives in per-folder `CLAUDE.md` files beside the code each one describes — each carries its folder's purpose, invariants, decisions, and traps.
 
 ---
 
@@ -360,11 +359,11 @@ Override the state directory with `LYNCEUS_DATA_DIR`, and the model-weights dire
 
 ## Project documentation
 
-| Folder | Purpose |
+| Artefact | Purpose |
 |--------|---------|
 | [`README.md`](./README.md) | This file — monorepo intent, Lynceus features, usage, high-level architecture |
-| [`docs/`](./docs/) | Durable architecture, engineering decisions, research, proposals, and audit history |
-| per-folder `CLAUDE.md` | Each folder's operating manual — purpose, invariants, traps, and current state, kept beside the code it describes |
+| per-folder `CLAUDE.md` | Each folder's complete knowledge — purpose, architecture, invariants, decisions, traps, and current state, kept beside the code it describes |
+| git history | The full narrative record — every decision's story lives in its commit body |
 
 ---
 

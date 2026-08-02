@@ -1,18 +1,18 @@
-//! Audit diagnostic for `db/embeddings.rs` writer-vs-reader routing.
+//! Audit diagnostic for `db/embeddings.rs` writer-vs-reader routing —
+//! findings I-DB-1, I-DB-2 and I-ENC-4 of the April 2026 code-health
+//! audit (the full audit corpus lives in git history; this doc-comment
+//! is the findings' current home).
 //!
-//! Documented in
-//! `docs/history/code-health-audit/area-4-database.md` § I-DB-1, I-DB-2
-//! and `area-3-encoders.md` § I-ENC-4.
-//!
-//! `notes/conventions.md` § "Read-only secondary read_lock() for
-//! foreground SELECTs" sets the convention: any IPC SELECT defaults to
-//! `read_lock()`. The audit found that several DB methods called from
-//! foreground IPC paths still use `self.connection.lock()` (writer
-//! mutex):
+//! The codebase convention is that any foreground IPC SELECT defaults
+//! to `read_lock()` — the read-only secondary connection — leaving the
+//! writer mutex free for actual writes. The audit found several DB
+//! methods called from foreground IPC paths that still use
+//! `self.connection.lock()` (writer mutex):
 //!
 //! - `db.get_embedding(image_id, encoder_id)` — `db/embeddings.rs:242-260`
 //! - `db.get_image_embedding(image_id)` — `db/embeddings.rs:41-84`
-//!   (reads the dead legacy column; will be removed per D-DB-1)
+//!   (reads the legacy `images.embedding` column the indexing rework
+//!   stopped populating — itself a dead-code-removal candidate)
 //! - `db.get_images_without_embedding_for(encoder_id)` —
 //!   `db/embeddings.rs:317-335` (called from indexing threads, not
 //!   foreground — but the convention applies anyway)

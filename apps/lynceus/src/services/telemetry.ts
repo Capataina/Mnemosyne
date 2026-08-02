@@ -25,9 +25,9 @@
  *
  * The event vocabulary is deliberately flat snake_case (`ui_click`,
  * `js_error`, `state_bundle`, …) per the telemetry-architecture note in
- * docs/engineering/decisions/performance-decisions.md — app-specific names stay at
- * call sites; this module stays generic and extraction-ready for the
- * future shared package.
+ * src/services/CLAUDE.md — app-specific names stay at call sites; this
+ * module stays generic and extraction-ready for the future shared
+ * package.
  */
 import type { QueryClient } from "@tanstack/react-query";
 import { recordAction } from "./perf";

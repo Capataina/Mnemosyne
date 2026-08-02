@@ -1,12 +1,18 @@
 //! Audit diagnostic for `commands/semantic_fused.rs` empty-result
-//! branch.
+//! branch — finding K-FUS-1 of the April 2026 code-health audit
+//! (the full audit corpus lives in git history; this doc-comment is
+//! the finding's current home).
 //!
-//! Documented in `docs/history/code-health-audit/area-2-fusion-and-search.md` § K-FUS-1.
-//!
-//! `get_fused_semantic_search` returns `Ok(Vec::new())` when no enabled
-//! encoder is text-capable (DINOv2 is image-only). The audit flagged
-//! this as a UX collision: the empty result is indistinguishable from
-//! "query matched no images." This test documents the contract via
+//! Finding: `get_fused_semantic_search` returns `Ok(Vec::new())` when
+//! no enabled encoder is text-capable (DINOv2 is image-only). The
+//! `decide_enabled_write` IPC validator prevents disabling *every*
+//! encoder, but a DINOv2-only configuration remains permitted — valid
+//! for image-image fusion, silently bricking text search. The audit
+//! flagged this as a UX collision: the empty result is
+//! indistinguishable from "query matched no images." The proposed
+//! remedy — a typed `ApiError::BadInput` naming the fix ("enable CLIP
+//! or SigLIP-2") — is an Ok→Err change to the IPC contract and remains
+//! unresolved by choice. This test documents the contract via
 //! the only public surface available to an integration test — the
 //! `Settings::resolved_enabled_encoders` helper that
 //! `get_fused_semantic_search` consults.

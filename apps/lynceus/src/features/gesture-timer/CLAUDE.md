@@ -19,11 +19,14 @@ gesture-timer/
 ├── GestureTimerConfigPanel.tsx  Mid-session reconfigure — portals to body at z-[220]
 │                                (above the timer view's 200; the reason dialogs sit at 250).
 ├── GestureTimerView.tsx         Fullscreen z-[200] viewer: countdown, pause, prev/next,
-│                                zoom, exit; predecodes nextImageUrl.
+│                                zoom, exit, the reference-history strip; predecodes
+│                                nextImageUrl.
 ├── GestureTimerProgress.tsx     SVG countdown ring, role="timer" aria-label.
 ├── useGestureTimer.ts           Sequence/countdown state; exposes nextImageUrl for
 │                                predecode (undefined on the continuous+repeat tail —
-│                                next is picked at advance time, nothing to predecode).
+│                                next is picked at advance time, nothing to predecode);
+│                                the reference-history strip's `history`/`viewedIndex`/
+│                                `isViewingHistory`/`selectHistoryIndex`.
 ├── useGestureZoom.ts            Zoom/pan hook state machine: scale 1..64, cursor-stationary
 │                                zoom, edge-clamped pan; plain two-finger scroll PANS when
 │                                zoomed (trackpad convention, 7e8ce4e) — pinch/ctrl zooms.
@@ -45,6 +48,15 @@ gesture-timer/
 - **A candidate-count-changed effect re-derives config only while idle** (no session running or being configured) — similarity results refreshing under an idle setup panel keep defaults sane without yanking an in-progress session.
 - **`markReadyIfComplete` ref callback on the keyed `<img>` is load-bearing** (5ce6581): a predecoded reference can be complete at mount and WebKit may never deliver an observable `load` event for it — without the callback the load-gated opacity left the image permanently invisible (the "blank second image" bug).
 - Nothing persists: config, sequence, and progress are ephemeral React state — a session leaves no DB row, by design (practice utility, not a training log).
+- **The reference-history strip (2026-08-03)**: bottom-left, under the "Reference N of M" label, small thumbnails for every reference shown this session, current one included. Pure viewing — clicking a past thumbnail never mutates the session.
+  - `history` is DERIVED, not appended: `sequence.slice(0, highWaterMark + 1)`, where `highWaterMark` tracks the largest `currentIndex` ever reached. This is what keeps it correct through the continuous+repeat tail, which grows `sequence` itself one random pick per advance — no parallel bookkeeping needed, and it can never disagree with the sequence it mirrors.
+  - `historyOverrideIndex` (null = "following the tip") is the `viewingIndex` the implementation brief asked for. `viewedIndex = historyOverrideIndex ?? currentIndex`; `isViewingHistory = historyOverrideIndex !== null`. Any REAL position change — `next`, `previous`, or an auto-advance — clears the override via an effect watching `currentIndex`; those are the only paths that move it, so watching it is sufficient to always re-sync the strip to the tip. Consequence, decided rather than accidental: pressing the transport prev/next buttons while browsing history snaps back to following the tip, because those buttons act on the real position, not the view.
+  - **Countdown suspension reuses the existing `suspended` gate** (`isViewingHistory` is one more term ORed into the same "don't run the interval effect" condition the image-load and settings-panel cases already use) rather than adding a second mechanism — the property that makes resume "continue, not restart" was already built in: the effect not running leaves `remainingMs` untouched, and re-running it anchors a fresh `startedAt` to that same value.
+  - **`positionLabel` (real session position) and `viewedPositionLabel` (whatever is on screen) are deliberately two different fields** — a judgment call beyond the brief. The countdown ring, `remainingMs`, and `positionLabel` always describe the real, possibly-paused session; the identity card's "Reference N of M" text and reference name track `viewedImage`/`viewedIndex` instead, so what's written under the image always matches what's pictured — consistent with each strip thumbnail's own "Reference N of M" aria-label.
+  - **Selection is click-only.** The brief's "hovering and clicking … selects it" was read as hover being the opacity affordance (`opacity-55 → opacity-100` on `:hover`), not a second trigger — a hover-triggered pause would fire on stray pointer movement, silently pausing a running session. Only `onClick` calls `selectHistoryIndex`.
+  - **Overflow: horizontal scroll, not a fade edge** — chosen over a CSS fade-out mask because a scrollbar signals "more here, scroll for it" unambiguously, while a fade risks reading as decorative and hides how much more there is; `scrollbar-width: thin` keeps it out of the way.
+  - **Zoom resets to Fit on selecting a history item** — `useGestureZoom`'s `imageId` already keys off the displayed image and its own effect resets pan/zoom on any `imageId` change (unmodified), so keying it to `viewedImage.id` instead of `currentImage.id` gets the reset for free; a past reference never inherits the live session's zoom/pan state.
+  - `nextImageUrl` (the predecode target) stays keyed to `currentIndex`/`sequence`, deliberately never to `viewedIndex` — browsing history must not perturb the predecode window for the session's actual next step.
 
 ## Decision history
 

@@ -150,9 +150,14 @@ export function PinterestModal(props: PinterestModalProps) {
             />
           </div>
 
-          {/* Details panel */}
-          <aside className="min-h-0 overflow-y-auto border-l border-border bg-card/92 max-[860px]:max-h-[54dvh] max-[860px]:border-l-0 max-[860px]:border-t">
-            <header className="sticky top-0 z-10 flex items-start gap-4 border-b border-border bg-surface-overlay/95 px-5 py-4 backdrop-blur-xl">
+          {/* Details panel. Header sits outside the scroll container (a flex
+              column, not the old sticky-inside-overflow layout) so its
+              scrollbar starts under the header instead of running the full
+              panel height alongside the title — the header no longer
+              scrolls at all, so it needs neither `sticky`/`z-10` nor the
+              backdrop-blur that used to soften content sliding underneath. */}
+          <aside className="flex min-h-0 flex-col border-l border-border bg-card/92 max-[860px]:max-h-[54dvh] max-[860px]:border-l-0 max-[860px]:border-t">
+            <header className="flex shrink-0 items-start gap-4 border-b border-border bg-surface-overlay/95 px-5 py-4">
               <div className="min-w-0 flex-1">
                 <h2 className="line-clamp-2 text-[15px] font-[640] leading-snug tracking-[-0.025em] text-foreground">
                   {props.item.name}
@@ -192,96 +197,98 @@ export function PinterestModal(props: PinterestModalProps) {
               </nav>
             </header>
 
-            <section className="border-b border-border px-5 py-4">
-              <div className="mb-3 flex items-baseline justify-between gap-3">
-                <h3 className="text-[12px] font-[620] text-foreground">Tags</h3>
-                <span className="text-[10px] tabular-nums text-muted-foreground">
-                  {props.item.tags.length} assigned
-                </span>
-              </div>
-              <div className="flex min-h-7 flex-wrap items-center gap-1.5">
-                <AnimatePresence mode="popLayout">
-                  {props.item.tags.map((tag) => (
-                    <motion.div
-                      key={tag.id}
-                      layout
-                      initial={{ opacity: 0, scale: 0.8 }}
-                      animate={{ opacity: 1, scale: 1 }}
-                      exit={{ opacity: 0, scale: 0.8 }}
-                      transition={{ type: "spring", stiffness: 500, damping: 30 }}
-                    >
-                      <Badge
-                        className="border-transparent px-2.5 py-1"
-                        style={{
-                          backgroundColor: tag.color,
-                          color: pickContrastingText(tag.color),
-                        }}
-                      >
-                        {tag.name}
-                        <button
-                          type="button"
-                          className="ml-1 grid size-4 place-items-center rounded-full transition-colors hover:bg-background/15"
-                          onClick={() =>
-                            props.onRemoveTag(props.item!.id, tag.id)
-                          }
-                          aria-label={`Remove ${tag.name}`}
-                        >
-                          <X className="size-3" strokeWidth={2} />
-                        </button>
-                      </Badge>
-                    </motion.div>
-                  ))}
-                </AnimatePresence>
-                {props.item.tags.length === 0 && (
-                  <span className="text-[11px] text-muted-foreground">
-                    No tags assigned
-                  </span>
-                )}
-              </div>
-              <div className="mt-3">
-                <TagDropdown
-                  tags={props.tags}
-                  open={comboboxOpen}
-                  setOpen={setComboboxOpen}
-                  selected={selectedTags}
-                  setSelected={setSelectedTags}
-                  placeholder="Add Tags"
-                  instruction="Select tags to add"
-                  onCreateTag={props.onCreateTag}
-                  onDeleteTag={props.onDeleteTag}
-                  imageId={props.item.id}
-                  onAssignTag={props.onAssignTag}
-                  onRemoveTag={props.onRemoveTag}
-                />
-              </div>
-            </section>
-
-            {props.onSaveNotes && (
+            <div className="min-h-0 flex-1 overflow-y-auto">
               <section className="border-b border-border px-5 py-4">
-                <label
-                  htmlFor={`image-notes-${props.item.id}`}
-                  className="mb-2.5 block text-[12px] font-[620] text-foreground"
-                >
-                  Notes
-                </label>
-                <textarea
-                  id={`image-notes-${props.item.id}`}
-                  value={notesValue}
-                  onChange={(e) => setNotesValue(e.target.value)}
-                  onBlur={persistNotes}
-                  placeholder="Add a note about this image..."
-                  className="min-h-[104px] w-full resize-y rounded-[10px] border border-border bg-surface-sunken/65 px-3.5 py-3 text-[12px] leading-relaxed text-foreground outline-none transition-[border-color,box-shadow,background-color] placeholder:text-muted-foreground focus:border-primary/55 focus:bg-surface-sunken focus:ring-3 focus:ring-primary/10"
+                <div className="mb-3 flex items-baseline justify-between gap-3">
+                  <h3 className="text-[12px] font-[620] text-foreground">Tags</h3>
+                  <span className="text-[10px] tabular-nums text-muted-foreground">
+                    {props.item.tags.length} assigned
+                  </span>
+                </div>
+                <div className="flex min-h-7 flex-wrap items-center gap-1.5">
+                  <AnimatePresence mode="popLayout">
+                    {props.item.tags.map((tag) => (
+                      <motion.div
+                        key={tag.id}
+                        layout
+                        initial={{ opacity: 0, scale: 0.8 }}
+                        animate={{ opacity: 1, scale: 1 }}
+                        exit={{ opacity: 0, scale: 0.8 }}
+                        transition={{ type: "spring", stiffness: 500, damping: 30 }}
+                      >
+                        <Badge
+                          className="border-transparent px-2.5 py-1"
+                          style={{
+                            backgroundColor: tag.color,
+                            color: pickContrastingText(tag.color),
+                          }}
+                        >
+                          {tag.name}
+                          <button
+                            type="button"
+                            className="ml-1 grid size-4 place-items-center rounded-full transition-colors hover:bg-background/15"
+                            onClick={() =>
+                              props.onRemoveTag(props.item!.id, tag.id)
+                            }
+                            aria-label={`Remove ${tag.name}`}
+                          >
+                            <X className="size-3" strokeWidth={2} />
+                          </button>
+                        </Badge>
+                      </motion.div>
+                    ))}
+                  </AnimatePresence>
+                  {props.item.tags.length === 0 && (
+                    <span className="text-[11px] text-muted-foreground">
+                      No tags assigned
+                    </span>
+                  )}
+                </div>
+                <div className="mt-3">
+                  <TagDropdown
+                    tags={props.tags}
+                    open={comboboxOpen}
+                    setOpen={setComboboxOpen}
+                    selected={selectedTags}
+                    setSelected={setSelectedTags}
+                    placeholder="Add Tags"
+                    instruction="Select tags to add"
+                    onCreateTag={props.onCreateTag}
+                    onDeleteTag={props.onDeleteTag}
+                    imageId={props.item.id}
+                    onAssignTag={props.onAssignTag}
+                    onRemoveTag={props.onRemoveTag}
+                  />
+                </div>
+              </section>
+
+              {props.onSaveNotes && (
+                <section className="border-b border-border px-5 py-4">
+                  <label
+                    htmlFor={`image-notes-${props.item.id}`}
+                    className="mb-2.5 block text-[12px] font-[620] text-foreground"
+                  >
+                    Notes
+                  </label>
+                  <textarea
+                    id={`image-notes-${props.item.id}`}
+                    value={notesValue}
+                    onChange={(e) => setNotesValue(e.target.value)}
+                    onBlur={persistNotes}
+                    placeholder="Add a note about this image..."
+                    className="min-h-[104px] w-full resize-y rounded-[10px] border border-border bg-surface-sunken/65 px-3.5 py-3 text-[12px] leading-relaxed text-foreground outline-none transition-[border-color,box-shadow,background-color] placeholder:text-muted-foreground focus:border-primary/55 focus:bg-surface-sunken focus:ring-3 focus:ring-primary/10"
+                  />
+                </section>
+              )}
+
+              <section className="px-5 py-5">
+                <GestureTimer
+                  startingImage={props.item}
+                  candidateImages={props.timerCandidates ?? []}
+                  autoStart={props.autoStartTimer ?? null}
                 />
               </section>
-            )}
-
-            <section className="px-5 py-5">
-              <GestureTimer
-                startingImage={props.item}
-                candidateImages={props.timerCandidates ?? []}
-                autoStart={props.autoStartTimer ?? null}
-              />
-            </section>
+            </div>
           </aside>
         </motion.div>
       </motion.div>

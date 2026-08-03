@@ -75,6 +75,22 @@
   backdrop-filter: blur(22px) saturate(118%);
 }
 
+.gesture-timer-history-strip {
+  scrollbar-width: thin;
+  scrollbar-color: var(--gesture-border) transparent;
+}
+
+.gesture-timer-history-item {
+  animation: gesture-history-fade-in 220ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+@keyframes gesture-history-fade-in {
+  from {
+    opacity: 0;
+    transform: translateY(3px);
+  }
+}
+
 .gesture-timer-control {
   display: inline-grid;
   width: 42px;

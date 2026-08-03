@@ -10,7 +10,7 @@ src/
 │                      ConfirmProvider → OnboardingProvider → BootSplash + routes.
 │                      Arms telemetry once iff profiling mode is on.
 ├── App.css            Global styles: theme tokens consumed via Tailwind, skeleton
-│                      shimmer, boot-bar sweep, selected-hero pill/button reveal.
+│                      shimmer, boot-bar sweep, selected-hero pill reveal.
 ├── main.tsx           Pre-React theme application (reads localStorage "theme"
 │                      before mount so there is no wrong-theme flash; no-pref
 │                      default is dark — image-focused app).

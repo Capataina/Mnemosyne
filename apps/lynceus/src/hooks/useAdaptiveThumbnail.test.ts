@@ -132,6 +132,60 @@ describe("useAdaptiveThumbnail", () => {
     expect(result.current).toBe(item.thumbnailUrl);
   });
 
+  it("caps concurrent get_thumbnail IPC calls when many tiles need a bucket at once", async () => {
+    // Reproduces the column-count-transition freeze: a repack that widens
+    // every currently-mounted tile at once (e.g. auto -> 1/2 columns) makes
+    // many tiles want a larger bucket in the same tick. get_thumbnail is a
+    // sync, main-thread-blocking Tauri command (src-tauri commands/CLAUDE.md),
+    // so an unbounded fan-out queues that many blocking decodes back-to-back.
+    // Before the fix this test's peak-concurrency count equalled the mount
+    // count (20); the gate must keep it at MAX_CONCURRENT_BUCKET_REQUESTS (4).
+    const { wrapper } = makeWrapper();
+    const TILE_COUNT = 20;
+    const MAX_CONCURRENT = 4;
+
+    let inFlight = 0;
+    let peakInFlight = 0;
+    const resolvers: Array<() => void> = [];
+    mockGetThumbnail.mockImplementation(() => {
+      inFlight++;
+      peakInFlight = Math.max(peakInFlight, inFlight);
+      return new Promise<string>((resolve) => {
+        resolvers.push(() => {
+          inFlight--;
+          resolve("/cache/bucket.jpg");
+        });
+      });
+    });
+
+    const items = Array.from({ length: TILE_COUNT }, (_, i) =>
+      makeItem({ id: i + 1 }),
+    );
+    const hooks = items.map((item) =>
+      renderHook(() => useAdaptiveThumbnail(item, 960), { wrapper }),
+    );
+
+    // All 20 tiles want the 960 bucket simultaneously; only the gate's cap
+    // may be in flight even though every query fired in the same tick.
+    await waitFor(() => expect(mockGetThumbnail).toHaveBeenCalledTimes(MAX_CONCURRENT));
+    expect(peakInFlight).toBeLessThanOrEqual(MAX_CONCURRENT);
+
+    // Draining resolves in flight should admit the rest, still never
+    // exceeding the cap, until every tile is served.
+    while (resolvers.length > 0 || mockGetThumbnail.mock.calls.length < TILE_COUNT) {
+      const resolve = resolvers.shift();
+      resolve?.();
+      // eslint-disable-next-line no-await-in-loop
+      await Promise.resolve();
+    }
+    await waitFor(() =>
+      expect(mockGetThumbnail).toHaveBeenCalledTimes(TILE_COUNT),
+    );
+    expect(peakInFlight).toBeLessThanOrEqual(MAX_CONCURRENT);
+
+    hooks.forEach((h) => h.unmount());
+  });
+
   it("serves a cached bucket immediately on remount — no base flash, no second IPC", async () => {
     // Shared client across both mounts is what proves the cache.
     const { wrapper } = makeWrapper();

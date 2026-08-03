@@ -337,6 +337,45 @@ describe("computeMasonryLayout", () => {
     expect(out.placements[0].colSpan).toBe(1);
   });
 
+  it("clamps a persisted manualColSpan to the forced column count instead of overrunning the grid", () => {
+    // Column-count-transition regression check: a tile resized to span 3 in
+    // a wide auto-column grid, then the user forces the grid down to 1
+    // column. An unclamped span would make the occupancy solver's per-column
+    // scan (`start < start + span`) walk columns that don't exist. Every
+    // span must resolve to at most colCount and the pack must still
+    // terminate with a finite, sane height.
+    const out = computeMasonryLayout({
+      items: [tile(1, 200, 100, 3), tile(2, 200, 100), tile(3, 200, 100)],
+      containerWidth: 300,
+      minItemWidth: 100,
+      columnGap: 0,
+      verticalGap: 0,
+      columnCountOverride: 1,
+    });
+    expect(out.columnCount).toBe(1);
+    for (const placement of out.placements) {
+      expect(placement.colSpan).toBe(1);
+      expect(placement.x).toBe(0);
+    }
+    expect(Number.isFinite(out.height)).toBe(true);
+    expect(out.height).toBeGreaterThan(0);
+  });
+
+  it("clamps an oversized manualColSpan to a forced 2-column grid, not the requested 3", () => {
+    const out = computeMasonryLayout({
+      items: [tile(1, 200, 100, 3), tile(2, 200, 100, 2)],
+      containerWidth: 300,
+      minItemWidth: 100,
+      columnGap: 0,
+      verticalGap: 0,
+      columnCountOverride: 2,
+    });
+    expect(out.columnCount).toBe(2);
+    expect(out.placements[0].colSpan).toBe(2);
+    expect(out.placements[1].colSpan).toBe(2);
+    expect(Number.isFinite(out.height)).toBe(true);
+  });
+
   it("exposes columnWidth on the output for the resize handle's drag-delta math", () => {
     const out = computeMasonryLayout({
       items: [],

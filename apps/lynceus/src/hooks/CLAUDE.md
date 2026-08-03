@@ -46,9 +46,11 @@ hooks/
 │                              in src-tauri commands/images.rs — keep in sync): picks the
 │                              bucket covering the tile's device-pixel width; base 480 is
 │                              zero-IPC; higher buckets resolve via ["thumbnail", id,
-│                              bucket] queries with 5-min gcTime.
+│                              bucket] queries with 5-min gcTime, admission-gated at
+│                              MAX_CONCURRENT_BUCKET_REQUESTS (4) — see Traps.
 ├── useAdaptiveThumbnail.test.ts  Fast paths, base-first swap, cached-bucket no-flash,
-│                              one query per (id, bucket).
+│                              one query per (id, bucket), the bucket-request concurrency
+│                              cap under a simultaneous 20-tile fan-out.
 ├── useUserPreferences.ts      localStorage("imageBrowserPrefs")-backed prefs behind a
 │                              module store + useSyncExternalStore; loose schema with
 │                              defaults-merge so old JSON deserialises forward (a removed
@@ -98,4 +100,5 @@ One module-level listener (registered lazily on first subscription, never torn d
 - Motion assertions in these tests import from `components/masonryMotion.ts`; never re-hardcode durations.
 - The shuffle key must stay a pure function of (id, seed). Any dependence on array length or neighbours reintroduces the full-refresh flicker that got shuffle demoted in 2026-04.
 - `useIndexingStatus` slices return primitive snapshots so a changing `message` doesn't re-render `useIsIndexing` consumers — keep new selectors primitive.
+- **Diagnosed 2026-08-03: a column-count change to 1/2 froze the whole app, then it "looked fine" after relaunch.** Mechanism traced end to end, not guessed: `masonryPacking.ts`'s `resolvedSpan` already clamps a persisted `manualColSpan` to `colCount` (`masonryPacking.test.ts` now pins this at forced 1- and 2-column grids, since nothing did before), and packing itself runs off-thread — neither is the cause. The real root: a column-count repack is a non-scroll reflow, so "visible IDs stay mounted across gesture and non-scroll repacks" (above) keeps the ENTIRE pre-repack visible set force-mounted while every one of those tiles' `renderedWidth` jumps to near-full-container at once. Each force-mounted `MasonryItem` independently asks `useAdaptiveThumbnail` for a larger bucket in the same tick, and `get_thumbnail` is a deliberately SYNC Tauri command that runs on the main thread (`src-tauri/src/commands/CLAUDE.md`'s "attribute-less commands run on the main thread" trap) — when the bucket isn't cached it decodes the original, resizes and re-encodes right there. Dozens of simultaneous large-bucket requests therefore queue that many blocking decodes back-to-back with no yield back to the webview, which is what read as a freeze/crash; the reopen was clean because those bucket files were already generated and cached on disk. Same failure CLASS as `Masonry.tsx`'s `PREFETCH_PREWARM_CAP` (133 concurrent searches froze clicks) — unbounded Tauri-IPC fan-out from a bulk UI event. Fix landed in `useAdaptiveThumbnail.ts`: `MAX_CONCURRENT_BUCKET_REQUESTS` (4) gates admission into `get_thumbnail` via a small FIFO queue keyed off the query's `AbortSignal`, so a burst trickles instead of flooding; `useAdaptiveThumbnail.test.ts`'s new concurrency-cap test fails at 20/20 in-flight without the gate and passes at ≤4 with it. Deeper root (out of this folder's surface, flagged not fixed): `get_thumbnail` blocking the Tauri main thread for a bucket-generation write is itself the reason a bounded-but-still-serial JS-side queue is a mitigation rather than a full fix — making that command `async` (`src-tauri/src/commands/`) would remove the main-thread coupling entirely and is the candidate follow-up.
 

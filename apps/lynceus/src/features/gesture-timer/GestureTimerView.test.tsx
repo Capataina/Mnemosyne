@@ -28,6 +28,18 @@ const config: GestureTimerConfig = {
   repeatAllowed: false,
 };
 
+const historyCandidates: GestureTimerImage[] = [
+  { id: 2, url: "second.jpg", name: "Second reference" },
+  { id: 3, url: "third.jpg", name: "Third reference" },
+];
+
+const historyConfig: GestureTimerConfig = {
+  intervalSeconds: 60,
+  similarityRange: { min: 1, max: 2 },
+  sessionLength: { mode: "count", count: 3 },
+  repeatAllowed: false,
+};
+
 function renderView() {
   return render(
     <GestureTimerView
@@ -128,5 +140,94 @@ describe("GestureTimerView zoom", () => {
     }) as HTMLImageElement;
     expect(nextImage).not.toBe(firstImage);
     expect(nextImage.style.transform).toBe("");
+  });
+});
+
+function renderHistoryView() {
+  return render(
+    <GestureTimerView
+      startingImage={start}
+      candidateImages={historyCandidates}
+      config={historyConfig}
+      settingsOpen={false}
+      onRequestSettings={vi.fn()}
+      onRestart={vi.fn()}
+      onExit={vi.fn()}
+    />,
+  );
+}
+
+function historyThumbnails() {
+  return screen.getAllByRole("button", { name: /^Reference \d+ of \d+$/ });
+}
+
+// `historyCandidates` shuffles, so the second/third reference's name isn't
+// deterministic — read whatever is actually on the stage instead of
+// hardcoding an assumed order.
+function currentStageImage() {
+  return screen
+    .getByLabelText(/Drawing reference/)
+    .querySelector("[data-gesture-timer-image]") as HTMLImageElement;
+}
+
+describe("GestureTimerView reference-history strip", () => {
+  it("shows one box per reference shown so far, current one included, growing on each advance without ever shrinking", () => {
+    renderHistoryView();
+    const firstImage = screen.getByRole("img", { name: "Starting reference" });
+    fireEvent.load(firstImage);
+
+    // The strip is visible from the very first reference — one box.
+    expect(historyThumbnails()).toHaveLength(1);
+    expect(historyThumbnails()[0]).toHaveAttribute("aria-current", "true");
+
+    fireEvent.click(screen.getByRole("button", { name: "Next image" }));
+    fireEvent.load(currentStageImage());
+    expect(historyThumbnails()).toHaveLength(2);
+    // The newest (current) box carries the selection.
+    expect(historyThumbnails()[1]).toHaveAttribute("aria-current", "true");
+    expect(historyThumbnails()[0]).not.toHaveAttribute("aria-current");
+
+    fireEvent.click(screen.getByRole("button", { name: "Next image" }));
+    fireEvent.load(currentStageImage());
+    expect(historyThumbnails()).toHaveLength(3);
+
+    // Going back with the existing transport control doesn't remove boxes.
+    fireEvent.click(screen.getByRole("button", { name: "Previous image" }));
+    expect(historyThumbnails()).toHaveLength(3);
+  });
+
+  it("clicking a past box displays it, pauses the countdown, and clicking the newest box resumes without removing anything", () => {
+    renderHistoryView();
+    fireEvent.load(screen.getByRole("img", { name: "Starting reference" }));
+    const startingName = currentStageImage().alt;
+
+    fireEvent.click(screen.getByRole("button", { name: "Next image" }));
+    fireEvent.load(currentStageImage());
+    const secondName = currentStageImage().alt;
+    expect(secondName).not.toBe(startingName);
+
+    const [pastBox, newestBox] = historyThumbnails();
+    expect(historyThumbnails()).toHaveLength(2);
+
+    fireEvent.click(pastBox);
+
+    // The stage now shows the past (starting) reference, and the timer
+    // aria-label reports paused; the "N of M" text under the strip follows
+    // the viewed item, not the real session position.
+    expect(currentStageImage().alt).toBe(startingName);
+    expect(screen.getByText("Reference 1 of 3")).toBeInTheDocument();
+    expect(screen.getByRole("timer")).toHaveAccessibleName(/paused/);
+    expect(pastBox).toHaveAttribute("aria-current", "true");
+    expect(newestBox).not.toHaveAttribute("aria-current");
+
+    // Nothing was removed — both boxes remain, pure viewing.
+    expect(historyThumbnails()).toHaveLength(2);
+
+    fireEvent.click(newestBox);
+
+    expect(currentStageImage().alt).toBe(secondName);
+    expect(screen.getByText("Reference 2 of 3")).toBeInTheDocument();
+    expect(newestBox).toHaveAttribute("aria-current", "true");
+    expect(historyThumbnails()).toHaveLength(2);
   });
 });

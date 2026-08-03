@@ -1,3 +1,6 @@
+import type { RefObject } from "react";
+
+import type { BubblePanelProps, BubbleTriggerProps } from "./useBubbleTrigger";
 import type { Tag } from "@/types";
 
 export type TagFilterState = "include" | "exclude" | null;
@@ -11,8 +14,19 @@ export type LibraryDrawerTag = Tag & {
 };
 
 export interface LibraryDrawerProps {
+  /** Effective visibility (pinned OR hovered) — from useBubbleTrigger.open. */
   open: boolean;
+  /** True only when click-pinned — drives the panel's focus-in-on-open;
+   * hover-peeks don't steal focus. */
+  pinned: boolean;
+  /** Clears pin + hover — wired to Escape, outside click, and the header's
+   * close control. */
   onClose: () => void;
+  /** Pointer handlers from useBubbleTrigger.panelProps, so the panel can
+   * cancel a pending close while the pointer travels onto it. */
+  panelProps: BubblePanelProps;
+  /** The trigger button's ref, so closing can return focus to it. */
+  triggerRef: RefObject<HTMLButtonElement | null>;
   tags: readonly LibraryDrawerTag[];
   totalImageCount: number;
   activeTagId: number | null;
@@ -28,9 +42,12 @@ export interface LibraryDrawerProps {
 }
 
 export interface LibraryMenuButtonProps {
+  /** Effective visibility (pinned OR hovered) — drives the active/highlight
+   * style, the same signal the panel uses to decide whether it's showing. */
   open: boolean;
-  onOpen: () => void;
+  triggerProps: BubbleTriggerProps;
   drawerId?: string;
   className?: string;
   disabled?: boolean;
+  ref?: RefObject<HTMLButtonElement | null>;
 }

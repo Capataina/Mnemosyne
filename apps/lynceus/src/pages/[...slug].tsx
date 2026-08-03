@@ -14,7 +14,7 @@ import { useSemanticSearch } from "../queries/useSemanticSearch";
 import { useDebouncedValue } from "../hooks/useDebouncedValue";
 import { useShuffledFeed, newShuffleSeed } from "../hooks/useShuffledFeed";
 import { usePipelineStats, useIsIndexing } from "../hooks/useIndexingStatus";
-import { LibraryDrawer } from "@/components/library-drawer";
+import { LibraryDrawer, useBubbleTrigger } from "@/components/library-drawer";
 import { useConfirm } from "@/components/ui/confirm";
 import { getTagCounts } from "@/services/tags";
 import { FeedItem, ImageItem, Tag } from "../types";
@@ -36,7 +36,6 @@ import { useAddRoot, useRoots } from "@/queries/useRoots";
 import { useUserPreferences } from "@/hooks/useUserPreferences";
 import { getImageNotes, setImageNotes } from "@/services/notes";
 import { SelectedImageTimerPill } from "@/components/SelectedImageTimerPill";
-import { HeroExpandButton } from "@/components/HeroExpandButton";
 import type { GestureTimerConfig } from "@/features/gesture-timer/types";
 
 /**
@@ -70,7 +69,10 @@ export default function Home() {
     useState<GestureTimerConfig | null>(null);
   const [searchTags, setSearchTags] = useState<Tag[]>([]);
   const [searchText, setSearchText] = useState("");
-  const [settingsOpen, setSettingsOpen] = useState(false);
+  // Settings bubble: hover-open-with-intent + click-to-pin state machine
+  // (useBubbleTrigger, shared with the library bubble below). Mutual
+  // exclusion between the two lives in the effect pair further down.
+  const settings = useBubbleTrigger();
   // Profiling state — flipped to true once at mount if the binary was
   // launched with `--profiling`. Drives three things: whether the perf
   // overlay mounts at all, whether cmd+shift+P does anything, and
@@ -102,10 +104,10 @@ export default function Home() {
       const cmdOrCtrl = e.metaKey || e.ctrlKey;
       if (cmdOrCtrl && e.key === ",") {
         e.preventDefault();
-        setSettingsOpen((s) => {
-          recordAction(s ? "settings_close" : "settings_open", { via: "shortcut" });
-          return !s;
+        recordAction(settings.pinned ? "settings_close" : "settings_open", {
+          via: "shortcut",
         });
+        settings.togglePinned();
         return;
       }
       if (
@@ -121,7 +123,7 @@ export default function Home() {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [profiling]);
+  }, [profiling, settings.pinned, settings.togglePinned]);
 
   // Debounce search text for semantic search (300ms delay)
   const debouncedSearchText = useDebouncedValue(searchText, 300);
@@ -154,12 +156,25 @@ export default function Home() {
   // deep cascade stays navigable (the UX council's top pick). Cleared on
   // return to the feed.
   const [simTrail, setSimTrail] = useState<ImageItem[]>([]);
-  // Library drawer (folders-as-tags): its open state + the exclude-tag
-  // ("must not have") filter set. The include set is `searchTags`, shared
-  // with the search bar; the open-folder highlight is DERIVED from it below.
-  const [libraryDrawerOpen, setLibraryDrawerOpen] = useState(false);
+  // Library bubble (folders-as-tags): hover/pin state machine + the
+  // exclude-tag ("must not have") filter set. The include set is
+  // `searchTags`, shared with the search bar; the open-folder highlight is
+  // DERIVED from it below.
+  const library = useBubbleTrigger();
   const [excludeTags, setExcludeTags] = useState<Tag[]>([]);
   const confirm = useConfirm();
+
+  // Mutual exclusion: the two bubbles never show at once — a hover-peek or
+  // a pin on one closes the other outright (pin AND hover), matching the
+  // founder spec's "opening one closes the other". Guarded on the target's
+  // own `open` so this can't oscillate: closing an already-closed bubble
+  // is a no-op and doesn't re-trigger the other's effect.
+  useEffect(() => {
+    if (library.open) settings.close();
+  }, [library.open, settings.close]);
+  useEffect(() => {
+    if (settings.open) library.close();
+  }, [settings.open, library.close]);
 
   // T3-1: the compact layout manifest replaces the full catalogue fetch.
   // Same membership, same filter surface; tags/notes/full paths are
@@ -645,35 +660,24 @@ export default function Home() {
     setIsInspecting(true);
   }, []);
 
-  // Direct expand from the hero's top-middle button — open the inspector
-  // for the current selection without the second click-through-similarity.
-  const handleExpandHero = useCallback(() => {
-    recordAction("image_inspect", { via: "hero_expand" });
-    setIsInspecting(true);
-  }, []);
-
   // The overlay element is memoised so MasonryItem's by-reference comparator
   // only sees a new overlay when its real inputs change. It carries the
-  // expand button (top) and the timer pill (bottom); both are inert until
-  // the hero is hovered/focused (App.css), so neither steals the hero click.
+  // timer pill, inert until the hero is hovered/focused (App.css), so it
+  // never steals the hero click.
   const heroOverlay = useMemo(() => {
     if (!selectedItem) return undefined;
     return (
-      <>
-        <HeroExpandButton onExpand={handleExpandHero} />
-        <SelectedImageTimerPill
-          similarCount={tieredSimilarImages.data?.length ?? 0}
-          disabled={tieredSimilarImages.isLoading}
-          onStart={handlePillStart}
-        />
-      </>
+      <SelectedImageTimerPill
+        similarCount={tieredSimilarImages.data?.length ?? 0}
+        disabled={tieredSimilarImages.isLoading}
+        onStart={handlePillStart}
+      />
     );
   }, [
     selectedItem,
     tieredSimilarImages.data?.length,
     tieredSimilarImages.isLoading,
     handlePillStart,
-    handleExpandHero,
   ]);
 
   const handleNavigate = (direction: "prev" | "next") => {
@@ -789,18 +793,25 @@ export default function Home() {
       {/* Live indexing-progress pill (top-right corner) */}
       <IndexingStatusPill />
 
-      {/* Settings drawer — slides in from the right */}
+      {/* Settings bubble — pops out near the gear icon, non-modal. */}
       <SettingsDrawer
-        open={settingsOpen}
-        onClose={() => setSettingsOpen(false)}
+        open={settings.open}
+        pinned={settings.pinned}
+        onClose={settings.close}
+        panelProps={settings.panelProps}
+        triggerRef={settings.triggerRef}
       />
 
-      {/* Library drawer — folders-as-tags, slides in from the left. Its
-          include set is the shared `searchTags`; exclude is `excludeTags`. */}
+      {/* Library bubble — folders-as-tags, pops out near the library icon,
+          non-modal. Its include set is the shared `searchTags`; exclude is
+          `excludeTags`. */}
       <LibraryDrawer
         id="library-drawer"
-        open={libraryDrawerOpen}
-        onClose={() => setLibraryDrawerOpen(false)}
+        open={library.open}
+        pinned={library.pinned}
+        onClose={library.close}
+        panelProps={library.panelProps}
+        triggerRef={library.triggerRef}
         tags={libraryTags}
         totalImageCount={totalVisibleImages}
         activeTagId={activeFolderId}
@@ -862,8 +873,20 @@ export default function Home() {
       <div className="h-full w-full overflow-y-auto overscroll-contain">
         {/* Search Bar + folder-picker control */}
         <TopBar
-          libraryDrawerOpen={libraryDrawerOpen}
-          onOpenLibraryDrawer={() => setLibraryDrawerOpen(true)}
+          libraryOpen={library.open}
+          libraryTriggerProps={library.triggerProps}
+          libraryTriggerRef={library.triggerRef}
+          settingsOpen={settings.open}
+          settingsTriggerProps={{
+            ...settings.triggerProps,
+            onClick: () => {
+              recordAction(settings.pinned ? "settings_close" : "settings_open", {
+                via: "button",
+              });
+              settings.togglePinned();
+            },
+          }}
+          settingsTriggerRef={settings.triggerRef}
           onGoHome={handleGoHome}
           tags={tags.data}
           searchTags={searchTags}
@@ -872,10 +895,6 @@ export default function Home() {
           onSearchChange={handleSearchChange}
           onCreateTag={handleCreateTag}
           onAddFolder={handleAddFolder}
-          onOpenSettings={() => {
-            recordAction("settings_open", { via: "button" });
-            setSettingsOpen(true);
-          }}
         />
 
         <div className="box-border w-full px-5 pb-16 pt-7 md:px-8 lg:px-10 lg:pt-9">

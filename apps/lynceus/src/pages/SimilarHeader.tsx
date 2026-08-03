@@ -42,7 +42,7 @@ export function SimilarHeader({
           {/* Similarity breadcrumb trail — the images dived through to
               reach here; click any thumbnail to rewind to that fork. */}
           {simTrail.length > 0 && (
-            <div className="flex items-center gap-1.5 overflow-x-auto pb-0.5">
+            <div className="flex items-center gap-1.5 overflow-x-auto py-1">
               {simTrail.map((img, i) => (
                 <button
                   key={`${img.id}-${i}`}

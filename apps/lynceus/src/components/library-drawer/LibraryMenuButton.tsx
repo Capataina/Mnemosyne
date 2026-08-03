@@ -6,15 +6,17 @@ import type { LibraryMenuButtonProps } from "./types";
 
 export function LibraryMenuButton({
   open,
-  onOpen,
+  triggerProps,
   drawerId = "library-drawer",
   className,
   disabled = false,
+  ref,
 }: LibraryMenuButtonProps) {
   return (
     <button
+      ref={ref}
       type="button"
-      aria-label="Open library"
+      aria-label="Library"
       aria-controls={drawerId}
       aria-expanded={open}
       disabled={disabled}
@@ -23,7 +25,7 @@ export function LibraryMenuButton({
         open && "border-primary/35 bg-primary/10 text-primary",
         className
       )}
-      onClick={onOpen}
+      {...triggerProps}
     >
       <Menu className="size-[18px]" strokeWidth={1.8} />
     </button>

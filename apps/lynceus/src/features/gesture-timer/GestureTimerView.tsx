@@ -113,7 +113,11 @@ export function GestureTimerView({
     zoomOut,
     pointerHandlers,
   } = useGestureZoom({
-    imageId: timer.currentImage.id,
+    // Keying zoom off the VIEWED image (not the session position) is the
+    // reset-to-Fit decision for history browsing: selecting a past reference
+    // gets a clean Fit view rather than carrying over whatever zoom/pan the
+    // live session had, exactly like the existing swap-to-next reset.
+    imageId: timer.viewedImage.id,
     onInteraction: revealControls,
   });
 
@@ -127,7 +131,7 @@ export function GestureTimerView({
 
   useEffect(() => {
     setImageStatus("loading");
-  }, [timer.currentImage.id]);
+  }, [timer.viewedImage.id]);
 
   // A predecoded (T1-6) reference can be complete the instant the keyed
   // <img> mounts — WebKit may then never deliver a `load` event React's
@@ -228,7 +232,10 @@ export function GestureTimerView({
             remainingMs={timer.remainingMs}
             progress={timer.progress}
             paused={
-              !timer.isRunning || settingsOpen || imageStatus !== "ready"
+              !timer.isRunning ||
+              settingsOpen ||
+              imageStatus !== "ready" ||
+              timer.isViewingHistory
             }
           />
         </div>
@@ -244,9 +251,9 @@ export function GestureTimerView({
         {imageStatus === "loading" && (
           <div
             style={
-              timer.currentImage.width && timer.currentImage.height
+              timer.viewedImage.width && timer.viewedImage.height
                 ? {
-                    aspectRatio: `${timer.currentImage.width} / ${timer.currentImage.height}`,
+                    aspectRatio: `${timer.viewedImage.width} / ${timer.viewedImage.height}`,
                   }
                 : undefined
             }
@@ -256,12 +263,12 @@ export function GestureTimerView({
 
         {imageStatus !== "error" && (
           <img
-            key={timer.currentImage.id}
+            key={timer.viewedImage.id}
             ref={markReadyIfComplete}
-            src={timer.currentImage.url}
-            alt={timer.currentImage.name ?? "Timed drawing reference"}
-            width={timer.currentImage.width}
-            height={timer.currentImage.height}
+            src={timer.viewedImage.url}
+            alt={timer.viewedImage.name ?? "Timed drawing reference"}
+            width={timer.viewedImage.width}
+            height={timer.viewedImage.height}
             loading="eager"
             decoding="async"
             onLoad={() => setImageStatus("ready")}
@@ -333,11 +340,49 @@ export function GestureTimerView({
       >
         <div className="gesture-timer-chrome gesture-timer-identity min-w-0 rounded-[12px] px-4 py-3 sm:px-5 sm:py-3.5">
           <p className="text-[10px] font-[650] uppercase tracking-[0.14em] text-[var(--gesture-accent)]">
-            Reference {timer.positionLabel.replace(" / ", " of ")}
+            Reference {timer.viewedPositionLabel.replace(" / ", " of ")}
           </p>
           <p className="mt-1 max-w-full truncate text-[14px] font-[620] tracking-[-0.018em] text-[var(--gesture-text)] sm:text-[15px]">
-            {timer.currentImage.name ?? "Untitled reference"}
+            {timer.viewedImage.name ?? "Untitled reference"}
           </p>
+        </div>
+
+        {/* Every reference shown so far this session, current one included
+            (`history` always has at least the starting image) — pure
+            viewing: click pauses on a past entry, click the last (newest)
+            box to resume. Hover only lifts opacity; selection is click-only,
+            so a stray pointer pass can't pause the session. */}
+        <div
+          role="group"
+          aria-label="Reference history"
+          className="gesture-timer-history-strip mt-2 flex max-w-full gap-2 overflow-x-auto pb-1"
+        >
+          {timer.history.map((image, index) => {
+            const isSelected = index === timer.viewedIndex;
+            return (
+              <button
+                key={`${image.id}-${index}`}
+                type="button"
+                onClick={() => timer.selectHistoryIndex(index)}
+                aria-label={`Reference ${index + 1} of ${timer.history.length}`}
+                aria-current={isSelected ? "true" : undefined}
+                className={[
+                  "gesture-timer-history-item pointer-events-auto size-11 shrink-0 rounded-md object-cover transition-opacity",
+                  isSelected
+                    ? "opacity-100 ring-2 ring-[var(--gesture-accent)]"
+                    : "opacity-55 ring-1 ring-[var(--gesture-border)] hover:opacity-100",
+                ].join(" ")}
+              >
+                <img
+                  src={image.url}
+                  alt=""
+                  aria-hidden="true"
+                  draggable={false}
+                  className="size-full rounded-[5px] object-cover"
+                />
+              </button>
+            );
+          })}
         </div>
       </div>
 

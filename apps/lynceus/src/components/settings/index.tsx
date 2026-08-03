@@ -1,7 +1,10 @@
-import { motion, AnimatePresence } from "framer-motion";
-import { RotateCcw, X } from "lucide-react";
+import { motion, AnimatePresence, useReducedMotion } from "framer-motion";
+import { RotateCcw } from "lucide-react";
 import { useEffect, useRef } from "react";
+import type { RefObject } from "react";
 import { useOnboarding } from "../../features/onboarding";
+import { BUBBLE_POP_EASE, BUBBLE_POP_MS } from "@/components/library-drawer";
+import type { BubblePanelProps } from "@/components/library-drawer";
 import { ThemeSection } from "./ThemeSection";
 import { DisplaySection } from "./DisplaySection";
 import { SearchSection } from "./SearchSection";
@@ -10,16 +13,32 @@ import { EncoderSection } from "./EncoderSection";
 import { StatsSection } from "./StatsSection";
 import { ResetSection } from "./ResetSection";
 
+export { SettingsMenuButton } from "./SettingsMenuButton";
+export type { SettingsMenuButtonProps } from "./SettingsMenuButton";
+
 interface SettingsDrawerProps {
+  /** Effective visibility (pinned OR hovered) — from useBubbleTrigger.open. */
   open: boolean;
+  /** True only when click-pinned — drives focus-in-on-open; hover-peeks
+   * don't steal focus. */
+  pinned: boolean;
+  /** Clears pin + hover — wired to Escape and outside click. */
   onClose: () => void;
+  /** Pointer handlers from useBubbleTrigger.panelProps, so the panel can
+   * cancel a pending close while the pointer travels onto it. */
+  panelProps: BubblePanelProps;
+  /** The trigger button's ref, so closing can return focus to it. */
+  triggerRef: RefObject<HTMLButtonElement | null>;
+  id?: string;
 }
 
 /**
- * Slide-out settings drawer from the right edge.
+ * Floating settings bubble panel, non-modal: pops out near the gear icon
+ * (top-right of the header) rather than sliding a full-height scrimmed
+ * drawer over the grid.
  *
- * Open via cmd/ctrl + , or via the gear icon next to the search bar.
- * Closes on Escape, click-outside, or × button.
+ * Open via cmd/ctrl + , or hover/click on the gear icon.
+ * Closes on Escape, outside click, or re-clicking the trigger.
  *
  * Sections (each lives in its own file under this directory):
  * 1. Theme
@@ -30,95 +49,125 @@ interface SettingsDrawerProps {
  * 6. Tutorial replay and reset controls
  *
  * The shell here owns purely structural concerns: enter/exit animation,
- * backdrop click-to-dismiss, the Escape-key handler, header chrome, and
- * the scroll container. Each section consumes useUserPreferences (and the
- * roots hooks where applicable) directly so they remain testable in
- * isolation without prop-drilling.
+ * Escape/outside-click dismiss, header chrome, and the scroll container.
+ * Each section consumes useUserPreferences (and the roots hooks where
+ * applicable) directly so they remain testable in isolation without
+ * prop-drilling.
  */
-export function SettingsDrawer({ open, onClose }: SettingsDrawerProps) {
+export function SettingsDrawer({
+  open,
+  pinned,
+  onClose,
+  panelProps,
+  triggerRef,
+  id = "settings-panel",
+}: SettingsDrawerProps) {
   const { restart } = useOnboarding();
   const restartRef = useRef<HTMLButtonElement>(null);
-  // Esc closes the drawer.
+  const panelRef = useRef<HTMLDivElement>(null);
+  const prefersReducedMotion = useReducedMotion();
+
+  // Escape + outside click close the bubble. The trigger is excluded from
+  // the outside-click check — its own onClick already toggles pin.
   useEffect(() => {
     if (!open) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
+
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        onClose();
+      }
     };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [open, onClose]);
+    const onPointerDown = (event: PointerEvent) => {
+      const target = event.target as Node;
+      if (panelRef.current?.contains(target)) return;
+      if (triggerRef.current?.contains(target)) return;
+      onClose();
+    };
+
+    window.addEventListener("keydown", onKeyDown);
+    window.addEventListener("pointerdown", onPointerDown);
+    return () => {
+      window.removeEventListener("keydown", onKeyDown);
+      window.removeEventListener("pointerdown", onPointerDown);
+    };
+  }, [open, onClose, triggerRef]);
+
+  // Pin-open moves focus into the panel; closing returns it to the
+  // trigger. Hover-peeks deliberately don't move focus.
+  useEffect(() => {
+    if (pinned) {
+      panelRef.current?.focus();
+    } else {
+      triggerRef.current?.focus();
+    }
+  }, [pinned, triggerRef]);
 
   return (
     <AnimatePresence>
       {open && (
-        <>
-          {/* Backdrop — click to dismiss */}
-          <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            transition={{ duration: 0.15 }}
-            className="fixed inset-0 z-[90] bg-background/70 backdrop-blur-md"
-            onClick={onClose}
-          />
-
-          {/* Drawer panel */}
-          <motion.aside
-            initial={{ x: "100%" }}
-            animate={{ x: 0 }}
-            exit={{ x: "100%" }}
-            transition={{ type: "spring", stiffness: 360, damping: 36 }}
-            className="fixed top-0 right-0 z-[91] flex h-[100dvh] w-[min(430px,100vw)] flex-col border-l border-border bg-card shadow-[var(--shadow-float)]"
-          >
-            {/* Header */}
-            <div className="chrome-surface sticky top-0 z-10 flex items-center justify-between border-b px-6 py-[18px]">
-              <div>
-                <h2 className="text-[17px] font-[620] tracking-[-0.025em]">Settings</h2>
-                <p className="mt-0.5 text-[11px] text-muted-foreground">
-                  Library, search, and display
-                </p>
-              </div>
-              <button
-                onClick={onClose}
-                aria-label="Close settings"
-                className="grid size-9 place-items-center rounded-[10px] text-muted-foreground transition-[color,background-color,transform] hover:bg-accent hover:text-foreground active:scale-95"
+        <motion.div
+          ref={panelRef}
+          id={id}
+          tabIndex={-1}
+          aria-labelledby={`${id}-title`}
+          initial={{ opacity: 0, scale: 0.92 }}
+          animate={{ opacity: 1, scale: 1 }}
+          exit={{ opacity: 0, scale: 0.92 }}
+          transition={
+            prefersReducedMotion
+              ? { duration: 0 }
+              : { duration: BUBBLE_POP_MS / 1000, ease: BUBBLE_POP_EASE }
+          }
+          className="floating-surface fixed right-5 top-[84px] z-[200] flex max-h-[min(720px,calc(100dvh-104px))] w-[min(430px,calc(100vw-2.5rem))] origin-top-right flex-col overflow-hidden rounded-2xl border md:right-8 lg:right-10"
+          {...panelProps}
+        >
+          {/* Header */}
+          <div className="flex shrink-0 items-center justify-between border-b border-border/70 px-6 py-[18px]">
+            <div>
+              <h2
+                id={`${id}-title`}
+                className="text-[17px] font-[620] tracking-[-0.025em]"
               >
-                <X className="h-4 w-4" strokeWidth={1.8} />
-              </button>
+                Settings
+              </h2>
+              <p className="mt-0.5 text-[11px] text-muted-foreground">
+                Library, search, and display
+              </p>
             </div>
+          </div>
 
-            <div className="flex-1 overflow-y-auto px-6 py-6 text-[12px]">
-              <ThemeSection />
-              <DisplaySection />
-              <SearchSection />
-              <FoldersSection />
-              <EncoderSection />
-              <StatsSection />
-              <div className="flex flex-col gap-2 pt-6">
-                <button
-                  ref={restartRef}
-                  type="button"
-                  onClick={() => {
-                    // The drawer deliberately STAYS open: it sits under
-                    // the z-240 overlay and goes inert with the rest of
-                    // the app, so it cannot be interacted with during
-                    // the replay — but its Restart button stays mounted,
-                    // which is what lets the provider's close path
-                    // restore focus to it. Closing the drawer here put
-                    // the trigger on a one-way unmount and broke focus
-                    // restoration in every realistic timing.
-                    restart(restartRef.current);
-                  }}
-                  className="flex h-10 w-full items-center justify-start gap-2 rounded-[10px] border border-border bg-transparent px-3 text-[11.5px] font-[580] text-foreground transition-[color,background-color,border-color,transform] hover:border-border-strong hover:bg-accent active:scale-[0.98]"
-                >
-                  <RotateCcw className="h-3.5 w-3.5" strokeWidth={1.8} />
-                  Restart onboarding
-                </button>
-                <ResetSection />
-              </div>
+          <div className="flex-1 overflow-y-auto px-6 py-6 text-[12px]">
+            <ThemeSection />
+            <DisplaySection />
+            <SearchSection />
+            <FoldersSection />
+            <EncoderSection />
+            <StatsSection />
+            <div className="flex flex-col gap-2 pt-6">
+              <button
+                ref={restartRef}
+                type="button"
+                onClick={() => {
+                  // The panel deliberately STAYS open: it sits under the
+                  // z-240 onboarding overlay and goes inert with the rest
+                  // of the app, so it cannot be interacted with during the
+                  // replay — but its Restart button stays mounted, which is
+                  // what lets the provider's close path restore focus to
+                  // it. Closing the panel here put the trigger on a
+                  // one-way unmount and broke focus restoration in every
+                  // realistic timing.
+                  restart(restartRef.current);
+                }}
+                className="flex h-10 w-full items-center justify-start gap-2 rounded-[10px] border border-border bg-transparent px-3 text-[11.5px] font-[580] text-foreground transition-[color,background-color,border-color,transform] hover:border-border-strong hover:bg-accent active:scale-[0.98]"
+              >
+                <RotateCcw className="h-3.5 w-3.5" strokeWidth={1.8} />
+                Restart onboarding
+              </button>
+              <ResetSection />
             </div>
-          </motion.aside>
-        </>
+          </div>
+        </motion.div>
       )}
     </AnimatePresence>
   );

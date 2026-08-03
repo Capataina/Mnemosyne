@@ -189,7 +189,13 @@ pub fn get_preview_breakdown(
 ///
 /// A missing DB row yields `NotFound`; a source file deleted from disk
 /// yields `NotFound` rather than a panic or an opaque decode error.
-#[tauri::command]
+///
+/// `(async)` since 2026-08-03: the cached-bucket path is fast, but a COLD
+/// bucket decodes + resizes + re-encodes the original — on the main thread
+/// that froze the app when a column-count change made every mounted tile
+/// request a large bucket at once (the same class 244b87a fixed for the
+/// root mutations). Plain fn + macro attribute, per that commit's pattern.
+#[tauri::command(async)]
 #[tracing::instrument(name = "ipc.get_thumbnail", skip(db))]
 pub fn get_thumbnail(
     db: State<'_, ImageDatabase>,

@@ -224,7 +224,7 @@ export const MasonryItem = memo(function MasonryItem(props: MasonryItemProps) {
         ].join(" ")}
       >
         <img
-          className="block h-full w-full select-none object-cover transition-[filter] duration-300 ease-out group-hover:brightness-[1.025]"
+          className="block h-full w-full select-none object-cover"
           src={displayUrl}
           alt={props.item.name}
           loading={props.isSelected ? "eager" : "lazy"}
@@ -242,10 +242,25 @@ export const MasonryItem = memo(function MasonryItem(props: MasonryItemProps) {
           <div className="pointer-events-none absolute inset-0 bg-gradient-to-b from-foreground/[0.035] via-transparent to-background/10 opacity-0 transition-opacity duration-300 group-hover:opacity-100" />
         )}
 
+        {/* Hover hairline: a 1px inset ring in the primary accent, replacing
+            the old brightness nudge (founder feedback — brightness read as
+            a filter glitch, a thin accent ring reads as intentional). Ring
+            is a box-shadow, never a real border, so tile geometry (owned by
+            the packer) is untouched. Its own independent transition-colors
+            duration keeps the fade snappy (120-150ms) without speeding up
+            the outer tile's unrelated shadow-lift (duration-300). Selected
+            stays the stronger signal: this layer alone is weaker at rest
+            (ring-primary/45) than hover (ring-primary/65), but the outer
+            tile's selected ring-2 (2px vs hover's 1px here) dominates. */}
         <div
           className={[
-            "pointer-events-none absolute inset-0 rounded-[inherit] ring-1 ring-inset transition-colors duration-300",
-            props.isSelected ? "ring-primary/45" : "ring-foreground/[0.04]",
+            "pointer-events-none absolute inset-0 rounded-[inherit] ring-1 ring-inset",
+            animationLevel === "off"
+              ? "transition-none"
+              : "transition-colors duration-150 ease-out",
+            props.isSelected
+              ? "ring-primary/45"
+              : "ring-foreground/[0.04] group-hover:ring-primary/65",
           ].join(" ")}
         />
 

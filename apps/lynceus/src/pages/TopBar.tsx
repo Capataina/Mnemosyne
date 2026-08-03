@@ -1,22 +1,37 @@
 /**
- * Route header: library-drawer toggle, wordmark, search bar, add-folder and
- * settings buttons. Extracted from `[...slug].tsx` (pure JSX move, zero
- * behaviour change) — see that file's CLAUDE.md planned-work entry.
+ * Route header: library bubble toggle, wordmark, search bar, add-folder and
+ * settings bubble toggle. Extracted from `[...slug].tsx` (pure JSX move,
+ * zero behaviour change) — see that file's CLAUDE.md planned-work entry.
  *
  * Two handlers stay BUILT IN THE ROUTE rather than folding into this
  * component: `onSearchChange` carries the leave-first invariant (exiting a
  * similar-set the moment a semantic query starts typing) and `onAddFolder`
  * carries the duplicate-folder confirm + mutation flow. Both are prebuilt
  * callbacks passed down, never re-derived here.
+ *
+ * The library and settings triggers each take an `open` flag plus a
+ * `triggerProps`/`ref` pair sourced from the route's two
+ * `useBubbleTrigger()` instances (`@/components/library-drawer`) — this
+ * component stays presentational and never manages the hover/pin state
+ * machine itself.
  */
-import { FolderPlus, Settings as SettingsIcon } from "lucide-react";
-import { LibraryMenuButton } from "@/components/library-drawer";
+import { FolderPlus } from "lucide-react";
+import type { RefObject } from "react";
+import {
+  LibraryMenuButton,
+  type BubbleTriggerProps,
+} from "@/components/library-drawer";
+import { SettingsMenuButton } from "@/components/settings";
 import { SearchBar } from "@/components/SearchBar";
 import type { Tag } from "../types";
 
 interface TopBarProps {
-  libraryDrawerOpen: boolean;
-  onOpenLibraryDrawer: () => void;
+  libraryOpen: boolean;
+  libraryTriggerProps: BubbleTriggerProps;
+  libraryTriggerRef: RefObject<HTMLButtonElement | null>;
+  settingsOpen: boolean;
+  settingsTriggerProps: BubbleTriggerProps;
+  settingsTriggerRef: RefObject<HTMLButtonElement | null>;
   onGoHome: () => void;
   tags: Tag[] | undefined;
   searchTags: Tag[];
@@ -25,12 +40,15 @@ interface TopBarProps {
   onSearchChange: (selectedTags: Tag[], text: string) => void;
   onCreateTag: (name: string, color: string) => Promise<Tag>;
   onAddFolder: () => void;
-  onOpenSettings: () => void;
 }
 
 export function TopBar({
-  libraryDrawerOpen,
-  onOpenLibraryDrawer,
+  libraryOpen,
+  libraryTriggerProps,
+  libraryTriggerRef,
+  settingsOpen,
+  settingsTriggerProps,
+  settingsTriggerRef,
   onGoHome,
   tags,
   searchTags,
@@ -39,16 +57,16 @@ export function TopBar({
   onSearchChange,
   onCreateTag,
   onAddFolder,
-  onOpenSettings,
 }: TopBarProps) {
   return (
     <header className="chrome-surface sticky top-0 z-40 border-b">
       <div className="mx-auto flex h-[72px] w-full items-center gap-3 px-5 md:px-8 lg:gap-4 lg:px-10">
-        {/* Library drawer toggle (folders-as-tags) — always visible, the
-            left-most anchor of the top bar. */}
+        {/* Library bubble toggle (folders-as-tags) — always visible, the
+            left-most anchor of the top bar. Hover pops it, click pins it. */}
         <LibraryMenuButton
-          open={libraryDrawerOpen}
-          onOpen={onOpenLibraryDrawer}
+          open={libraryOpen}
+          triggerProps={libraryTriggerProps}
+          ref={libraryTriggerRef}
           drawerId="library-drawer"
         />
         <div className="hidden w-32 shrink-0 items-center xl:flex">
@@ -87,15 +105,12 @@ export function TopBar({
             <span className="hidden md:inline">Add folder</span>
           </button>
 
-          <button
-            type="button"
-            title="Settings (⌘,)"
-            aria-label="Settings"
-            className="grid size-10 shrink-0 place-items-center rounded-[10px] border border-border bg-surface/60 text-muted-foreground transition-[color,background-color,border-color,transform] hover:border-border-strong hover:bg-accent hover:text-foreground active:scale-[0.98]"
-            onClick={onOpenSettings}
-          >
-            <SettingsIcon className="h-4 w-4" strokeWidth={1.8} />
-          </button>
+          <SettingsMenuButton
+            open={settingsOpen}
+            triggerProps={settingsTriggerProps}
+            ref={settingsTriggerRef}
+            panelId="settings-panel"
+          />
         </div>
       </div>
     </header>

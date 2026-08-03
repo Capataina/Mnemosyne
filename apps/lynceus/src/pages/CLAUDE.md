@@ -9,12 +9,19 @@ pages/
 ├── [...slug].tsx       The catch-all route: all state, all handlers, the render
 │                       tree composing TopBar/EmptyState/SimilarHeader/
 │                       SemanticStatus below, plus the still-inline
-│                       PinterestModal/LibraryDrawer/drawers.
-├── TopBar.tsx          Header: library-drawer toggle, wordmark, SearchBar,
-│                       add-folder + settings buttons. onSearchChange
-│                       (leave-first invariant) and onAddFolder (duplicate-
-│                       folder confirm flow) are prebuilt callbacks passed
-│                       down — never rebuilt inside this component.
+│                       PinterestModal and the two bubble panels (2026-08-03:
+│                       non-modal LibraryDrawer/SettingsDrawer, each driven by
+│                       its own useBubbleTrigger() instance owned here — the
+│                       route is the common ancestor of each trigger, in
+│                       TopBar, and its panel).
+├── TopBar.tsx          Header: library + settings bubble triggers, wordmark, SearchBar,
+│                       add-folder button. Both triggers take `open` plus a
+│                       `triggerProps`/`ref` pair sourced from the route's two
+│                       `useBubbleTrigger()` instances (@/components/library-drawer) —
+│                       this component stays presentational, never managing hover/pin
+│                       state itself. onSearchChange (leave-first invariant) and
+│                       onAddFolder (duplicate-folder confirm flow) are prebuilt
+│                       callbacks passed down — never rebuilt inside this component.
 ├── EmptyState.tsx      Indexing / no-images-yet hint. `manifestCount: number |
 │                       undefined` is the tri-state read of manifest.data?.length.
 ├── SimilarHeader.tsx   "More like this" section: similarity breadcrumb trail

@@ -256,26 +256,6 @@
   transform: translateY(0);
 }
 
-/* The expand-to-inspector button shares the pill's inert-until-revealed
-   contract, mirrored at the top edge: it rises from above (negative
-   translate) rather than from below, so hover pulls both controls toward
-   the image's centre. */
-.selected-image-expand-btn {
-  pointer-events: none;
-  opacity: 0;
-  transform: translateY(-6px);
-  transition:
-    opacity 180ms cubic-bezier(0.16, 1, 0.3, 1),
-    transform 180ms cubic-bezier(0.16, 1, 0.3, 1);
-}
-
-[data-selected-hero]:hover .selected-image-expand-btn,
-[data-selected-hero]:focus-within .selected-image-expand-btn {
-  pointer-events: auto;
-  opacity: 1;
-  transform: translateY(0);
-}
-
 ::-webkit-scrollbar {
   width: 8px;
   height: 8px;

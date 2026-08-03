@@ -21,6 +21,69 @@ const THUMBNAIL_BUCKETS = [480, 960, 1440, 2048] as const;
  */
 const THUMBNAIL_GC_MS = 5 * 60 * 1000;
 
+/**
+ * How many `get_thumbnail` IPC calls may be in flight at once. `get_thumbnail`
+ * is a deliberately SYNC Tauri command (src-tauri/src/commands/CLAUDE.md's
+ * "attribute-less commands run on the main thread" trap) — when the bucket
+ * isn't cached yet it decodes the original, resizes and re-encodes on that
+ * same thread. A column-count change (e.g. auto -> 1/2) widens every
+ * currently-mounted tile at once (masonry keeps the pre-repack visible set
+ * force-mounted across a non-scroll reflow, hooks/CLAUDE.md), so dozens of
+ * tiles can simultaneously want a larger bucket. Firing them unthrottled
+ * queues that many synchronous decodes back-to-back with no yield back to
+ * the webview between them — the same class of freeze
+ * `Masonry.tsx`'s PREFETCH_PREWARM_CAP already exists to prevent for the
+ * similar-search fan-out (133 concurrent searches logged there). Gating
+ * admission here staggers dispatch one small batch at a time instead of a
+ * blocking flood.
+ */
+const MAX_CONCURRENT_BUCKET_REQUESTS = 4;
+let activeBucketRequests = 0;
+const bucketRequestQueue: Array<() => void> = [];
+
+/** Run `task` once fewer than `MAX_CONCURRENT_BUCKET_REQUESTS` are in
+ * flight; otherwise queue it FIFO. `signal` lets a query TanStack Query has
+ * already abandoned (component unmounted, bucket recalculated) drop out of
+ * the queue instead of spending a turn on wasted work. */
+function runThumbnailRequest<T>(
+  task: () => Promise<T>,
+  signal: AbortSignal | undefined,
+): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const run = () => {
+      activeBucketRequests++;
+      task().then(resolve, reject).finally(() => {
+        activeBucketRequests--;
+        const next = bucketRequestQueue.shift();
+        next?.();
+      });
+    };
+
+    if (signal?.aborted) {
+      reject(signal.reason);
+      return;
+    }
+    if (activeBucketRequests < MAX_CONCURRENT_BUCKET_REQUESTS) {
+      run();
+      return;
+    }
+
+    const queued = () => run();
+    bucketRequestQueue.push(queued);
+    signal?.addEventListener(
+      "abort",
+      () => {
+        const idx = bucketRequestQueue.indexOf(queued);
+        if (idx !== -1) {
+          bucketRequestQueue.splice(idx, 1);
+          reject(signal.reason);
+        }
+      },
+      { once: true },
+    );
+  });
+}
+
 /** The bucket that covers `targetPx`, or `null` for "use the original". */
 function bucketFor(targetPx: number): number | null {
   return THUMBNAIL_BUCKETS.find((b) => b >= targetPx) ?? null;
@@ -66,7 +129,11 @@ export function useAdaptiveThumbnail(
   // renders sharp with no base flash.
   const { data } = useQuery({
     queryKey: ["thumbnail", item.id, bucket],
-    queryFn: () => getThumbnail(item.id, bucket as number).then(convertFileSrc),
+    queryFn: ({ signal }) =>
+      runThumbnailRequest(
+        () => getThumbnail(item.id, bucket as number).then(convertFileSrc),
+        signal,
+      ),
     enabled: needsLargerBucket,
     staleTime: Infinity,
     gcTime: THUMBNAIL_GC_MS,

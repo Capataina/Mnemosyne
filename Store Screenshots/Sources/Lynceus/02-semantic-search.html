@@ -1,0 +1,168 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  html,body { width:2880px; height:1800px; overflow:hidden; }
+  body {
+    position:relative;
+    background:#0a0e0b; /* opaque deep green-black */
+    font-family:-apple-system, "Helvetica Neue", Helvetica, Arial, sans-serif;
+  }
+
+  /* ---------- lively background: still-life copper/green atmosphere ---------- */
+  .bg-glow {
+    position:absolute; inset:0; z-index:0;
+    background:
+      radial-gradient(1600px 1200px at 78% 118%, rgba(138,82,50,0.34), rgba(138,82,50,0) 62%),
+      radial-gradient(1400px 1000px at 8% -12%, rgba(36,64,46,0.55), rgba(36,64,46,0) 65%),
+      radial-gradient(900px 700px at 20% 78%, rgba(160,96,54,0.16), rgba(160,96,54,0) 60%),
+      radial-gradient(1200px 900px at 96% 8%, rgba(126,186,206,0.10), rgba(126,186,206,0) 55%);
+  }
+  /* huge ultra-blurred colour echo of the Manet still-life: copper pot, red fish, bone cloth */
+  .echo {
+    position:absolute; z-index:0;
+    left:-500px; top:700px; width:2200px; height:1400px;
+    background:
+      radial-gradient(closest-side at 35% 40%, rgba(151,84,46,0.55), rgba(151,84,46,0) 70%),
+      radial-gradient(closest-side at 62% 62%, rgba(120,45,38,0.35), rgba(120,45,38,0) 70%),
+      radial-gradient(closest-side at 50% 25%, rgba(206,196,170,0.14), rgba(206,196,170,0) 65%);
+    filter:blur(120px);
+    opacity:0.5;
+  }
+  /* giant outlined search-lens ring, the page's geometric watermark */
+  .ring {
+    position:absolute; z-index:0;
+    left:1150px; top:-560px; width:1500px; height:1500px;
+    border:2px solid rgba(126,186,206,0.16);
+    border-radius:50%;
+  }
+  .ring2 {
+    position:absolute; z-index:0;
+    left:1310px; top:-400px; width:1180px; height:1180px;
+    border:1px solid rgba(126,186,206,0.09);
+    border-radius:50%;
+  }
+  .ring-handle {
+    position:absolute; z-index:0;
+    left:1560px; top:930px; width:2px; height:560px;
+    background:linear-gradient(rgba(126,186,206,0.10), rgba(126,186,206,0));
+    transform:rotate(-38deg); transform-origin:top center;
+  }
+  /* grain */
+  .grain {
+    position:absolute; inset:0; z-index:1; pointer-events:none;
+    background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='300' height='300'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/><feColorMatrix type='saturate' values='0'/></filter><rect width='300' height='300' filter='url(%23n)' opacity='0.5'/></svg>");
+    opacity:0.055;
+  }
+  /* vignette */
+  .vignette {
+    position:absolute; inset:0; z-index:1; pointer-events:none;
+    background:radial-gradient(1900px 1400px at 45% 42%, rgba(0,0,0,0) 55%, rgba(0,0,0,0.42) 100%);
+  }
+
+  /* ---------- the app window ---------- */
+  .window {
+    position:absolute; z-index:2;
+    left:1000px; top:420px; width:2300px;
+    border-radius:24px;
+    box-shadow:0 70px 160px rgba(0,0,0,0.75), 0 24px 60px rgba(0,0,0,0.55);
+    overflow:hidden;
+    outline:1px solid rgba(255,255,255,0.07);
+  }
+  .window img { display:block; width:100%; height:auto; }
+
+  /* ---------- copy ---------- */
+  .eyebrow {
+    position:absolute; z-index:3; left:156px; top:200px;
+    font-size:34px; font-weight:700; letter-spacing:0.42em;
+    color:#7EBACE; text-transform:uppercase;
+  }
+  .headline {
+    position:absolute; z-index:3; left:150px; top:266px; width:900px;
+    font-size:158px; line-height:1.02; font-weight:850;
+    letter-spacing:-0.032em; color:#f4f2ec;
+  }
+  .headline .accent { color:#7EBACE; }
+  .body {
+    position:absolute; z-index:3; left:156px; top:660px; width:760px;
+    font-size:44px; line-height:1.42; font-weight:400;
+    color:rgba(238,236,228,0.82);
+  }
+  .body strong { font-weight:650; color:#f4f2ec; }
+
+  /* ---------- lens callouts ---------- */
+  .lens {
+    position:absolute; z-index:4;
+    border-radius:24px;
+    outline:2px solid rgba(126,186,206,0.55);
+    box-shadow:0 40px 90px rgba(0,0,0,0.8), 0 0 0 10px rgba(10,14,11,0.55);
+    background-repeat:no-repeat;
+    background-image:url("file:///Users/atacanercetinkaya/Code/Mnemosyne/Lynceus%20Pics/04-semantic-search-fish.png");
+  }
+  /* query lens: raw crop x780 y20 w430 h96, scale 2.917 */
+  .lens-query {
+    left:150px; top:950px; width:1254px; height:280px;
+    background-size:8821px auto;           /* 3024 * 2.917 */
+    background-position:-2275px -58px;      /* -780*2.917, -20*2.917 */
+  }
+  /* semantic badge lens: raw crop x2045 y42 w155 h60, scale 3.2 */
+  .lens-badge {
+    left:2330px; top:130px; width:480px; height:198px;
+    background-size:9677px auto;           /* 3024 * 3.2 */
+    background-position:-6572px -141px;     /* -2053.75*3.2, -44*3.2 */
+  }
+
+  .connector {
+    position:absolute; z-index:3;
+    height:2px; background:rgba(126,186,206,0.65);
+    transform-origin:left center;
+  }
+  .dot {
+    position:absolute; z-index:3; width:12px; height:12px;
+    border-radius:50%; background:#7EBACE;
+    box-shadow:0 0 12px rgba(126,186,206,0.8);
+  }
+</style>
+</head>
+<body>
+  <div class="bg-glow"></div>
+  <div class="echo"></div>
+  <div class="ring"></div>
+  <div class="ring2"></div>
+  <div class="grain"></div>
+  <div class="vignette"></div>
+
+  <div class="window">
+    <img src="file:///Users/atacanercetinkaya/Code/Mnemosyne/Lynceus%20Pics/04-semantic-search-fish.png" alt="">
+  </div>
+
+  <div class="eyebrow">Semantic Search</div>
+  <div class="headline">Describe it.<br><span class="accent">It&rsquo;s found.</span></div>
+  <div class="body">Type a sentence, not a filename. <strong>Three AI models, fused</strong> — running entirely on your&nbsp;Mac.</div>
+
+  <!-- connector: query lens (from 1404,952) to pill in window (1745,470) -->
+  <div class="connector" id="c1"></div>
+  <div class="dot" style="left:1739px; top:464px;"></div>
+  <div class="lens lens-query"></div>
+
+  <!-- connector: badge lens (from 2578,322) to badge in window (2616,478) -->
+  <div class="connector" id="c2"></div>
+  <div class="dot" style="left:2610px; top:472px;"></div>
+  <div class="lens lens-badge"></div>
+
+  <script>
+    function line(id, x1, y1, x2, y2) {
+      const el = document.getElementById(id);
+      const dx = x2 - x1, dy = y2 - y1;
+      el.style.left = x1 + 'px';
+      el.style.top = (y1 - 1) + 'px';
+      el.style.width = Math.hypot(dx, dy) + 'px';
+      el.style.transform = 'rotate(' + Math.atan2(dy, dx) + 'rad)';
+    }
+    line('c1', 1404, 952, 1745, 470);
+    line('c2', 2578, 322, 2616, 478);
+  </script>
+</body>
+</html>

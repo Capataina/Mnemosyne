@@ -68,3 +68,7 @@ cosine_cache.bin
 * [0-9].py
 * [0-9].rs
 * [0-9].json
+
+# Local raw screenshot captures (App Store source material, ~44MB — the
+# Store Screenshots HTML sources reference them by absolute path)
+Lynceus Pics/

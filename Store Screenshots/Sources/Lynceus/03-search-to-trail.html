@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html><head><meta charset="utf-8"><title>Lynceus — Search meets the trail</title>
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  html,body { width:2880px; height:1800px; background:#0b0f0a; overflow:hidden; }
+  body { position:relative; font-family:-apple-system, "Helvetica Neue", Helvetica, Arial, sans-serif; }
+
+  /* ---------- atmosphere ---------- */
+  .base { position:absolute; inset:0; background:linear-gradient(158deg,#0c110b 0%,#0e130c 42%,#090b07 100%); }
+  .blob { position:absolute; border-radius:50%; filter:blur(130px); }
+  .blob.olive { width:1100px; height:900px; left:-260px; top:820px; background:#57683a; opacity:.34; }
+  .blob.gold  { width:950px;  height:800px; left:1950px; top:-320px; background:#b9924e; opacity:.26; }
+  .blob.sky   { width:800px;  height:700px; left:2280px; top:900px;  background:#7fa3b0; opacity:.14; }
+  .glow { position:absolute; inset:0;
+    background:
+      radial-gradient(1500px 900px at 78% 12%, rgba(206,168,96,.13), transparent 65%),
+      radial-gradient(1400px 1000px at 8% 88%, rgba(120,138,70,.16), transparent 62%),
+      radial-gradient(1100px 800px at 92% 80%, rgba(126,186,206,.07), transparent 60%);
+  }
+  .ring { position:absolute; width:1500px; height:1500px; border-radius:50%;
+    border:2px solid rgba(255,255,255,.045); left:2050px; top:-430px; }
+  .ring2 { position:absolute; width:900px; height:900px; border-radius:50%;
+    border:1.5px dashed rgba(206,168,96,.06); left:-300px; top:1250px; }
+  .dots { position:absolute; left:1980px; top:940px; width:860px; height:820px; opacity:.55;
+    background-image:radial-gradient(rgba(255,255,255,.075) 1.6px, transparent 1.6px);
+    background-size:58px 58px;
+    -webkit-mask-image:radial-gradient(closest-side, #000, transparent 92%); }
+  .hairlines { position:absolute; left:0; top:1080px; width:900px; height:720px; opacity:.5;
+    background:repeating-linear-gradient(48deg, rgba(255,255,255,.035) 0 1.5px, transparent 1.5px 46px);
+    -webkit-mask-image:radial-gradient(closest-side, #000, transparent 95%); }
+  .vignette { position:absolute; inset:0;
+    background:radial-gradient(1900px 1300px at 44% 48%, transparent 55%, rgba(0,0,0,.52) 100%); }
+  .grain { position:absolute; inset:0; opacity:.05; mix-blend-mode:overlay; z-index:60;
+    background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='300' height='300'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2'/></filter><rect width='300' height='300' filter='url(%23n)'/></svg>");
+    background-size:300px 300px; pointer-events:none; }
+
+  /* ---------- copy ---------- */
+  .eyebrow { position:absolute; left:166px; top:126px; z-index:20;
+    font-size:26px; font-weight:700; letter-spacing:.42em; text-transform:uppercase;
+    color:rgba(255,255,255,.55); }
+  .eyebrow .tick { color:#8fd8ee; }
+  h1 { position:absolute; left:158px; top:184px; z-index:20; width:2000px;
+    font-size:154px; font-weight:900; letter-spacing:-.034em; line-height:1.01;
+    color:#f4f6f1; }
+  h1 .cy { color:#8fd8ee; }
+  .body-copy { position:absolute; left:2110px; top:212px; z-index:20; width:610px;
+    font-size:30px; line-height:1.5; font-weight:500; color:rgba(244,246,241,.82); }
+  .body-copy b { color:#cde9f3; font-weight:700; }
+
+  /* ---------- the window ---------- */
+  .window { position:absolute; left:260px; top:550px; width:2320px; height:1456px; z-index:10;
+    border-radius:26px; overflow:hidden;
+    box-shadow: 0 80px 160px rgba(0,0,0,.78), 0 30px 70px rgba(0,0,0,.6), 0 0 0 1.5px rgba(255,255,255,.09);
+    background:#05060a; }
+  .window img { display:block; width:2320px; height:auto; }
+
+  /* highlight rect over the true trail position */
+  .target { position:absolute; left:300px; top:666px; width:740px; height:80px; z-index:30;
+    border:2px solid rgba(143,216,238,.85); border-radius:14px;
+    box-shadow:0 0 26px rgba(143,216,238,.28); }
+
+  /* ---------- lens callout ---------- */
+  svg.connector { position:absolute; inset:0; z-index:35; pointer-events:none; }
+  .lens { position:absolute; left:340px; top:1428px; width:2110px; height:304px; z-index:40;
+    border-radius:24px; overflow:hidden;
+    border:2px solid rgba(143,216,238,.9);
+    box-shadow:0 40px 90px rgba(0,0,0,.7), 0 0 44px rgba(143,216,238,.16);
+    background:#05060a; }
+  .lens img { position:absolute; display:block; width:6578px; height:auto;
+    left:-109px; top:-294px; }
+  .lens-cap { position:absolute; left:352px; top:1740px; z-index:41;
+    font-size:20px; font-weight:700; letter-spacing:.34em; text-transform:uppercase;
+    color:rgba(163,224,242,.95);
+    background:rgba(4,7,9,.88); padding:9px 22px 9px 26px; border-radius:999px;
+    border:1px solid rgba(143,216,238,.35); }
+</style></head>
+<body>
+  <div class="base"></div>
+  <div class="blob olive"></div>
+  <div class="blob gold"></div>
+  <div class="blob sky"></div>
+  <div class="glow"></div>
+  <div class="ring"></div>
+  <div class="ring2"></div>
+  <div class="dots"></div>
+  <div class="hairlines"></div>
+  <div class="vignette"></div>
+
+  <div class="eyebrow"><span class="tick">●</span>&nbsp;&nbsp;Search, then wander</div>
+  <h1>Start with words.<br><span class="cy">End somewhere better.</span></h1>
+  <div class="body-copy">One plain sentence starts the search. Nine hops of <b>“more like this”</b> later, you’ve landed somewhere no keyword could name.</div>
+
+  <div class="window">
+    <img src="file:///Users/atacanercetinkaya/Code/Mnemosyne/Lynceus%20Pics/02-similar-trail-landscapes-query.png" alt="">
+  </div>
+
+  <div class="target"></div>
+
+  <svg class="connector" width="2880" height="1800" viewBox="0 0 2880 1800">
+    <line x1="640" y1="752" x2="640" y2="1426" stroke="rgba(143,216,238,.75)" stroke-width="2"/>
+    <circle cx="640" cy="752" r="6" fill="#8fd8ee"/>
+  </svg>
+
+  <div class="lens-cap">The trail — nine hops deep</div>
+  <div class="lens">
+    <img src="file:///Users/atacanercetinkaya/Code/Mnemosyne/Lynceus%20Pics/02-similar-trail-landscapes-query.png" alt="">
+  </div>
+
+  <div class="grain"></div>
+</body></html>

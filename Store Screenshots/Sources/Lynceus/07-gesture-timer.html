@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { width: 2880px; height: 1800px; overflow: hidden; }
+  body {
+    position: relative;
+    background: #0b0d09;
+    font-family: -apple-system, "Helvetica Neue", Helvetica, Arial, sans-serif;
+  }
+
+  /* ---- atmospheric background, keyed to the ceramic's glaze greens/browns ---- */
+  .bg-glow {
+    position: absolute; inset: 0;
+    background:
+      radial-gradient(1500px 1150px at 66% 40%, rgba(96,138,74,0.42), transparent 68%),
+      radial-gradient(1200px 950px at 10% 86%, rgba(132,92,52,0.40), transparent 68%),
+      radial-gradient(750px 580px at 88% 6%, rgba(126,186,206,0.14), transparent 70%),
+      linear-gradient(160deg, #181c12 0%, #0d100a 60%, #0a0c08 100%);
+  }
+  .bg-echo {
+    position: absolute; left: 520px; top: -260px; width: 1500px; height: 1300px;
+    background:
+      radial-gradient(560px 480px at 42% 38%, rgba(96,160,80,0.5), transparent 70%),
+      radial-gradient(620px 560px at 60% 66%, rgba(128,88,56,0.48), transparent 70%),
+      radial-gradient(420px 380px at 52% 30%, rgba(214,208,188,0.16), transparent 70%);
+    filter: blur(110px);
+    opacity: 0.55;
+  }
+  .bg-hairlines {
+    position: absolute; inset: 0;
+    background: repeating-linear-gradient(45deg, rgba(255,255,255,0.016) 0 1px, transparent 1px 96px);
+  }
+  .bg-ring { position: absolute; border-radius: 50%; }
+  .bg-ring.r1 { width: 1560px; height: 1560px; left: 1810px; top: -580px; border: 2px solid rgba(126,186,206,0.065); }
+  .bg-ring.r2 { width: 980px;  height: 980px;  left: 2100px; top: -290px; border: 2px dashed rgba(126,186,206,0.045); }
+  .bg-ring.r3 { width: 2100px; height: 2100px; left: -900px; top: 900px;  border: 2px solid rgba(150,120,80,0.05); }
+  .bg-grain {
+    position: absolute; inset: 0; opacity: 0.055;
+    background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='300' height='300'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/></filter><rect width='300' height='300' filter='url(%23n)'/></svg>");
+  }
+  .bg-vignette {
+    position: absolute; inset: 0;
+    background: radial-gradient(2100px 1450px at 50% 46%, transparent 62%, rgba(0,0,0,0.38) 100%);
+  }
+
+  /* ---- the app window ---- */
+  .window {
+    position: absolute; left: 1000px; top: 300px;
+    width: 2100px; height: 1318px;
+    border-radius: 24px; overflow: hidden;
+    box-shadow: 0 70px 160px rgba(0,0,0,0.75), 0 24px 60px rgba(0,0,0,0.6);
+    outline: 1.5px solid rgba(255,255,255,0.16);
+  }
+  .window img { width: 2100px; height: 1318px; display: block; }
+
+  /* ---- copy block ---- */
+  .copy { position: absolute; left: 170px; top: 360px; width: 900px; }
+  .eyebrow {
+    font-size: 26px; font-weight: 600; letter-spacing: 0.38em;
+    color: rgba(126,186,206,0.92); text-transform: uppercase;
+  }
+  h1 {
+    margin-top: 34px;
+    font-size: 128px; font-weight: 850; line-height: 1.02; white-space: nowrap;
+    letter-spacing: -0.022em; color: #f4f5f2;
+  }
+  h1 .accent { color: #7EBACE; }
+  .body-copy {
+    margin-top: 44px; max-width: 640px;
+    font-size: 31px; font-weight: 400; line-height: 1.45;
+    color: rgba(244,245,242,0.74);
+  }
+
+  /* ---- zoom-inset lenses ---- */
+  .lens {
+    position: absolute; overflow: hidden;
+    background-image: url("file:///Users/atacanercetinkaya/Code/Mnemosyne/Lynceus%20Pics/09-gesture-session.png");
+    background-repeat: no-repeat;
+    box-shadow: 0 30px 80px rgba(0,0,0,0.65);
+    outline: 2px solid rgba(126,186,206,0.55);
+  }
+  .lens-ring {
+    left: 2440px; top: 56px; width: 300px; height: 300px; border-radius: 50%;
+    background-size: 4838px 3037px;
+    background-position: -2264px -36px;
+  }
+  .lens-strip {
+    left: 340px; top: 1400px; width: 460px; height: 190px; border-radius: 24px;
+    background-size: 4082px 2562px;
+    background-position: -51px -2328px;
+  }
+  .lens-caption {
+    position: absolute;
+    font-size: 20px; font-weight: 600; letter-spacing: 0.28em;
+    color: rgba(244,245,242,0.6); text-transform: uppercase;
+  }
+  .cap-ring  { left: 2110px; top: 88px; text-align: right; width: 300px; }
+  .cap-strip { left: 344px; top: 1614px; }
+
+  svg.connectors { position: absolute; inset: 0; pointer-events: none; }
+</style>
+</head>
+<body>
+  <div class="bg-glow"></div>
+  <div class="bg-echo"></div>
+  <div class="bg-hairlines"></div>
+  <div class="bg-ring r1"></div>
+  <div class="bg-ring r2"></div>
+  <div class="bg-ring r3"></div>
+  <div class="bg-grain"></div>
+
+  <div class="window">
+    <img src="file:///Users/atacanercetinkaya/Code/Mnemosyne/Lynceus%20Pics/09-gesture-session.png" alt="">
+  </div>
+
+  <div class="bg-vignette"></div>
+
+  <div class="copy">
+    <div class="eyebrow">Gesture Timer</div>
+    <h1>Practice,<br><span class="accent">on the clock.</span></h1>
+    <div class="body-copy">Timed figure practice, drawn from your own collection. The countdown advances each reference &mdash; the history strip keeps every pose.</div>
+  </div>
+
+  <svg class="connectors" width="2880" height="1800" viewBox="0 0 2880 1800">
+    <line x1="2513" y1="335" x2="2085" y2="372" stroke="#7EBACE" stroke-width="2" opacity="0.85"/>
+    <circle cx="2048" cy="381" r="7" fill="none" stroke="#7EBACE" stroke-width="2" opacity="0.9"/>
+    <line x1="800" y1="1495" x2="1108" y2="1541" stroke="#7EBACE" stroke-width="2" opacity="0.85"/>
+    <circle cx="1144" cy="1546" r="7" fill="none" stroke="#7EBACE" stroke-width="2" opacity="0.9"/>
+  </svg>
+
+  <div class="lens lens-ring"></div>
+  <div class="lens lens-strip"></div>
+  <div class="lens-caption cap-ring">The countdown ring</div>
+  <div class="lens-caption cap-strip">Every pose, kept</div>
+</body>
+</html>

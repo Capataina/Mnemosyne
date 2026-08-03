@@ -1,0 +1,133 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  html,body { width:2880px; height:1800px; overflow:hidden; }
+  body {
+    position:relative;
+    background:#141110; /* opaque — no alpha */
+    font-family:-apple-system, "Helvetica Neue", Helvetica, Arial, sans-serif;
+  }
+
+  /* ---------- lively background: umber/graphite + warm bronze glow ---------- */
+  .bg-glow {
+    position:absolute; inset:0;
+    background:
+      radial-gradient(1400px 900px at 18% 12%, rgba(196,138,74,0.16), transparent 65%),
+      radial-gradient(1600px 1100px at 78% 85%, rgba(126,186,206,0.06), transparent 60%),
+      radial-gradient(1200px 800px at 45% 105%, rgba(107,74,42,0.14), transparent 70%);
+  }
+  /* oversized ultra-blurred colour echo of the bronze + stone palette */
+  .echo-a {
+    position:absolute; left:-420px; top:520px; width:1500px; height:1300px;
+    background:radial-gradient(closest-side, rgba(139,98,54,0.34), rgba(94,74,58,0.14), transparent);
+    filter:blur(130px);
+  }
+  .echo-b {
+    position:absolute; left:1750px; top:-500px; width:1500px; height:1100px;
+    background:radial-gradient(closest-side, rgba(184,169,143,0.14), transparent);
+    filter:blur(140px);
+  }
+  /* giant concentric-ring watermark — the hops */
+  .ring { position:absolute; border-radius:50%; border:2px solid rgba(238,226,208,0.06); }
+  .ring.r1 { width:900px;  height:900px;  left:50px;  top:950px; }
+  .ring.r2 { width:1320px; height:1320px; left:-160px; top:740px; }
+  .ring.r3 { width:1760px; height:1760px; left:-380px; top:520px; border-color:rgba(238,226,208,0.03); }
+  /* vignette */
+  .vignette {
+    position:absolute; inset:0;
+    background:radial-gradient(1900px 1300px at 50% 46%, transparent 55%, rgba(0,0,0,0.42) 100%);
+  }
+  /* grain */
+  svg.grain { position:absolute; inset:0; width:100%; height:100%; opacity:0.05; }
+
+  /* ---------- the app window ---------- */
+  .window {
+    position:absolute; left:1050px; top:470px;
+    width:2200px; height:1381px;
+    border-radius:24px; overflow:hidden;
+    box-shadow:0 70px 160px rgba(0,0,0,0.72), 0 24px 60px rgba(0,0,0,0.55);
+    outline:1px solid rgba(255,255,255,0.09);
+    background:#000;
+  }
+  .window img { display:block; width:2200px; height:auto; }
+
+  /* ---------- copy ---------- */
+  .eyebrow {
+    position:absolute; left:154px; top:196px;
+    font-size:27px; font-weight:600; letter-spacing:0.42em;
+    color:#7EBACE; text-transform:uppercase;
+  }
+  h1 {
+    position:absolute; left:146px; top:248px;
+    font-size:128px; font-weight:900; line-height:1.04;
+    letter-spacing:-0.022em; color:#f2ede6; white-space:nowrap;
+  }
+  h1 .accent { color:#7EBACE; }
+  .body-copy {
+    position:absolute; left:154px; top:596px; width:700px;
+    font-size:33px; font-weight:400; line-height:1.5; color:#b9b0a4;
+  }
+
+  /* ---------- zoom-inset lens on the breadcrumb trail ---------- */
+  .lens {
+    position:absolute; left:150px; top:966px;
+    width:776px; height:176px;
+    border-radius:24px; overflow:hidden;
+    border:2px solid rgba(126,186,206,0.6);
+    box-shadow:0 30px 70px rgba(0,0,0,0.6), 0 0 0 8px rgba(126,186,206,0.06);
+    background:#0a0a0c;
+  }
+  .lens img { position:absolute; left:-96px; top:-221px; width:4838px; height:auto; }
+  .lens-caption {
+    position:absolute; left:156px; top:1188px;
+    font-size:22px; font-weight:600; letter-spacing:0.3em;
+    color:#8b8175; text-transform:uppercase;
+  }
+  .lens-caption b { color:#7EBACE; font-weight:600; }
+
+  /* connector: lens edge -> true trail position in the window */
+  .connector {
+    position:absolute; left:926px; top:1038px;
+    width:641px; height:2px;
+    background:linear-gradient(90deg, rgba(126,186,206,0.85), rgba(126,186,206,0.35));
+    transform-origin:0 50%;
+    transform:rotate(-41.87deg);
+  }
+  .target-dot {
+    position:absolute; left:1399px; top:606px;
+    width:8px; height:8px; border-radius:50%;
+    background:#7EBACE; box-shadow:0 0 12px rgba(126,186,206,0.75);
+  }
+</style>
+</head>
+<body>
+  <div class="bg-glow"></div>
+  <div class="echo-a"></div>
+  <div class="echo-b"></div>
+  <div class="ring r3"></div>
+  <div class="ring r2"></div>
+  <div class="ring r1"></div>
+
+  <div class="window">
+    <img src="file:///Users/atacanercetinkaya/Code/Mnemosyne/Lynceus%20Pics/08-similar-trail-sculpture.png" alt="">
+  </div>
+
+  <div class="connector"></div>
+  <div class="target-dot"></div>
+
+  <div class="lens">
+    <img src="file:///Users/atacanercetinkaya/Code/Mnemosyne/Lynceus%20Pics/08-similar-trail-sculpture.png" alt="">
+  </div>
+  <div class="lens-caption"><b>The trail</b> &nbsp;—&nbsp; every hop, one chip</div>
+
+  <div class="eyebrow">Visual Similarity</div>
+  <h1>One click.<br><span class="accent">Thirty relatives.</span></h1>
+  <div class="body-copy">Click any piece and its closest relatives appear, ranked by visual kinship. Every hop adds a chip to the trail — walk back any time.</div>
+
+  <div class="vignette"></div>
+  <svg class="grain"><filter id="n"><feTurbulence type="fractalNoise" baseFrequency="0.9" numOctaves="2"/><feColorMatrix type="saturate" values="0"/></filter><rect width="100%" height="100%" filter="url(#n)"/></svg>
+</body>
+</html>

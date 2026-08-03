@@ -1,0 +1,151 @@
+<!-- Page 5 — ORGANISE · Electric Curator system · 2880x1800 -->
+<meta charset="utf-8">
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  html, body { width:2880px; height:1800px; background:#090b12; overflow:hidden; }
+  body {
+    position:relative;
+    font-family:-apple-system, "Helvetica Neue", Helvetica, Arial, sans-serif;
+    -webkit-font-smoothing:antialiased;
+  }
+
+  /* ============ LIVELY BACKGROUND — ukiyo-e paper / indigo ============ */
+  .bg-base {
+    position:absolute; inset:0;
+    background:
+      /* warm paper echo of the ukiyo-e tiles, behind the window */
+      radial-gradient(1150px 900px at 66% 38%, rgba(219,207,173,0.13), rgba(219,207,173,0.045) 45%, transparent 70%),
+      /* second paper echo filling the right void above the bleed */
+      radial-gradient(950px 700px at 88% 12%, rgba(219,207,173,0.085), transparent 68%),
+      /* indigo wash behind the headline */
+      radial-gradient(1250px 950px at 12% 18%, rgba(76,96,190,0.20), rgba(76,96,190,0.06) 50%, transparent 72%),
+      /* faint coral breath near the must-not lens */
+      radial-gradient(700px 420px at 44% 88%, rgba(219,108,99,0.075), transparent 70%),
+      /* deep indigo floor */
+      linear-gradient(160deg, #0b0e1a 0%, #090b12 55%, #080a10 100%);
+  }
+  /* giant outlined folder watermark, tab notch included */
+  .bg-folder { position:absolute; left:1180px; top:-330px; opacity:0.90; }
+  /* fine dotted grid, headline quadrant only */
+  .bg-dots {
+    position:absolute; left:0; top:0; width:1250px; height:1160px;
+    background-image:radial-gradient(rgba(190,200,230,0.13) 1.6px, transparent 1.6px);
+    background-size:56px 56px;
+    -webkit-mask-image:radial-gradient(900px 800px at 25% 30%, #000 30%, transparent 78%);
+  }
+  /* diagonal hairlines, bottom-left */
+  .bg-hair {
+    position:absolute; left:-100px; bottom:-140px; width:1100px; height:760px;
+    background:repeating-linear-gradient(115deg, rgba(219,207,173,0.05) 0 2px, transparent 2px 84px);
+    -webkit-mask-image:radial-gradient(700px 560px at 30% 75%, #000 25%, transparent 80%);
+  }
+  .bg-grain { position:absolute; inset:0; opacity:0.05; }
+  .bg-vignette {
+    position:absolute; inset:0;
+    background:radial-gradient(2100px 1500px at 48% 44%, transparent 58%, rgba(3,4,8,0.62) 100%);
+  }
+
+  /* ============ COPY ============ */
+  .eyebrow {
+    position:absolute; left:152px; top:158px;
+    font-size:27px; font-weight:700; letter-spacing:0.42em;
+    color:rgba(153,208,229,0.95); text-transform:uppercase;
+  }
+  .eyebrow::before {
+    content:""; display:inline-block; width:46px; height:4px; border-radius:2px;
+    background:#8ad2ea; margin-right:26px; vertical-align:9px;
+  }
+  h1 {
+    position:absolute; left:144px; top:216px; width:960px;
+    font-size:124px; font-weight:850; line-height:1.04; letter-spacing:-0.024em;
+    color:#f2f4f9; white-space:nowrap;
+  }
+  h1 .accent { color:#8ad2ea; }
+  .body-copy {
+    position:absolute; left:152px; top:520px; width:680px;
+    font-size:33px; font-weight:400; line-height:1.42; color:#c3cad8;
+  }
+  .body-copy strong { color:#eef1f6; font-weight:600; }
+
+  /* ============ MAIN WINDOW (raw 05, right-empty canvas cropped off-frame) ============ */
+  .window {
+    position:absolute; left:990px; top:330px;
+    width:2420px; height:1519px;             /* 3024x1898 @ 0.80 */
+    border-radius:24px; overflow:hidden;
+    box-shadow:0 60px 140px rgba(0,0,0,0.72), 0 22px 54px rgba(0,0,0,0.55);
+    outline:1px solid rgba(255,255,255,0.085); outline-offset:-1px;
+    background:#040507;
+  }
+  .window img { width:2420px; height:1519px; display:block; }
+
+  /* ============ SECONDARY CARD (raw 07 — tag + note on the image) ============ */
+  .card-label {
+    position:absolute; left:152px; top:806px;
+    font-size:21px; font-weight:700; letter-spacing:0.30em;
+    color:rgba(195,202,216,0.72); text-transform:uppercase;
+  }
+  .card {
+    position:absolute; left:152px; top:854px;
+    width:620px; height:440px;
+    border-radius:24px; overflow:hidden;
+    background-image:url("file:///Users/atacanercetinkaya/Code/Mnemosyne/Lynceus%20Pics/07-inspector-notes-timer.png");
+    /* crop raw x2150 y195, w825 h585 → k = 620/825 = 0.7515 */
+    background-size:2272px 1426px;
+    background-position:-1616px -147px;
+    box-shadow:0 34px 80px rgba(0,0,0,0.62);
+    outline:1px solid rgba(255,255,255,0.09); outline-offset:-1px;
+  }
+
+  /* ============ ZOOM LENS — the Refine block (+ / −) ============ */
+  .lens {
+    position:absolute; left:680px; top:1372px;
+    width:900px; height:188px;
+    border-radius:24px; overflow:hidden;
+    background-color:#0a0c10;
+    background-image:url("file:///Users/atacanercetinkaya/Code/Mnemosyne/Lynceus%20Pics/05-library-tags-folders.png");
+    /* crop raw x25 y790, w670 h140 → k = 900/670 = 1.3433 */
+    background-size:4062px 2550px;
+    background-position:-34px -1061px;
+    box-shadow:0 40px 90px rgba(0,0,0,0.70), 0 0 0 2.5px rgba(138,210,234,0.85);
+    z-index:5;
+  }
+  .connector { position:absolute; left:0; top:0; width:2880px; height:1800px; pointer-events:none; z-index:4; }
+</style>
+
+<div class="bg-base"></div>
+<svg class="bg-folder" width="1900" height="1500" viewBox="0 0 1900 1500" fill="none">
+  <path d="M120 260 h520 l110 110 h1030 a70 70 0 0 1 70 70 v880 a70 70 0 0 1 -70 70 H120 a70 70 0 0 1 -70 -70 V330 a70 70 0 0 1 70 -70 Z"
+        stroke="rgba(210,216,240,0.065)" stroke-width="2.5"/>
+  <path d="M240 380 h420 l90 90 h840" stroke="rgba(210,216,240,0.045)" stroke-width="2"/>
+</svg>
+<div class="bg-dots"></div>
+<div class="bg-hair"></div>
+
+<div class="eyebrow">Library &middot; Tags &amp; Filters</div>
+<h1>Tags become<br><span class="accent">folders.</span></h1>
+<div class="body-copy">
+  Tag an image and it files itself &mdash; nothing copied, nothing moved.
+  Stack <strong>must-have</strong> and <strong>must-not-have</strong> tags to carve any view of your library.
+</div>
+
+<div class="window">
+  <img src="file:///Users/atacanercetinkaya/Code/Mnemosyne/Lynceus%20Pics/05-library-tags-folders.png" alt="">
+</div>
+
+<div class="card-label">Tags &amp; notes live on the image</div>
+<div class="card"></div>
+
+<svg class="connector" viewBox="0 0 2880 1800">
+  <!-- true position of the Refine chip row: raw (358,882) @0.80 + (990,330) → (1276,1036) -->
+  <line x1="1100" y1="1372" x2="1276" y2="1062" stroke="#8ad2ea" stroke-width="2"/>
+  <circle cx="1276" cy="1050" r="11" fill="none" stroke="#8ad2ea" stroke-width="2.5"/>
+  <circle cx="1276" cy="1050" r="3.5" fill="#8ad2ea"/>
+</svg>
+<div class="lens"></div>
+
+<svg class="bg-grain" style="position:absolute;inset:0;z-index:9" width="2880" height="1800">
+  <filter id="g"><feTurbulence type="fractalNoise" baseFrequency="0.9" numOctaves="2" stitchTiles="stitch"/>
+    <feColorMatrix type="matrix" values="0 0 0 0 1  0 0 0 0 1  0 0 0 0 1  0.9 0 0 0 0"/></filter>
+  <rect width="2880" height="1800" filter="url(#g)" opacity="0.05"/>
+</svg>
+<div class="bg-vignette" style="z-index:10"></div>

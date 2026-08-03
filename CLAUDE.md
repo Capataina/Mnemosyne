@@ -32,6 +32,9 @@ Mnemosyne/
 ├── scripts/              Python/bash helpers: model download/quantize, test corpus, launcher
 ├── models/               gitignored ONNX weights, models/<modality>/ (image|audio|3d);
 │                         populated by scripts/download_models.py, bundled by Tauri at build
+├── Store Screenshots/    App Store marketing pages per app + regenerating HTML sources
+│                         (see its CLAUDE.md); "Lynceus Pics/" beside it is the gitignored
+│                         local raw-capture material those sources composite
 ├── justfile              command runner — thin wrappers over scripts/ and cargo/pnpm
 ├── Cargo.toml            Rust workspace: crates/engine + apps/lynceus/src-tauri
 ├── package.json          pnpm monorepo manifest (v0.2.0 — its own version line)

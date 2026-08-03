@@ -1,0 +1,163 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { width: 2880px; height: 1800px; overflow: hidden; }
+  body {
+    position: relative;
+    background: #0c0a08;
+    font-family: -apple-system, "Helvetica Neue", Helvetica, Arial, sans-serif;
+  }
+
+  /* ---- atmosphere, keyed to the map's aged-paper cream/sepia ---- */
+  .bg-glow {
+    position: absolute; inset: 0;
+    background:
+      radial-gradient(1500px 900px at 50% 0%, rgba(196,162,106,0.34), transparent 68%),
+      radial-gradient(1150px 950px at 96% 12%, rgba(228,212,174,0.26), transparent 66%),
+      radial-gradient(950px 900px at 100% 62%, rgba(172,134,82,0.26), transparent 70%),
+      radial-gradient(760px 620px at 88% 96%, rgba(126,186,206,0.16), transparent 70%),
+      linear-gradient(155deg, #1c1509 0%, #120d08 55%, #0c0a08 100%);
+  }
+  .bg-echo {
+    position: absolute; left: 1560px; top: -420px; width: 1600px; height: 1500px;
+    background:
+      radial-gradient(620px 540px at 40% 42%, rgba(220,196,144,0.50), transparent 70%),
+      radial-gradient(560px 520px at 66% 70%, rgba(158,116,62,0.50), transparent 70%),
+      radial-gradient(420px 380px at 56% 34%, rgba(242,232,206,0.18), transparent 70%);
+    filter: blur(115px);
+    opacity: 0.6;
+  }
+  /* dotted grid — this page's watermark, echoing the map's street grid */
+  .bg-dotgrid {
+    position: absolute; inset: 0;
+    background-image: radial-gradient(circle, rgba(228,212,174,0.17) 1.6px, transparent 1.6px);
+    background-size: 72px 72px;
+    -webkit-mask-image: radial-gradient(1450px 1250px at 88% 30%, black, transparent 75%);
+  }
+  .bg-hairlines {
+    position: absolute; inset: 0;
+    background: repeating-linear-gradient(45deg, rgba(255,255,255,0.014) 0 1px, transparent 1px 104px);
+  }
+  .bg-ring { position: absolute; border-radius: 50%; }
+  .bg-ring.r1 { width: 1700px; height: 1700px; left: 1930px; top: 560px; border: 2px solid rgba(228,212,174,0.11); }
+  .bg-ring.r2 { width: 1080px; height: 1080px; left: 2260px; top: 880px; border: 2px dashed rgba(126,186,206,0.09); }
+  .bg-ring.r3 { width: 760px; height: 760px; left: 2470px; top: -350px; border: 2px solid rgba(126,186,206,0.07); }
+  .bg-grain {
+    position: absolute; inset: 0; opacity: 0.055;
+    background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='300' height='300'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/></filter><rect width='300' height='300' filter='url(%23n)'/></svg>");
+  }
+  .bg-vignette {
+    position: absolute; inset: 0;
+    background: radial-gradient(2200px 1500px at 48% 50%, transparent 66%, rgba(0,0,0,0.34) 100%);
+  }
+
+  /* ---- the app window: bleeds left + bottom, inspector fully on-canvas ---- */
+  .window {
+    position: absolute; left: -180px; top: 396px;
+    width: 2340px; height: 1469px;
+    border-radius: 24px; overflow: hidden;
+    box-shadow: 60px 70px 160px rgba(0,0,0,0.75), 20px 24px 60px rgba(0,0,0,0.6);
+    outline: 1.5px solid rgba(255,255,255,0.15);
+  }
+  .window img { width: 2340px; height: 1469px; display: block; }
+
+  /* ---- copy: full-width banner headline above the window ---- */
+  .copy { position: absolute; left: 170px; top: 96px; }
+  .eyebrow {
+    font-size: 26px; font-weight: 600; letter-spacing: 0.38em;
+    color: rgba(126,186,206,0.92); text-transform: uppercase;
+  }
+  h1 {
+    margin-top: 26px;
+    font-size: 152px; font-weight: 850; line-height: 1.0; white-space: nowrap;
+    letter-spacing: -0.022em; color: #f5f3ee;
+  }
+  h1 .accent { color: #7EBACE; }
+  .body-copy {
+    position: absolute; left: 2230px; top: 452px; width: 590px;
+    font-size: 30px; font-weight: 400; line-height: 1.48;
+    color: rgba(245,243,238,0.74);
+  }
+
+  /* ---- zoom-inset lenses ---- */
+  .lens {
+    position: absolute; overflow: hidden; border-radius: 24px;
+    background-image: url("file:///Users/atacanercetinkaya/Code/Mnemosyne/Lynceus%20Pics/07-inspector-notes-timer.png");
+    background-repeat: no-repeat;
+    box-shadow: 0 30px 80px rgba(0,0,0,0.65);
+    outline: 2px solid rgba(126,186,206,0.55);
+  }
+  /* tag chip, 1.76x: raw region x2150 y258 w340 h96 */
+  .lens-chip {
+    left: 2230px; top: 792px; width: 600px; height: 169px;
+    background-size: 5337px 3350px;
+    background-position: -3795px -455px;
+  }
+  /* notes block, 1.25x: raw region x2185 y545 w480 h152 */
+  .lens-notes {
+    left: 2230px; top: 1128px; width: 600px; height: 190px;
+    background-size: 3780px 2373px;
+    background-position: -2731px -681px;
+  }
+  .lens-caption {
+    position: absolute;
+    font-size: 20px; font-weight: 600; letter-spacing: 0.28em;
+    color: rgba(245,243,238,0.6); text-transform: uppercase;
+  }
+  .cap-chip  { left: 2234px; top: 985px; }
+  .cap-notes { left: 2234px; top: 1342px; }
+  .cap-start { left: 2234px; top: 1660px; width: 590px; color: rgba(126,186,206,0.85); }
+
+  /* cyan ring annotation on the true Start row */
+  .start-ring {
+    position: absolute; left: 1494px; top: 1682px; width: 636px; height: 86px;
+    border-radius: 18px; border: 2.5px solid rgba(126,186,206,0.85);
+    box-shadow: 0 0 34px rgba(126,186,206,0.28);
+  }
+
+  svg.connectors { position: absolute; inset: 0; pointer-events: none; }
+</style>
+</head>
+<body>
+  <div class="bg-glow"></div>
+  <div class="bg-echo"></div>
+  <div class="bg-dotgrid"></div>
+  <div class="bg-hairlines"></div>
+  <div class="bg-ring r1"></div>
+  <div class="bg-ring r2"></div>
+  <div class="bg-ring r3"></div>
+  <div class="bg-grain"></div>
+
+  <div class="window">
+    <img src="file:///Users/atacanercetinkaya/Code/Mnemosyne/Lynceus%20Pics/07-inspector-notes-timer.png" alt="">
+  </div>
+
+  <div class="bg-vignette"></div>
+
+  <div class="copy">
+    <div class="eyebrow">The Inspector</div>
+    <h1>Tag it. Note it. <span class="accent">Draw it.</span></h1>
+  </div>
+
+  <div class="body-copy">Tags, notes in your own words, and a timed practice session live one click deep on every image. Your library remembers why you saved things.</div>
+
+  <svg class="connectors" width="2880" height="1800" viewBox="0 0 2880 1800">
+    <line x1="2230" y1="855" x2="1742" y2="650" stroke="#7EBACE" stroke-width="2" opacity="0.8"/>
+    <circle cx="1718" cy="640" r="7" fill="none" stroke="#7EBACE" stroke-width="2" opacity="0.9"/>
+    <line x1="2230" y1="1210" x2="2110" y2="930" stroke="#7EBACE" stroke-width="2" opacity="0.8"/>
+    <circle cx="2100" cy="908" r="7" fill="none" stroke="#7EBACE" stroke-width="2" opacity="0.9"/>
+    <line x1="2234" y1="1676" x2="2150" y2="1712" stroke="#7EBACE" stroke-width="2" opacity="0.8"/>
+  </svg>
+
+  <div class="start-ring"></div>
+
+  <div class="lens lens-chip"></div>
+  <div class="lens lens-notes"></div>
+  <div class="lens-caption cap-chip">Tags, one chip away</div>
+  <div class="lens-caption cap-notes">A note in your own hand</div>
+  <div class="lens-caption cap-start">Practice, one click away</div>
+</body>
+</html>

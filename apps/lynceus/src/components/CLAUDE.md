@@ -123,6 +123,10 @@ The three process lessons, hard-won:
 - **Prewarm fan-out.** Each prewarmed tile costs a 3-encoder fused search plus a detail hydrate. The cap in Masonry.tsx exists because uncapped prewarm froze clicks under indexing load; hover still warms any tile on intent.
 - **Footprint convention.** `startCol` is the physical left column, always. The old left/right/centre edge-reference convention was removed because centre was ambiguous for even spans — don't reintroduce it.
 
+## Planned work (pointers — the plans live where noted)
+
+- Cross-folder audit batches edit four files here: `masonryPacking.ts` (`lowestFreeY` un-export), `Masonry.tsx` (`MasonryItemData` deletion), `PinterestModal.tsx` (two meaning-renames), `masonryPacking.test.ts` (header + fixture typing) — full batch entries in `../CLAUDE.md`'s planned work. The resize split in `../hooks/CLAUDE.md` lands its pure half as a NEW `components/resizeGeometry.ts` beside `masonryReorder.ts`. [code-health-audit 2026-08-02]
+
 ## Key findings
 
 - Settle curves that accelerate from zero read as lag even at perfect frame rate; the grid decelerates into place (ease-out-expo) by decision (3d72951).

@@ -52,6 +52,11 @@ cargo test                  # from apps/lynceus/src-tauri — 44 lib + integrati
 
 The plain-English release runbook (every term defined for a first-time Mac publisher) is `design/store/release-runbook.md`; the listing spec is `design/store/listing.md`.
 
+## Planned work
+
+- **This crate's `Cargo.toml:40` carries the dead `bincode = "1.3"` dep** — half of a two-manifest removal; the full audited entry (proof, refuter evidence) lives in `crates/engine/CLAUDE.md`'s planned work; delete both lines in one commit. [code-health-audit 2026-08-02]
+- The `src/` and `src/commands/` CLAUDE.md files carry this crate's audited change queue (the indexing.rs split, the legacy-command removal, dedups, the doc-rot batch) — read those before any cleanup pass here.
+
 ## Place in the whole
 
 Sits between `crates/engine/` (all media-agnostic persistence and retrieval — the foundation shared with any future Mnemosyne vertical) and `apps/lynceus/src/` (the React frontend, other agents' surface). Version moves with the work: `Cargo.toml`, `tauri.conf.json`, and the frontend `package.json` bump in lockstep per the repo convention.

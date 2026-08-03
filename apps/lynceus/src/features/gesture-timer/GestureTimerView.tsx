@@ -373,7 +373,7 @@ export function GestureTimerView({
                 aria-label={`Reference ${index + 1} of ${timer.history.length}`}
                 aria-current={isSelected ? "true" : undefined}
                 className={[
-                  "gesture-timer-history-item pointer-events-auto size-11 shrink-0 rounded-md object-cover transition-opacity",
+                  "gesture-timer-history-item pointer-events-auto size-11 shrink-0 overflow-hidden rounded-md object-cover transition-opacity",
                   isSelected
                     ? "opacity-100 ring-2 ring-[var(--gesture-accent)]"
                     : "opacity-55 ring-1 ring-[var(--gesture-border)] hover:opacity-100",
@@ -384,7 +384,7 @@ export function GestureTimerView({
                   alt=""
                   aria-hidden="true"
                   draggable={false}
-                  className="size-full rounded-[5px] object-cover"
+                  className="size-full object-cover"
                 />
               </button>
             );

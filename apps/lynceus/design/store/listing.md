@@ -1,25 +1,18 @@
-# Lynceus — Mac App Store listing (draft 1, 2026-07-19)
+# Lynceus — Mac App Store listing (draft 2, 2026-08-03 — ASO-research-grounded; draft 1 was 2026-07-19)
 
-> Working copy for App Store Connect. Character budgets are Apple's hard
-> limits; every field below is within them. Pricing is deliberately left
-> as a decision block. Screenshot sizes to be pinned once the current
-> requirements are confirmed (research in flight).
+> Working copy for App Store Connect. Character budgets are Apple's hard limits; every field below is within them (counts verified by script, not eye). Field mechanics from the 2026-08-03 ASO research: name > subtitle > keywords in search weight, never repeat a term across the three fields, singular forms (Apple auto-matches English plurals), no spaces after keyword commas, no competitor names anywhere (guideline 2.3.7). Pricing is deliberately left as a decision block.
 
 ## Name (30 chars max)
 
-**Lynceus — Local Image Browser** (29)
+**Lynceus: AI Image Organizer** (27)
 
-Alternatives, if the dash reads clunky in search:
-- `Lynceus: Image Browser` (22)
-- `Lynceus` (7 — cleanest, weakest for search)
+"Image organizer" is the live category vocabulary on the Mac App Store; "AI" is honest (on-device encoders) and searched. Draft-1 alternative `Lynceus — Local Image Browser` (29) kept on record; "browser" is weaker category vocabulary than "organizer".
 
 ## Subtitle (30 chars max)
 
-**Your library, seen instantly** (28)
+**Private photo search & boards** (29)
 
-Alternatives:
-- `Private, local image search` (27)
-- `Find any image by describing` (28)
+Carries three search terms the name doesn't (private, photo, search) plus the moodboard hint — per the no-repeat rule, none of these appear in the keyword field.
 
 ## Promotional text (170 chars max — editable without review)
 
@@ -27,58 +20,46 @@ Alternatives:
 follow visual trails, arrange your board by hand — all on your Mac,
 nothing in the cloud.** (159)
 
-## Description (4000 chars max)
+## Description (4000 chars max; not indexed by App Store search — its jobs are conversion and Google. First ~170 chars carry the fold.)
 
-Lynceus is for people who collect images — reference art, wallpapers,
-screenshots, inspiration — and then can never find them again.
+Lynceus is for people who collect images — reference art, family photos, screenshots, inspiration — and then can never find them again.
 
-Point it at your folders and it builds a fast, private library on your
-Mac. Nothing is uploaded. Nothing is moved. Your files stay exactly
-where they are; Lynceus just sees them.
+Point it at your folders and it builds a fast, private library on your Mac. Nothing is uploaded. Nothing is moved. Your files stay exactly where they are; Lynceus just sees them.
 
 FIND BY DESCRIBING
-Type what you remember — "red armour concept art", "foggy mountain at
-dawn" — and Lynceus finds it, even when the filename is IMG_4302.
-On-device AI encoders (OpenCLIP, SigLIP-2, DINOv2) read your images
-once, locally, and from then on search is instant and entirely offline.
+Type what you remember — "red armour concept art", "birthday cake in the garden", "foggy mountain at dawn" — and Lynceus finds it, even when the filename is IMG_4302. Three on-device AI encoders read your images once, locally; their rankings are fused so the strongest matches surface first, and from then on search is instant and entirely offline.
 
 FOLLOW VISUAL TRAILS
-Click any image to see the ones that look like it. Click again to go
-deeper. It's the "more like this" your file browser never had — and the
-fastest way to rediscover a collection you forgot you owned.
+Click any image to see the ones that look like it. Click again to go deeper — the trail remembers where you came from. It's the "more like this" your file browser never had, and the fastest way to rediscover a collection you forgot you owned.
 
 A BOARD, NOT A LIST
-The masonry board packs your images edge to edge like a moodboard.
-Drag any image exactly where you want it — the board telegraphs where
-it will land and settles precisely there. Stretch the ones that matter
-to 2×2 or 3×3. Your arrangement is yours.
+The masonry board packs your images edge to edge like a moodboard. Drag any image exactly where you want it — the board telegraphs where it will land and settles precisely there. Stretch the ones that matter to 2×2 or 3×3. Your arrangement is yours, and it survives restarts, rescans, and reshuffles.
 
 TAGS THAT ACT LIKE FOLDERS
-Tag images without moving a single file. Every tag becomes a folder in
-the library drawer, and filters combine — must have this, must not have
-that — to cut a thousand images down to the twelve you meant.
+Tag images without moving a single file. Every tag becomes a folder in the library panel, and filters combine — must have this, must not have that — to cut a thousand images down to the twelve you meant.
 
-BUILT FOR ARTISTS WHO PRACTISE
-The gesture timer turns any selection into a timed reference session:
-auto-advancing images, pinch to zoom, pan with two fingers, pause when
-you need longer. Set the interval, hit start, and draw.
+PRACTISE FROM YOUR OWN COLLECTION
+The gesture timer turns any similarity range into a timed drawing session: the countdown advances references automatically, zoom rides your cursor, and a history strip keeps every reference one click away — revisit an earlier pose without losing your place, then resume the clock. Set the interval, hit start, and draw.
+
+MADE FOR COLLECTIONS OF EVERY KIND
+- Artists — build reference boards, then practise from them in timed sessions.
+- Photographers — rediscover ten years of shoots by describing the frame you half-remember.
+- Families — your photo archive, searchable in plain words, on your own machine.
+- Designers — moodboards that search themselves, by subject, colour, or feel.
+- Collectors and researchers — a thousand scans become a browsable, taggable archive.
 
 PRIVATE BY ARCHITECTURE
-Lynceus is local-first the whole way down. The library index, the
-previews, the AI models — all of it ships inside the app and lives on
-your Mac. There is no account, no telemetry, no cloud, and no network
-request — ever. Unplug the internet and nothing changes.
+Lynceus is local-first the whole way down. The library index, the previews, the AI models — all of it ships inside the app and lives on your Mac. There is no account, no telemetry, no cloud, and no network request — ever. Unplug the internet and nothing changes. Settings shows you the whole index — every image catalogued, previewed, and encoded, live.
 
-— 
+—
 
-Lynceus watches your folders and keeps itself current: add files, move
-them, restructure everything — images keep their tags and their place
-on your board. A short onboarding tour shows you the whole app in under
-a minute, and you can replay it any time from Settings.
+Lynceus watches your folders and keeps itself current: add files, move them, rename them, restructure everything — images keep their tags, their notes, and their place on your board, because Lynceus recognises files by their content, not their path. A short onboarding tour shows you the whole app in under a minute, replayable any time from Settings.
 
 ## Keywords (100 chars max, comma-separated)
 
-`image,browser,photo,organizer,moodboard,reference,semantic,search,ai,local,private,art,gesture,draw` (99)
+`manager,moodboard,reference,browser,viewer,gallery,tag,folder,local,offline,semantic,art,draw` (93)
+
+No term repeats the name or subtitle (repeats waste the slot — Apple already indexes those fields); singulars only; no spaces after commas. Apple combines separate keywords into phrases automatically ("image manager", "reference board", "offline gallery" all emerge from these + the name/subtitle terms).
 
 ## Categories
 

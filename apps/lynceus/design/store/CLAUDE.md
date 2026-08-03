@@ -4,12 +4,16 @@ The two working documents for putting Lynceus on the Mac App Store.
 
 ```
 store/
-├── listing.md           App Store Connect copy, drafted 2026-07-19: name / subtitle /
-│                        promo / description / keywords, each within Apple's hard
-│                        character budget (counts inline); categories, privacy label
-│                        ("Data Not Collected"), support+privacy URLs (site repo builds
-│                        them), six-shot screenshot plan at 2880x1800 flattened PNG,
-│                        and the OPEN pricing decision block
+├── listing.md           App Store Connect copy, draft 2 (2026-08-03, ASO-research-
+│                        grounded): name "Lynceus: AI Image Organizer" (27) / subtitle
+│                        "Private photo search & boards" (29) / keywords (93, no-repeat
+│                        rule applied) / 3,045-char description with human use-case
+│                        section; field mechanics documented inline (name>subtitle>
+│                        keywords weight, singulars, no cross-field repeats, no
+│                        competitor names per 2.3.7). Categories, privacy label
+│                        ("Data Not Collected"), live support+privacy URLs, screenshot
+│                        plan, and the OPEN pricing decision block. Awaits founder
+│                        sign-off as a whole.
 └── release-runbook.md   plain-English signing/notarisation runbook (2026-07-19) for a
                          first-time Mac publisher: defines the five terms, tables what
                          is already done, then the founder's ~1-hour enrolment path

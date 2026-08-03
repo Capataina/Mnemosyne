@@ -20,7 +20,17 @@ scripts/
 │                              ~/Documents/Splash Arts/ (--output overrides; --workers up
 │                              to ~32 tolerated by the CDN); resumable, stdlib-only.
 │                              Distinct images, clean CLIP clusters — the shared baseline
-│                              for cross-machine search-quality comparison
+│                              for cross-machine search-quality comparison. INTERNAL TEST
+│                              DATA ONLY — Riot's fan-content licence is non-commercial,
+│                              so these may never appear in screenshots or marketing
+├── fetch_demo_library.py      the SCREENSHOT/marketing corpus: ~220 CC0 public-domain
+│                              artworks (AIC + Met open access — commercial use cleared,
+│                              filtered per item on the API's own public-domain flag) into
+│                              ~/Pictures/LynceusDemoLibrary/ (--dest, --limit-per-query);
+│                              idempotent, stdlib-only. Mix tuned for the artist audience:
+│                              figure studies, portraits, ukiyo-e, landscapes, botanicals.
+│                              Trap: AIC's image CDN 403s bare programmatic requests —
+│                              needs the browser-shaped header set in BROWSER_HEADERS
 ├── start_lynceus.sh           the launcher behind just lynceus-dev/-dev-telemetry/-release;
 │                              resolves the repo root, exports LYNCEUS_MODELS_DIR, and
 │                              documents the pnpm `--` trap inline. Never invoked directly

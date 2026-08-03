@@ -21,8 +21,8 @@ ui/
 
 ## The z-ladder (authority: comment in dialog.tsx)
 
-grid chrome 10-50 · perf overlay 80/81 · detail modal 100 · popovers + gesture timer + library/settings bubble panels 200 · timer config panel 220 · onboarding overlay 240 · modal dialogs 250 · boot splash 300.
+grid chrome 10-50 (includes the library/settings edge-hover strips at 45) · perf overlay 80/81 · detail modal 100 · popovers + gesture timer + library/settings edge slide-out panels 200 · timer config panel 220 · onboarding overlay 240 · modal dialogs 250 · boot splash 300.
 
-The library and settings drawers held their own rung (90/91) as full-height scrimmed panels through 2026-08-02; the 2026-08-03 bubble-panel redesign (`components/library-drawer/`, `components/settings/`) replaced both with non-modal floating popovers and retired that rung — they now join the popover tier like any other Radix popover.
+The library and settings drawers held their own rung (90/91) as full-height scrimmed panels through 2026-08-02; the 2026-08-03 redesign (`components/library-drawer/`, `components/settings/`) replaced both with non-modal panels anchored flush to a screen edge that slide out on hover-with-intent, and retired that rung — they now join the popover tier like any other Radix popover. The edge-hover strip that opens each panel sits at 45, deliberately below the detail modal (100) so hovering near the screen edge while an image is open can't pop a panel out over it.
 
 A modal confirm is the one layer nothing may cover: a dialog below a scrimmed drawer once rendered invisible while Radix still locked pointer events app-wide — the app appeared frozen (the folder-delete no-op, 244b87a). If a new surface rises above 250, dialogs must move above it in the same change.

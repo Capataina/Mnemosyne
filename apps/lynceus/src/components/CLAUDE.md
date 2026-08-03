@@ -62,10 +62,12 @@ components/
 ├── SelectedImageTimerPill.tsx     Timer quick-start pill overlapping the selected hero's bottom
 │                                  edge; App.css owns its hover/focus reveal.
 ├── PerfOverlay.tsx                ⌘⇧P diagnostics panel (z-[80/81]); polls perf snapshot 2s.
-├── library-drawer/                Library bubble panel (non-modal, hover/pin, z-[200]):
-│                                  tag folders + include/exclude filters — see its file.
-├── settings/                      Settings bubble panel (non-modal, hover/pin, z-[200]),
-│                                  one file per section — see its file.
+├── library-drawer/                Library edge slide-out panel (non-modal, hover/pin,
+│                                  z-[200], flush left edge): tag folders + include/exclude
+│                                  filters — see its file.
+├── settings/                      Settings edge slide-out panel (non-modal, hover/pin,
+│                                  z-[200], flush right edge), one file per section — see
+│                                  its file.
 └── ui/                            shadcn-style primitives; dialog.tsx documents the z-ladder — see its file.
 ```
 

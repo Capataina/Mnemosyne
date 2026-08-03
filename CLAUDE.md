@@ -56,7 +56,7 @@ python3 scripts/download_models.py --modality image # materialise models/image/
 
 ## Version lockstep
 
-Lynceus's version lives in three text manifests that move together in the same commit, with `Cargo.lock` following: `apps/lynceus/package.json`, `apps/lynceus/src-tauri/Cargo.toml`, `apps/lynceus/src-tauri/tauri.conf.json` — all `0.7.15` today. The engine (`crates/engine/Cargo.toml`, `0.5.5`) versions independently and bumps only when its own code changes. The root `package.json` (`0.2.0`) tracks monorepo-level structure, not either product.
+Lynceus's version lives in three text manifests that move together in the same commit, with `Cargo.lock` following: `apps/lynceus/package.json`, `apps/lynceus/src-tauri/Cargo.toml`, `apps/lynceus/src-tauri/tauri.conf.json` — all `0.7.17` today. The engine (`crates/engine/Cargo.toml`, `0.5.5`) versions independently and bumps only when its own code changes. The root `package.json` (`0.2.0`) tracks monorepo-level structure, not either product.
 
 ## Invariants and traps
 
@@ -86,4 +86,4 @@ The per-folder `CLAUDE.md` layer is the repository's single documentation layer:
 
 ## Current state (2026-08-02)
 
-Lynceus 0.7.15, engine 0.5.5. Packaging is done: sandbox entitlements wired, the store-shaped bundle slimmed 2.9GB → 674MB (int8 models only), ad-hoc-sealed app boots clean with zero network attempts (5968d2e), bundle ID renamed to `com.capataina.lynceus` (f14aaa8). Tests green: engine 141/141, frontend 250/250. The sole release blocker is the founder's Apple Developer enrolment; repo-side the remaining item is the 5-minute live folder-persistence test described in `apps/lynceus/design/store/release-runbook.md`. The knowledge layer settled today: the stranded 24-July Hermes migration was recovered (12d1712, 31217fc), every folder gained a CLAUDE.md, and the `docs/` tree was dissolved into those files — per-folder CLAUDE.md is now the only documentation layer.
+Lynceus 0.7.17, engine 0.5.5. Packaging is done: sandbox entitlements wired, the store-shaped bundle slimmed 2.9GB → 674MB (int8 models only), ad-hoc-sealed app boots clean with zero network attempts (5968d2e), bundle ID renamed to `com.capataina.lynceus` (f14aaa8). Tests green: engine 141/141, frontend 250/250. The sole release blocker is the founder's Apple Developer enrolment; repo-side the remaining item is the 5-minute live folder-persistence test described in `apps/lynceus/design/store/release-runbook.md`. The knowledge layer settled today: the stranded 24-July Hermes migration was recovered (12d1712, 31217fc), every folder gained a CLAUDE.md, and the `docs/` tree was dissolved into those files — per-folder CLAUDE.md is now the only documentation layer.

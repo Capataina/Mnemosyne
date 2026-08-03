@@ -31,20 +31,23 @@ function DialogClose({
 /**
  * Modal dialogs sit ABOVE every other stacked surface. The app's z-ladder
  * (top-level stacking contexts only — all of these portal to body or mount
- * fixed at the root): grid chrome 10-50 · perf overlay 80/81 · detail modal
- * 100 · popovers + gesture timer + library/settings bubble panels 200 ·
+ * fixed at the root): grid chrome 10-50 (includes the library/settings
+ * edge-hover strips at 45, `library-drawer/EdgeHoverZone.tsx` — deliberately
+ * under the detail modal at 100 so a hover near the screen edge can't pop a
+ * panel out over an open image) · perf overlay 80/81 · detail modal 100 ·
+ * popovers + gesture timer + library/settings edge slide-out panels 200 ·
  * timer config panel 220 · onboarding overlay 240 · modal dialogs 250 ·
  * boot splash 300. The library and settings drawers were full-height
- * scrimmed panels at 90/91 through 2026-08-02; the bubble-panel redesign
- * (2026-08-03) replaced both with non-modal floating popovers that join the
- * existing popover tier — there is no scrim any more, so the invisible-
- * dialog failure mode below no longer needs a drawer-specific rung, only
- * the same "stay above 200" rule every popover already followed. A dialog
- * at z-50 opened from a drawer once rendered invisibly BEHIND the drawer's
- * z-90 scrim while Radix still locked pointer events — the app appeared
- * frozen (the folder-delete no-op bug, telemetry perf-1784473085). If you
- * add a surface above 250, dialogs must move above it: a modal confirm is
- * the one layer nothing may cover.
+ * scrimmed panels at 90/91 through 2026-08-02; the 2026-08-03 redesign
+ * replaced both with non-modal panels anchored flush to the screen edge
+ * that slide out on hover-with-intent, joining the existing popover tier —
+ * there is no scrim any more, so the invisible-dialog failure mode below no
+ * longer needs a drawer-specific rung, only the same "stay above 200" rule
+ * every popover already followed. A dialog at z-50 opened from a drawer
+ * once rendered invisibly BEHIND the drawer's z-90 scrim while Radix still
+ * locked pointer events — the app appeared frozen (the folder-delete no-op
+ * bug, telemetry perf-1784473085). If you add a surface above 250, dialogs
+ * must move above it: a modal confirm is the one layer nothing may cover.
  */
 function DialogOverlay({
   className,

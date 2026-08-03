@@ -9,11 +9,19 @@ import { useCallback, useEffect, useRef, useState } from "react";
 export const BUBBLE_HOVER_ENTER_DELAY_MS = 150;
 export const BUBBLE_HOVER_LEAVE_GRACE_MS = 300;
 
-/** Pop-open motion: mirrors the grid's ease-out-expo idiom (masonryMotion.ts
- * SETTLE_EASING), scaled down for a compact chrome affordance rather than a
- * full-grid settle. */
-export const BUBBLE_POP_MS = 165;
-export const BUBBLE_POP_EASE = [0.16, 1, 0.3, 1] as const;
+/** Edge slide-in motion: mirrors the grid's ease-out-expo idiom
+ * (masonryMotion.ts SETTLE_EASING), scaled down for a compact chrome
+ * affordance rather than a full-grid settle. Drives translateX(±100%) → 0
+ * on both panels — see LibraryDrawer.tsx / settings/index.tsx. */
+export const BUBBLE_SLIDE_MS = 200;
+export const BUBBLE_SLIDE_EASE = [0.16, 1, 0.3, 1] as const;
+
+/** Width of the invisible hover strip run along each screen edge (left for
+ * the library panel, right for settings), feeding the SAME hover-intent
+ * handlers as the trigger button. Sized to sit well inside the grid
+ * container's smallest padding (`px-5` = 20px, pages/[...slug].tsx) so it
+ * can never overlap a tile's interactive edge — see EdgeHoverZone.tsx. */
+export const BUBBLE_EDGE_HOTZONE_PX = 10;
 
 export interface BubbleTriggerProps {
   onMouseEnter: () => void;

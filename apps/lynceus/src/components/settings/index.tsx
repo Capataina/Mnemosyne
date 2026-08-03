@@ -3,8 +3,12 @@ import { RotateCcw } from "lucide-react";
 import { useEffect, useRef } from "react";
 import type { RefObject } from "react";
 import { useOnboarding } from "../../features/onboarding";
-import { BUBBLE_POP_EASE, BUBBLE_POP_MS } from "@/components/library-drawer";
-import type { BubblePanelProps } from "@/components/library-drawer";
+import {
+  BUBBLE_SLIDE_EASE,
+  BUBBLE_SLIDE_MS,
+  EdgeHoverZone,
+} from "@/components/library-drawer";
+import type { BubblePanelProps, BubbleTriggerProps } from "@/components/library-drawer";
 import { ThemeSection } from "./ThemeSection";
 import { DisplaySection } from "./DisplaySection";
 import { SearchSection } from "./SearchSection";
@@ -29,13 +33,18 @@ interface SettingsDrawerProps {
   panelProps: BubblePanelProps;
   /** The trigger button's ref, so closing can return focus to it. */
   triggerRef: RefObject<HTMLButtonElement | null>;
+  /** Trigger hover/click handlers from useBubbleTrigger.triggerProps —
+   * forwarded to the panel's own EdgeHoverZone so hovering the bare screen
+   * edge opens it exactly like hovering the gear icon does. */
+  triggerProps: BubbleTriggerProps;
   id?: string;
 }
 
 /**
- * Floating settings bubble panel, non-modal: pops out near the gear icon
- * (top-right of the header) rather than sliding a full-height scrimmed
- * drawer over the grid.
+ * Edge slide-out settings panel, non-modal: anchored flush to the screen's
+ * right edge, sliding in on hover-with-intent rather than popping open
+ * near the gear icon or sliding a full-height scrimmed drawer over the
+ * grid.
  *
  * Open via cmd/ctrl + , or hover/click on the gear icon.
  * Closes on Escape, outside click, or re-clicking the trigger.
@@ -60,6 +69,7 @@ export function SettingsDrawer({
   onClose,
   panelProps,
   triggerRef,
+  triggerProps,
   id = "settings-panel",
 }: SettingsDrawerProps) {
   const { restart } = useOnboarding();
@@ -104,71 +114,78 @@ export function SettingsDrawer({
   }, [pinned, triggerRef]);
 
   return (
-    <AnimatePresence>
-      {open && (
-        <motion.div
-          ref={panelRef}
-          id={id}
-          tabIndex={-1}
-          aria-labelledby={`${id}-title`}
-          initial={{ opacity: 0, scale: 0.92 }}
-          animate={{ opacity: 1, scale: 1 }}
-          exit={{ opacity: 0, scale: 0.92 }}
-          transition={
-            prefersReducedMotion
-              ? { duration: 0 }
-              : { duration: BUBBLE_POP_MS / 1000, ease: BUBBLE_POP_EASE }
-          }
-          className="floating-surface fixed right-5 top-[84px] z-[200] flex max-h-[min(720px,calc(100dvh-104px))] w-[min(430px,calc(100vw-2.5rem))] origin-top-right flex-col overflow-hidden rounded-2xl border md:right-8 lg:right-10"
-          {...panelProps}
-        >
-          {/* Header */}
-          <div className="flex shrink-0 items-center justify-between border-b border-border/70 px-6 py-[18px]">
-            <div>
-              <h2
-                id={`${id}-title`}
-                className="text-[17px] font-[620] tracking-[-0.025em]"
-              >
-                Settings
-              </h2>
-              <p className="mt-0.5 text-[11px] text-muted-foreground">
-                Library, search, and display
-              </p>
+    <>
+      <EdgeHoverZone
+        side="right"
+        onMouseEnter={triggerProps.onMouseEnter}
+        onMouseLeave={triggerProps.onMouseLeave}
+      />
+      <AnimatePresence>
+        {open && (
+          <motion.div
+            ref={panelRef}
+            id={id}
+            tabIndex={-1}
+            aria-labelledby={`${id}-title`}
+            initial={{ x: "100%" }}
+            animate={{ x: 0 }}
+            exit={{ x: "100%" }}
+            transition={
+              prefersReducedMotion
+                ? { duration: 0 }
+                : { duration: BUBBLE_SLIDE_MS / 1000, ease: BUBBLE_SLIDE_EASE }
+            }
+            className="floating-surface fixed right-0 top-[84px] bottom-3 z-[200] flex w-[min(430px,calc(100vw-2.5rem))] flex-col overflow-hidden rounded-l-2xl border border-r-0"
+            {...panelProps}
+          >
+            {/* Header */}
+            <div className="flex shrink-0 items-center justify-between border-b border-border/70 px-6 py-[18px]">
+              <div>
+                <h2
+                  id={`${id}-title`}
+                  className="text-[17px] font-[620] tracking-[-0.025em]"
+                >
+                  Settings
+                </h2>
+                <p className="mt-0.5 text-[11px] text-muted-foreground">
+                  Library, search, and display
+                </p>
+              </div>
             </div>
-          </div>
 
-          <div className="flex-1 overflow-y-auto px-6 py-6 text-[12px]">
-            <ThemeSection />
-            <DisplaySection />
-            <SearchSection />
-            <FoldersSection />
-            <EncoderSection />
-            <StatsSection />
-            <div className="flex flex-col gap-2 pt-6">
-              <button
-                ref={restartRef}
-                type="button"
-                onClick={() => {
-                  // The panel deliberately STAYS open: it sits under the
-                  // z-240 onboarding overlay and goes inert with the rest
-                  // of the app, so it cannot be interacted with during the
-                  // replay — but its Restart button stays mounted, which is
-                  // what lets the provider's close path restore focus to
-                  // it. Closing the panel here put the trigger on a
-                  // one-way unmount and broke focus restoration in every
-                  // realistic timing.
-                  restart(restartRef.current);
-                }}
-                className="flex h-10 w-full items-center justify-start gap-2 rounded-[10px] border border-border bg-transparent px-3 text-[11.5px] font-[580] text-foreground transition-[color,background-color,border-color,transform] hover:border-border-strong hover:bg-accent active:scale-[0.98]"
-              >
-                <RotateCcw className="h-3.5 w-3.5" strokeWidth={1.8} />
-                Restart onboarding
-              </button>
-              <ResetSection />
+            <div className="flex-1 overflow-y-auto px-6 py-6 text-[12px]">
+              <ThemeSection />
+              <DisplaySection />
+              <SearchSection />
+              <FoldersSection />
+              <EncoderSection />
+              <StatsSection />
+              <div className="flex flex-col gap-2 pt-6">
+                <button
+                  ref={restartRef}
+                  type="button"
+                  onClick={() => {
+                    // The panel deliberately STAYS open: it sits under the
+                    // z-240 onboarding overlay and goes inert with the rest
+                    // of the app, so it cannot be interacted with during the
+                    // replay — but its Restart button stays mounted, which is
+                    // what lets the provider's close path restore focus to
+                    // it. Closing the panel here put the trigger on a
+                    // one-way unmount and broke focus restoration in every
+                    // realistic timing.
+                    restart(restartRef.current);
+                  }}
+                  className="flex h-10 w-full items-center justify-start gap-2 rounded-[10px] border border-border bg-transparent px-3 text-[11.5px] font-[580] text-foreground transition-[color,background-color,border-color,transform] hover:border-border-strong hover:bg-accent active:scale-[0.98]"
+                >
+                  <RotateCcw className="h-3.5 w-3.5" strokeWidth={1.8} />
+                  Restart onboarding
+                </button>
+                <ResetSection />
+              </div>
             </div>
-          </div>
-        </motion.div>
-      )}
-    </AnimatePresence>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </>
   );
 }

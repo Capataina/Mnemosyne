@@ -800,6 +800,7 @@ export default function Home() {
         onClose={settings.close}
         panelProps={settings.panelProps}
         triggerRef={settings.triggerRef}
+        triggerProps={settings.triggerProps}
       />
 
       {/* Library bubble — folders-as-tags, pops out near the library icon,
@@ -812,6 +813,7 @@ export default function Home() {
         onClose={library.close}
         panelProps={library.panelProps}
         triggerRef={library.triggerRef}
+        triggerProps={library.triggerProps}
         tags={libraryTags}
         totalImageCount={totalVisibleImages}
         activeTagId={activeFolderId}

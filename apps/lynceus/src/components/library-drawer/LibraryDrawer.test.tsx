@@ -31,6 +31,7 @@ function renderPanel(overrides: Partial<Parameters<typeof LibraryDrawer>[0]> = {
       onClose={onClose}
       panelProps={{ onMouseEnter: vi.fn(), onMouseLeave: vi.fn() }}
       triggerRef={triggerRef}
+      triggerProps={{ onMouseEnter: vi.fn(), onMouseLeave: vi.fn(), onClick: vi.fn() }}
       tags={TAGS}
       totalImageCount={12}
       activeTagId={null}
@@ -113,6 +114,7 @@ describe("LibraryDrawer bubble interaction contract", () => {
         onClose={onClose}
         panelProps={{ onMouseEnter: vi.fn(), onMouseLeave: vi.fn() }}
         triggerRef={triggerRef}
+        triggerProps={{ onMouseEnter: vi.fn(), onMouseLeave: vi.fn(), onClick: vi.fn() }}
         tags={TAGS}
         totalImageCount={12}
         activeTagId={null}
@@ -146,5 +148,22 @@ describe("LibraryDrawer bubble interaction contract", () => {
   it("sits at the popover z-tier (200)", () => {
     renderPanel();
     expect(screen.getByLabelText("Library").className).toContain("z-[200]");
+  });
+
+  it("renders the left-edge hover strip and wires it to triggerProps, even when closed", () => {
+    const onMouseEnter = vi.fn();
+    const onMouseLeave = vi.fn();
+    renderPanel({
+      open: false,
+      pinned: false,
+      triggerProps: { onMouseEnter, onMouseLeave, onClick: vi.fn() },
+    });
+
+    const zone = screen.getByTestId("left-edge-hotzone");
+    fireEvent.mouseEnter(zone);
+    fireEvent.mouseLeave(zone);
+
+    expect(onMouseEnter).toHaveBeenCalledTimes(1);
+    expect(onMouseLeave).toHaveBeenCalledTimes(1);
   });
 });

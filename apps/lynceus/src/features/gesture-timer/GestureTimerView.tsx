@@ -352,10 +352,16 @@ export function GestureTimerView({
             viewing: click pauses on a past entry, click the last (newest)
             box to resume. Hover only lifts opacity; selection is click-only,
             so a stray pointer pass can't pause the session. */}
+        {/* p-1 (4px) on every side, not just bottom: overflow-x-auto forces
+            overflow-y to compute to auto too (spec), clipping the selected
+            item's outward ring-2 (2px) top edge with zero top padding. 4px
+            clears the 2px ring with headroom on all four sides, matching
+            the breadcrumb-ring fix's py-1 (89b6ee2); gap-2 (8px) already
+            clears two adjacent 2px rings meeting mid-strip. */}
         <div
           role="group"
           aria-label="Reference history"
-          className="gesture-timer-history-strip mt-2 flex max-w-full gap-2 overflow-x-auto pb-1"
+          className="gesture-timer-history-strip mt-2 flex max-w-full gap-2 overflow-x-auto p-1"
         >
           {timer.history.map((image, index) => {
             const isSelected = index === timer.viewedIndex;

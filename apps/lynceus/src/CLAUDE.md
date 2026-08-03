@@ -30,7 +30,7 @@ src/
 
 ## Current state — 2026-08-02
 
-v0.7.15 (`lynceus-ui`). Store-shaped: sandboxed 674MB bundle boots clean. The masonry gesture saga is closed (4009be0; the decision ledger lives in `components/CLAUDE.md`); motion tuned at 3d72951; onboarding shipped (19e5621) and geometry-hardened (48f1e2c, 370e80d). Frontend suite: 247/247 vitest tests (was 250; the legacy-command-removal batch deleted three orphaned tests, `services/CLAUDE.md`). Remaining before release is repo-external (Apple enrolment, live folder test).
+v0.7.17 (`lynceus-ui`). Store-shaped: sandboxed 674MB bundle boots clean. The masonry gesture saga is closed (4009be0; the decision ledger lives in `components/CLAUDE.md`); motion tuned at 3d72951; onboarding shipped (19e5621) and geometry-hardened (48f1e2c, 370e80d). Frontend suite: 247/247 vitest tests (was 250; the legacy-command-removal batch deleted three orphaned tests, `services/CLAUDE.md`). Remaining before release is repo-external (Apple enrolment, live folder test).
 
 ## State architecture
 

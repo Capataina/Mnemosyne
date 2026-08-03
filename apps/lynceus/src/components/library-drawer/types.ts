@@ -27,6 +27,10 @@ export interface LibraryDrawerProps {
   panelProps: BubblePanelProps;
   /** The trigger button's ref, so closing can return focus to it. */
   triggerRef: RefObject<HTMLButtonElement | null>;
+  /** Trigger hover/click handlers from useBubbleTrigger.triggerProps —
+   * forwarded to the panel's own EdgeHoverZone so hovering the bare screen
+   * edge opens it exactly like hovering the TopBar icon does. */
+  triggerProps: BubbleTriggerProps;
   tags: readonly LibraryDrawerTag[];
   totalImageCount: number;
   activeTagId: number | null;

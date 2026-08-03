@@ -8,7 +8,9 @@ import {
   SETTLE_EASE,
   cursorFrame,
   cursorTrack,
+  holdTrack,
   normaliseTimes,
+  pressAt,
   visualFrame,
   visualMotion,
   visualTrack,
@@ -26,7 +28,7 @@ import type { ClosedTrack, OnboardingSceneProps, VisualFrame } from "../types";
 import { DemoAppChrome, DemoSceneRoot } from "../primitives/DemoAppChrome";
 import { OnboardingSkeleton } from "../primitives/OnboardingSkeleton";
 import {
-  StaticFrameArt,
+  reducedFrames,
   type StaticFrameKind,
 } from "../primitives/ReducedMotionFilmstrip";
 
@@ -38,7 +40,7 @@ export const SEARCH_DURATION_MS = 8400;
  * beat re-orders each row by a real permutation of its columns —
  * survivors swap whole slots (dx = Δcol × pitch), the weakest row fades.
  */
-export const SEARCH_GRID = makeGrid({
+const SEARCH_GRID = makeGrid({
   originX: 64,
   originY: 128,
   cellW: 190,
@@ -63,13 +65,9 @@ const cursor = cursorTrack(
   [
     cursorFrame(CURSOR_PARK.x, CURSOR_PARK.y),
     cursorFrame(CURSOR_PARK.x, CURSOR_PARK.y),
+    ...pressAt(QUERY_POINT),
     cursorFrame(QUERY_POINT.x, QUERY_POINT.y),
-    cursorFrame(QUERY_POINT.x, QUERY_POINT.y, 0.92, 0.75, 1),
-    cursorFrame(QUERY_POINT.x, QUERY_POINT.y),
-    cursorFrame(QUERY_POINT.x, QUERY_POINT.y),
-    cursorFrame(CLEAR_POINT.x, CLEAR_POINT.y),
-    cursorFrame(CLEAR_POINT.x, CLEAR_POINT.y, 0.92, 0.75, 1),
-    cursorFrame(CLEAR_POINT.x, CLEAR_POINT.y),
+    ...pressAt(CLEAR_POINT),
     cursorFrame(CURSOR_PARK.x, CURSOR_PARK.y),
     cursorFrame(CURSOR_PARK.x, CURSOR_PARK.y),
   ],
@@ -82,49 +80,31 @@ const cursor = cursorTrack(
   ],
 );
 
-const focusRing = visualTrack(
-  [
-    visualFrame(undefined, 0),
-    visualFrame(undefined, 0),
-    visualFrame(undefined, 1),
-    visualFrame(undefined, 1),
-    visualFrame(undefined, 0),
-    visualFrame(undefined, 0),
-  ],
-  normaliseTimes(SEARCH_DURATION_MS, [0, 1050, 1230, 4950, 5450, 8400]),
-  ["linear", FADE_EASE, "linear", FADE_EASE, "linear"],
-);
+const focusRing = holdTrack([0, 1050, 1230, 4950, 5450, 8400], {
+  hidden: visualFrame(undefined, 0),
+  shown: visualFrame(undefined, 1),
+  easeIn: FADE_EASE,
+  easeOut: FADE_EASE,
+});
 
 function glyphTrack(index: number): ClosedTrack<VisualFrame> {
   const start = 1300 + index * 120;
-  return visualTrack(
-    [
-      visualFrame("translate3d(-4px, 0px, 0px) scaleX(.3)", 0),
-      visualFrame("translate3d(-4px, 0px, 0px) scaleX(.3)", 0),
-      visualFrame(undefined, 1),
-      visualFrame(undefined, 1),
-      visualFrame("translate3d(-4px, 0px, 0px) scaleX(.3)", 0),
-      visualFrame("translate3d(-4px, 0px, 0px) scaleX(.3)", 0),
-    ],
-    normaliseTimes(SEARCH_DURATION_MS, [0, start, start + 180, 4950, 5450, 8400]),
-    ["linear", SETTLE_EASE, "linear", FADE_EASE, "linear"],
-  );
+  return holdTrack([0, start, start + 180, 4950, 5450, 8400], {
+    hidden: visualFrame("translate3d(-4px, 0px, 0px) scaleX(.3)", 0),
+    shown: visualFrame(undefined, 1),
+    easeIn: SETTLE_EASE,
+    easeOut: FADE_EASE,
+  });
 }
 
 const glyphs = Array.from({ length: 6 }, (_, index) => glyphTrack(index));
 
-const resultsChrome = visualTrack(
-  [
-    visualFrame("translate3d(0px, 6px, 0px) scale(1)", 0),
-    visualFrame("translate3d(0px, 6px, 0px) scale(1)", 0),
-    visualFrame(undefined, 1),
-    visualFrame(undefined, 1),
-    visualFrame("translate3d(0px, 6px, 0px) scale(1)", 0),
-    visualFrame("translate3d(0px, 6px, 0px) scale(1)", 0),
-  ],
-  normaliseTimes(SEARCH_DURATION_MS, [0, 2300, 2520, 4950, 5450, 8400]),
-  ["linear", SETTLE_EASE, "linear", FADE_EASE, "linear"],
-);
+const resultsChrome = holdTrack([0, 2300, 2520, 4950, 5450, 8400], {
+  hidden: visualFrame("translate3d(0px, 6px, 0px) scale(1)", 0),
+  shown: visualFrame(undefined, 1),
+  easeIn: SETTLE_EASE,
+  easeOut: FADE_EASE,
+});
 
 function resultTileTrack(index: number): ClosedTrack<VisualFrame> {
   const col = index % 4;
@@ -193,10 +173,7 @@ const reducedKinds: readonly [StaticFrameKind, string][] = [
   ["search-cleared", "Clear back to the full feed"],
 ];
 
-export const SEARCH_REDUCED_FRAMES = reducedKinds.map(([kind, caption]) => ({
-  caption,
-  content: <StaticFrameArt kind={kind} />,
-}));
+export const SEARCH_REDUCED_FRAMES = reducedFrames(reducedKinds);
 
 export function SearchScene({ animationLevel }: OnboardingSceneProps) {
   const motionOptions = { subtle: animationLevel === "subtle" };

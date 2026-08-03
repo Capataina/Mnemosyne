@@ -44,9 +44,61 @@ fn file_db(dir: &tempfile::TempDir, name: &str) -> (ImageDatabase, String) {
     (db, path)
 }
 
+/// The pre-fix baseline, expressed over a raw sibling connection: the
+/// reset UPDATE with no `orphaned` predicate, exactly what production
+/// ran before this finding landed. Kept here (rather than calling
+/// production) so the WAL-cost comparison below still measures the
+/// mechanism this finding fixed, independent of production's current
+/// state. Returns the orphan-mark count.
+fn mark_orphaned_unconditional(
+    db_path: &str,
+    root_id: i64,
+    alive_paths: &[String],
+) -> usize {
+    let conn = rusqlite::Connection::open(db_path).unwrap();
+    conn.execute("UPDATE images SET orphaned = 0 WHERE root_id = ?1", [root_id])
+        .unwrap();
+
+    if alive_paths.is_empty() {
+        return conn
+            .execute("UPDATE images SET orphaned = 1 WHERE root_id = ?1", [root_id])
+            .unwrap();
+    }
+
+    let mut stmt = conn
+        .prepare("SELECT id, path FROM images WHERE root_id = ?1")
+        .unwrap();
+    let rows: Vec<(i64, String)> = stmt
+        .query_map([root_id], |r| Ok((r.get(0)?, r.get(1)?)))
+        .unwrap()
+        .filter_map(|r| r.ok())
+        .collect();
+    drop(stmt);
+
+    let alive: HashSet<&str> = alive_paths.iter().map(|s| s.as_str()).collect();
+    let to_orphan: Vec<i64> = rows
+        .iter()
+        .filter(|(_, p)| !alive.contains(p.as_str()))
+        .map(|(id, _)| *id)
+        .collect();
+
+    let mut updated = 0;
+    for chunk in to_orphan.chunks(500) {
+        let placeholders = vec!["?"; chunk.len()].join(", ");
+        let sql = format!("UPDATE images SET orphaned = 1 WHERE id IN ({placeholders})");
+        updated += conn
+            .execute(&sql, rusqlite::params_from_iter(chunk))
+            .unwrap();
+    }
+    updated
+}
+
 /// The proposed mark_orphaned, expressed over a raw sibling connection:
 /// identical to the production method except the reset UPDATE carries
 /// `AND orphaned = 1`. Returns the orphan-mark count, like production.
+/// Now that this finding has landed, this is also byte-identical to
+/// production's own query — kept as an independent raw-connection replica
+/// so the mechanism proof below doesn't depend on production's internals.
 fn mark_orphaned_predicated(
     db_path: &str,
     root_id: i64,
@@ -161,18 +213,28 @@ fn steady_state_rescan_wal_cost_current_vs_predicated() {
     const N: usize = 10_000;
 
     let dir = tempfile::tempdir().unwrap();
+    // "current" here is the pre-fix unconditional-reset baseline this
+    // finding replaced (raw replica, not production — production now
+    // runs the predicated form, see the fix-landed assertion below).
     let (db_a, path_a) = file_db(&dir, "wal_current.db");
     let (db_b, path_b) = file_db(&dir, "wal_proposed.db");
+    // Third fixture: production's own `mark_orphaned`, to prove the fix
+    // actually landed there and matches the predicated mechanism.
+    let (db_prod, path_prod) = file_db(&dir, "wal_prod.db");
 
     let root_a = db_a.add_root("/lib".into(), None).unwrap();
     let root_b = db_b.add_root("/lib".into(), None).unwrap();
+    let root_prod = db_prod.add_root("/lib".into(), None).unwrap();
     let paths: Vec<String> = (0..N).map(|i| format!("/lib/img_{i:06}.jpg")).collect();
     let batch_a: Vec<(String, Option<i64>)> =
         paths.iter().map(|p| (p.clone(), Some(root_a.id))).collect();
     let batch_b: Vec<(String, Option<i64>)> =
         paths.iter().map(|p| (p.clone(), Some(root_b.id))).collect();
+    let batch_prod: Vec<(String, Option<i64>)> =
+        paths.iter().map(|p| (p.clone(), Some(root_prod.id))).collect();
     db_a.add_images_batch(&batch_a).unwrap();
     db_b.add_images_batch(&batch_b).unwrap();
+    db_prod.add_images_batch(&batch_prod).unwrap();
 
     // Drain + truncate both WALs so the deltas below are attributable to
     // the steady-state rescan alone. TRUNCATE through a sibling
@@ -186,28 +248,39 @@ fn steady_state_rescan_wal_cost_current_vs_predicated() {
     };
     truncate(&path_a);
     truncate(&path_b);
+    truncate(&path_prod);
     let base_a = wal_size(&path_a);
     let base_b = wal_size(&path_b);
+    let base_prod = wal_size(&path_prod);
 
     // Steady-state rescan: every path alive, zero state change intended.
     let t = std::time::Instant::now();
-    let n_current = db_a.mark_orphaned(root_a.id, &paths).unwrap();
+    let n_current = mark_orphaned_unconditional(&path_a, root_a.id, &paths);
     let t_current = t.elapsed();
     let t = std::time::Instant::now();
     let n_proposed = mark_orphaned_predicated(&path_b, root_b.id, &paths);
     let t_proposed = t.elapsed();
+    let n_prod = db_prod.mark_orphaned(root_prod.id, &paths).unwrap();
 
     let delta_current = wal_size(&path_a).saturating_sub(base_a);
     let delta_proposed = wal_size(&path_b).saturating_sub(base_b);
+    let delta_prod = wal_size(&path_prod).saturating_sub(base_prod);
 
     assert_eq!(n_current, 0);
     assert_eq!(n_proposed, 0);
+    assert_eq!(n_prod, 0);
     assert_eq!(orphan_state(&path_a), orphan_state(&path_b));
+    assert_eq!(
+        orphan_state(&path_prod),
+        orphan_state(&path_b),
+        "production's final state must match the predicated replica"
+    );
 
     eprintln!(
         "[cha_b_mark_orphaned] steady-state rescan at N={N}: \
-         current WAL delta = {delta_current} bytes ({t_current:?}), \
-         predicated WAL delta = {delta_proposed} bytes ({t_proposed:?})"
+         unconditional-baseline WAL delta = {delta_current} bytes ({t_current:?}), \
+         predicated WAL delta = {delta_proposed} bytes ({t_proposed:?}), \
+         production WAL delta = {delta_prod} bytes"
     );
 
     // Structural assertion: the unconditional reset writes the whole
@@ -216,7 +289,18 @@ fn steady_state_rescan_wal_cost_current_vs_predicated() {
     // the finding self-retires.
     assert!(
         delta_current > delta_proposed.saturating_mul(5).max(4096),
-        "expected the unconditional reset to append far more WAL than the \
-         predicated one (current {delta_current} vs proposed {delta_proposed})"
+        "expected the unconditional-reset baseline to append far more WAL \
+         than the predicated one (baseline {delta_current} vs proposed {delta_proposed})"
+    );
+
+    // Fix-landed assertion: production's `mark_orphaned` must behave like
+    // the predicated replica, not the unconditional baseline — this is
+    // what proves the finding was actually implemented, not just proven
+    // in isolation.
+    assert!(
+        delta_prod <= delta_proposed.saturating_add(4096),
+        "expected production's mark_orphaned to match the predicated \
+         (near-zero) WAL cost now that the fix has landed (production \
+         {delta_prod} vs predicated {delta_proposed})"
     );
 }

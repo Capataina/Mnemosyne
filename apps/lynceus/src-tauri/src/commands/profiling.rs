@@ -1,7 +1,7 @@
 use crate::paths;
 use crate::perf;
 
-/// True if the binary was launched with `--profile`. The frontend
+/// True if the binary was launched with `--profiling`. The frontend
 /// reads this once at startup to decide whether to mount the perf
 /// overlay, register the cmd+shift+P shortcut, and emit user-action
 /// breadcrumbs. Without the flag, all of those paths stay dormant

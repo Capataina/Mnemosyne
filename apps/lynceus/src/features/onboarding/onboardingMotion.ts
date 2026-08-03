@@ -1,4 +1,5 @@
 import type { Easing, TargetAndTransition, Transition } from "framer-motion";
+import type { Point } from "./sceneGeometry";
 import type {
   ClosedTrack,
   CursorFrame,
@@ -10,9 +11,6 @@ export const LIVE_EASE = [0.2, 0, 0, 1] as const;
 export const SETTLE_MS = 260;
 export const SETTLE_EASE = [0.16, 1, 0.3, 1] as const;
 export const CURSOR_TRAVEL_EASE = [0.22, 1, 0.36, 1] as const;
-export const PRESS_DOWN_MS = 90;
-export const PRESS_UP_MS = 110;
-export const FADE_MS = 180;
 export const FADE_EASE = SETTLE_EASE;
 export const STAGGER_MS = 90;
 export const CURSOR_PARK = { x: 912, y: 552 } as const;
@@ -56,6 +54,18 @@ export function cursorTrack(
   ease?: readonly Easing[],
 ): ClosedTrack<CursorFrame> {
   return { values, times, ease };
+}
+
+/** An in-place arrive/press/release triple: the cursor lands on `p`,
+ * presses (the shared halo/press-scale signature), then releases
+ * without moving. Drag presses — where the release lands somewhere
+ * else — stay hand-built; this only covers the same-point case. */
+export function pressAt(p: Point): readonly CursorFrame[] {
+  return [
+    cursorFrame(p.x, p.y),
+    cursorFrame(p.x, p.y, 0.92, 0.75, 1),
+    cursorFrame(p.x, p.y),
+  ];
 }
 
 function loopingTransition<T>(
@@ -141,4 +151,29 @@ export function cursorMotion(
 
 export function normaliseTimes(durationMs: number, offsets: readonly number[]) {
   return offsets.map((offset) => offset / durationMs);
+}
+
+interface HoldTrackOptions {
+  hidden: VisualFrame;
+  shown: VisualFrame;
+  easeIn?: Easing;
+  easeOut?: Easing;
+}
+
+/** A hidden→shown→hidden (or the reverse-labelled shown→hidden→shown)
+ * hold: six keyframes at `hidden, hidden, shown, shown, hidden, hidden`,
+ * closing back on the first value. `times` is the full six-offset list
+ * in raw ms, its last entry doubling as the track's duration. Leaving
+ * `easeIn`/`easeOut` unset omits the ease array entirely, matching a
+ * literal `visualTrack(values, times)` call with no third argument. */
+export function holdTrack(
+  times: readonly number[],
+  { hidden, shown, easeIn, easeOut }: HoldTrackOptions,
+): ClosedTrack<VisualFrame> {
+  const durationMs = times[times.length - 1];
+  return visualTrack(
+    [hidden, hidden, shown, shown, hidden, hidden],
+    normaliseTimes(durationMs, times),
+    easeIn && easeOut ? ["linear", easeIn, "linear", easeOut, "linear"] : undefined,
+  );
 }

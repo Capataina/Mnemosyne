@@ -38,7 +38,6 @@ use ndarray::Array1;
 use tauri::State;
 use tracing::{info, warn};
 
-use crate::commands::semantic::{CLIP_TEXT_ENCODER_ID, SIGLIP2_TEXT_ENCODER_ID};
 use crate::commands::{hydrate_search_results, ApiError, ImageSearchResult};
 use crate::db::ImageDatabase;
 use crate::paths;
@@ -54,6 +53,14 @@ use crate::similarity_and_semantic_search::encoder_siglip2::{
 use crate::similarity_and_semantic_search::encoder_text::ClipTextEncoder;
 use crate::similarity_and_semantic_search::encoders::TextEncoder as TextEncoderTrait;
 use crate::{perf, FusionIndexState, TextEncoderState};
+
+/// Stable encoder ids for the text-side picker. Must match the values
+/// in `commands::encoders::ENCODERS` and the frontend `imageEncoder` /
+/// `textEncoder` localStorage entries. Moved here from the retired
+/// `commands::semantic` (the legacy single-encoder dispatch) when that
+/// module was deleted — this is now their only home.
+pub const CLIP_TEXT_ENCODER_ID: &str = "clip_vit_b_32";
+pub const SIGLIP2_TEXT_ENCODER_ID: &str = "siglip2_base";
 
 /// Encoders that have a usable text branch. Used to filter the
 /// enabled-encoder list down to those that can actually run a text

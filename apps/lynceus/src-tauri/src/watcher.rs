@@ -4,7 +4,8 @@
 //! debounced (5s default) and trigger an incremental rescan via the
 //! indexing pipeline: new image files appear in the DB, files that
 //! have disappeared get marked `orphaned = 1` (the orphan column is
-//! set by the rescan-aware filesystem scan, lib.rs Phase 7).
+//! set by the scan phase of `indexing.rs`, step B — see that file's
+//! phase walkthrough).
 //!
 //! Lifecycle:
 //! - `start` runs once during the Tauri setup callback.

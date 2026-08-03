@@ -30,7 +30,7 @@ fn main() {
 
     // Subscriber stack:
     // - `fmt::layer` always emits human-readable lines to stderr.
-    // - `PerfLayer` ONLY mounts when `--profile` is set. Without it, the
+    // - `PerfLayer` ONLY mounts when `--profiling` is set. Without it, the
     //   info-level spans this crate emits are still constructed (the env
     //   filter lets them through) but nothing aggregates timings, so the
     //   only cost is one tracing dispatch per call. With it, spans get
@@ -44,7 +44,6 @@ fn main() {
     // the same). Collapsed to one filter that we use regardless. The
     // PerfLayer registers separately below; the env filter just controls
     // what the human-readable terminal output shows.
-    let _ = profiling; // currently unused; kept above for future use
     let env_filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| {
         EnvFilter::new("warn,lynceus_lib=info,lynceus=info,mnemosyne=info")
     });

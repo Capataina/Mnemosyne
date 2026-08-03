@@ -8,7 +8,9 @@ import {
   SETTLE_EASE,
   cursorFrame,
   cursorTrack,
+  holdTrack,
   normaliseTimes,
+  pressAt,
   visualFrame,
   visualMotion,
   visualTrack,
@@ -28,7 +30,7 @@ import { DemoAppChrome, DemoSceneRoot } from "../primitives/DemoAppChrome";
 import { OnboardingSkeleton } from "../primitives/OnboardingSkeleton";
 import { SkeletonInspector } from "../primitives/SkeletonInspector";
 import {
-  StaticFrameArt,
+  reducedFrames,
   type StaticFrameKind,
 } from "../primitives/ReducedMotionFilmstrip";
 
@@ -40,7 +42,7 @@ export const SIMILARITY_DURATION_MS = 10800;
  * computed from the grid) while the six strongest results re-pack into
  * the remaining three columns; the weakest three fade where they stand.
  */
-export const SIMILARITY_GRID = makeGrid({
+const SIMILARITY_GRID = makeGrid({
   originX: 48,
   originY: 158,
   cellW: 160,
@@ -129,24 +131,12 @@ const cursor = cursorTrack(
   [
     cursorFrame(CURSOR_PARK.x, CURSOR_PARK.y),
     cursorFrame(CURSOR_PARK.x, CURSOR_PARK.y),
-    cursorFrame(CLICK_TILE.x, CLICK_TILE.y),
-    cursorFrame(CLICK_TILE.x, CLICK_TILE.y, 0.92, 0.75, 1),
-    cursorFrame(CLICK_TILE.x, CLICK_TILE.y),
-    cursorFrame(CLICK_RESULT.x, CLICK_RESULT.y),
-    cursorFrame(CLICK_RESULT.x, CLICK_RESULT.y, 0.92, 0.75, 1),
-    cursorFrame(CLICK_RESULT.x, CLICK_RESULT.y),
-    cursorFrame(CLICK_EXPAND.x, CLICK_EXPAND.y),
-    cursorFrame(CLICK_EXPAND.x, CLICK_EXPAND.y, 0.92, 0.75, 1),
-    cursorFrame(CLICK_EXPAND.x, CLICK_EXPAND.y),
-    cursorFrame(CLICK_NEXT.x, CLICK_NEXT.y),
-    cursorFrame(CLICK_NEXT.x, CLICK_NEXT.y, 0.92, 0.75, 1),
-    cursorFrame(CLICK_NEXT.x, CLICK_NEXT.y),
-    cursorFrame(CLICK_CLOSE.x, CLICK_CLOSE.y),
-    cursorFrame(CLICK_CLOSE.x, CLICK_CLOSE.y, 0.92, 0.75, 1),
-    cursorFrame(CLICK_CLOSE.x, CLICK_CLOSE.y),
-    cursorFrame(CLICK_BACK_ALL.x, CLICK_BACK_ALL.y),
-    cursorFrame(CLICK_BACK_ALL.x, CLICK_BACK_ALL.y, 0.92, 0.75, 1),
-    cursorFrame(CLICK_BACK_ALL.x, CLICK_BACK_ALL.y),
+    ...pressAt(CLICK_TILE),
+    ...pressAt(CLICK_RESULT),
+    ...pressAt(CLICK_EXPAND),
+    ...pressAt(CLICK_NEXT),
+    ...pressAt(CLICK_CLOSE),
+    ...pressAt(CLICK_BACK_ALL),
     cursorFrame(CURSOR_PARK.x, CURSOR_PARK.y),
     cursorFrame(CURSOR_PARK.x, CURSOR_PARK.y),
   ],
@@ -164,57 +154,33 @@ const cursor = cursorTrack(
   ],
 );
 
-const similarityChrome = visualTrack(
-  [
-    visualFrame("translate3d(0px, 6px, 0px) scale(1)", 0),
-    visualFrame("translate3d(0px, 6px, 0px) scale(1)", 0),
-    visualFrame(undefined, 1),
-    visualFrame(undefined, 1),
-    visualFrame("translate3d(0px, 6px, 0px) scale(1)", 0),
-    visualFrame("translate3d(0px, 6px, 0px) scale(1)", 0),
-  ],
-  normaliseTimes(SIMILARITY_DURATION_MS, [0, 1100, 1500, 7750, 8200, 10800]),
-  ["linear", SETTLE_EASE, "linear", FADE_EASE, "linear"],
-);
+const similarityChrome = holdTrack([0, 1100, 1500, 7750, 8200, 10800], {
+  hidden: visualFrame("translate3d(0px, 6px, 0px) scale(1)", 0),
+  shown: visualFrame(undefined, 1),
+  easeIn: SETTLE_EASE,
+  easeOut: FADE_EASE,
+});
 
-const breadcrumb = visualTrack(
-  [
-    visualFrame("translate3d(-8px, 0px, 0px) scale(1)", 0),
-    visualFrame("translate3d(-8px, 0px, 0px) scale(1)", 0),
-    visualFrame(undefined, 1),
-    visualFrame(undefined, 1),
-    visualFrame("translate3d(-8px, 0px, 0px) scale(1)", 0),
-    visualFrame("translate3d(-8px, 0px, 0px) scale(1)", 0),
-  ],
-  normaliseTimes(SIMILARITY_DURATION_MS, [0, 2350, 2750, 7750, 8200, 10800]),
-  ["linear", SETTLE_EASE, "linear", FADE_EASE, "linear"],
-);
+const breadcrumb = holdTrack([0, 2350, 2750, 7750, 8200, 10800], {
+  hidden: visualFrame("translate3d(-8px, 0px, 0px) scale(1)", 0),
+  shown: visualFrame(undefined, 1),
+  easeIn: SETTLE_EASE,
+  easeOut: FADE_EASE,
+});
 
-const inspector = visualTrack(
-  [
-    visualFrame("translate3d(0px, 0px, 0px) scale(.97)", 0),
-    visualFrame("translate3d(0px, 0px, 0px) scale(.97)", 0),
-    visualFrame(undefined, 1),
-    visualFrame(undefined, 1),
-    visualFrame("translate3d(0px, 0px, 0px) scale(.97)", 0),
-    visualFrame("translate3d(0px, 0px, 0px) scale(.97)", 0),
-  ],
-  normaliseTimes(SIMILARITY_DURATION_MS, [0, 3650, 3910, 6750, 7010, 10800]),
-  ["linear", SETTLE_EASE, "linear", SETTLE_EASE, "linear"],
-);
+const inspector = holdTrack([0, 3650, 3910, 6750, 7010, 10800], {
+  hidden: visualFrame("translate3d(0px, 0px, 0px) scale(.97)", 0),
+  shown: visualFrame(undefined, 1),
+  easeIn: SETTLE_EASE,
+  easeOut: SETTLE_EASE,
+});
 
-const inspectorNext = visualTrack(
-  [
-    visualFrame(undefined, 0),
-    visualFrame(undefined, 0),
-    visualFrame(undefined, 1),
-    visualFrame(undefined, 1),
-    visualFrame(undefined, 0),
-    visualFrame(undefined, 0),
-  ],
-  normaliseTimes(SIMILARITY_DURATION_MS, [0, 5050, 5550, 5910, 6750, 10800]),
-  ["linear", FADE_EASE, "linear", FADE_EASE, "linear"],
-);
+const inspectorNext = holdTrack([0, 5050, 5550, 5910, 6750, 10800], {
+  hidden: visualFrame(undefined, 0),
+  shown: visualFrame(undefined, 1),
+  easeIn: FADE_EASE,
+  easeOut: FADE_EASE,
+});
 
 export const SIMILARITY_TRACKS = {
   cursor,
@@ -265,10 +231,7 @@ const reducedKinds: readonly [StaticFrameKind, string][] = [
   ["similarity-inspector", "Inspect and annotate"],
 ];
 
-export const SIMILARITY_REDUCED_FRAMES = reducedKinds.map(([kind, caption]) => ({
-  caption,
-  content: <StaticFrameArt kind={kind} />,
-}));
+export const SIMILARITY_REDUCED_FRAMES = reducedFrames(reducedKinds);
 
 export function SimilarityScene({ animationLevel }: OnboardingSceneProps) {
   const subtle = animationLevel === "subtle";

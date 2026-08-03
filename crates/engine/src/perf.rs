@@ -390,7 +390,7 @@ pub fn spawn_flush_thread() {
 /// Drain the buffer and append every event as JSONL to `path`. Called
 /// by the background thread; also called explicitly from the on-exit
 /// report renderer to capture whatever's still in memory at shutdown.
-pub fn flush_to_file(path: &std::path::Path) -> io::Result<()> {
+pub(crate) fn flush_to_file(path: &std::path::Path) -> io::Result<()> {
     // Drain under the lock so we don't hold it during disk I/O.
     let drained: Vec<RawEvent> = {
         let mut buf = raw_events_buf().lock().map_err(|_| {

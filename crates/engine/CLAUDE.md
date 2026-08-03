@@ -42,10 +42,6 @@ cargo clippy -p mnemosyne -- -D warnings
 - **The profiling flag is `--profiling`, not `--profile`.** Doc comments in `perf.rs`/`perf_report.rs` still say `--profile`; the real Lynceus flag was renamed because cargo swallows `--profile` as its own flag (apps/lynceus/src-tauri/src/main.rs documents the collision).
 - **No end-to-end pipeline harness exists.** The live Tauri startup/rescan path is reasoned-not-driven from this crate; 1514a90's latent staleness regression is the proof that engine unit tests alone can miss integration-level freshness bugs. Trace invalidation paths by hand when touching store/index lifecycle.
 
-## Planned work
-
-- **Remove the unused `bincode` dependency from both manifests** (unused dependency). `crates/engine/Cargo.toml:15` and `apps/lynceus/src-tauri/Cargo.toml:40` both declare `bincode = "1.3"`; zero code references in either crate — only two prose comments describing the retired serialisation format (`paths.rs:281`, `cosine/cache.rs:7`). Refuter-proven free in a scratch worktree: no build.rs/cfg/macro/serde-attr usage, feature unification unchanged, `cargo check --workspace --all-targets` clean, engine suite 141/141. Delete both lines + let Cargo.lock follow. [code-health-audit 2026-08-02]
-
 ## Place in the whole
 
 `apps/lynceus/src-tauri` is the only consumer; it depends on this crate by path and re-exposes engine behaviour through Tauri commands. Engine knowledge lives in the per-folder CLAUDE.md files under `src/` — on disagreement about current state the code wins and the file gets fixed, but a recorded decision (a rejected alternative, a reopen trigger) stays true as a decision even after the code moves on.

@@ -1,18 +1,18 @@
 //! Tauri command handlers, grouped by concern.
 //!
 //! Each submodule owns the `#[tauri::command]` functions for one
-//! concern (images, tags, notes, roots, similarity, semantic,
+//! concern (images, tags, notes, roots, similarity, semantic_fused,
 //! profiling). `lib.rs::run()` registers all of them via
 //! `tauri::generate_handler![...]` after re-importing them through
 //! the `pub use` lines below.
 //!
 //! Two pieces of shared state live here rather than in any single
-//! submodule because they're used across the similarity + semantic
+//! submodule because they're used across the similarity + semantic_fused
 //! commands:
 //!
 //! - `ImageSearchResult` — the unified return type for every
-//!   cosine/semantic command (semantic_search, get_similar_images,
-//!   get_tiered_similar_images). Single struct rather than a
+//!   cosine/semantic command (get_fused_semantic_search,
+//!   get_fused_similar_images). Single struct rather than a
 //!   per-command shape so the frontend deserialises one type.
 //! - `hydrate_search_results` — turns the cosine index's id-native
 //!   `(image_id, score)` output into `ImageSearchResult`s via ONE
@@ -26,7 +26,6 @@ pub mod images;
 pub mod notes;
 pub mod profiling;
 pub mod roots;
-pub mod semantic;
 pub mod semantic_fused;
 pub mod similarity;
 pub mod tags;
@@ -37,12 +36,11 @@ pub use images::*;
 pub use notes::*;
 pub use profiling::*;
 pub use roots::*;
-pub use semantic::*;
 pub use similarity::*;
 pub use tags::*;
 
 /// Unified image-search result returned by every cosine/semantic
-/// command (semantic_search, get_similar_images, get_tiered_similar_images).
+/// command (get_fused_semantic_search, get_fused_similar_images).
 ///
 /// Audit finding: `ImageSearchResult` and `ImageSearchResult` used to be
 /// two near-identical structs — only difference was that the semantic

@@ -1,11 +1,11 @@
 import { describe, it, expect } from "vitest";
 import { computeMasonryLayout } from "./masonryPacking";
-import type { ImageItem } from "../types";
+import type { FeedItem } from "../types";
 
 /**
  * Pure layout-math tests. No DOM, no React — just shape assertions
  * on the computed placements. These catch regressions in the
- * shortest-column packing logic, the hero-card 3-column promotion,
+ * occupancy packing logic, the hero-card 3-column promotion,
  * and the column-count override behaviour.
  */
 
@@ -14,7 +14,7 @@ function tile(
   w: number,
   h: number,
   manualColSpan?: number,
-): ImageItem {
+): FeedItem {
   return {
     id,
     url: `mock://${id}`,
@@ -22,7 +22,6 @@ function tile(
     width: w,
     height: h,
     name: `tile-${id}`,
-    tags: [],
     manualColSpan,
   };
 }
@@ -417,7 +416,7 @@ describe("session placement anchors", () => {
   }
 
   function settleMatchesTelegraph(
-    items: ImageItem[],
+    items: FeedItem[],
     id: number,
     footprint: { id: number; span: number; startCol: number; top: number },
   ) {

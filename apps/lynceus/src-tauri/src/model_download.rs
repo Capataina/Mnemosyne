@@ -9,9 +9,16 @@
 //!
 //! ## Sources
 //!
-//! All FP32 (no quantization). Per-encoder details below. The image-family
-//! weights all carry commercial-friendly licences (MIT / Apache-2.0) so the
-//! shipped app can be sold — see the CLIP note.
+//! Every file fetched here is FP32 (no quantization) — this module is the
+//! fallback download path, not the store build's primary. The shipped
+//! store bundle ships only the int8-quantised variants (see
+//! `Settings::effective_model_precision`, `crates/CLAUDE.md`'s int8-default
+//! trap); a sandboxed release build never reaches this module because the
+//! bundled resources satisfy the presence check first (see this crate's
+//! own `CLAUDE.md`, "int8 is the effective default precision"). Per-encoder
+//! details below. The image-family weights all carry commercial-friendly
+//! licences (MIT / Apache-2.0) so the shipped app can be sold — see the
+//! CLIP note.
 //!
 //! ### CLIP ViT-B/32 — OpenCLIP LAION-2B (immich-app/ViT-B-32__laion2b-s34b-b79k)
 //!

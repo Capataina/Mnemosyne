@@ -14,21 +14,23 @@ import { useSemanticSearch } from "../queries/useSemanticSearch";
 import { useDebouncedValue } from "../hooks/useDebouncedValue";
 import { useShuffledFeed, newShuffleSeed } from "../hooks/useShuffledFeed";
 import { usePipelineStats, useIsIndexing } from "../hooks/useIndexingStatus";
-import { LibraryDrawer, LibraryMenuButton } from "@/components/library-drawer";
+import { LibraryDrawer } from "@/components/library-drawer";
 import { useConfirm } from "@/components/ui/confirm";
 import { getTagCounts } from "@/services/tags";
 import { FeedItem, ImageItem, Tag } from "../types";
-import { AnimatePresence, motion } from "framer-motion";
+import { AnimatePresence } from "framer-motion";
 import { useLocation, useNavigate } from "react-router";
 import { useTags, useCreateTag, useDeleteTag } from "@/queries/useTags";
-import { SearchBar } from "@/components/SearchBar";
+import { TopBar } from "./TopBar";
+import { EmptyState } from "./EmptyState";
+import { SimilarHeader } from "./SimilarHeader";
+import { SemanticStatus } from "./SemanticStatus";
 import { PinterestModal } from "@/components/PinterestModal";
 import { IndexingStatusPill } from "@/components/IndexingStatusPill";
 import { SettingsDrawer } from "@/components/settings";
 import { PerfOverlay } from "@/components/PerfOverlay";
 import { isProfilingEnabled, recordAction, onRenderProfiler } from "@/services/perf";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { FolderPlus, Settings as SettingsIcon } from "lucide-react";
 import { pickScanFolder, fetchFusedSimilarImages } from "@/services/images";
 import { useAddRoot, useRoots } from "@/queries/useRoots";
 import { useUserPreferences } from "@/hooks/useUserPreferences";
@@ -70,10 +72,10 @@ export default function Home() {
   const [searchText, setSearchText] = useState("");
   const [settingsOpen, setSettingsOpen] = useState(false);
   // Profiling state — flipped to true once at mount if the binary was
-  // launched with `--profile`. Drives three things: whether the perf
+  // launched with `--profiling`. Drives three things: whether the perf
   // overlay mounts at all, whether cmd+shift+P does anything, and
   // (later) whether action breadcrumbs get emitted to the backend.
-  // Without `--profile`, every profiling-related code path stays cold.
+  // Without `--profiling`, every profiling-related code path stays cold.
   const [profiling, setProfiling] = useState(false);
   const [perfOpen, setPerfOpen] = useState(false);
   const { prefs } = useUserPreferences();
@@ -82,7 +84,7 @@ export default function Home() {
 
   // Resolve the profiling flag once at mount. When set, auto-open the
   // overlay so the user doesn't have to discover the cmd+shift+P
-  // shortcut — if you started the app with --profile, you wanted to
+  // shortcut — if you started the app with --profiling, you wanted to
   // see the diagnostics.
   useEffect(() => {
     isProfilingEnabled().then((on) => {
@@ -561,6 +563,57 @@ export default function Home() {
     navigate("/");
   };
 
+  // TopBar's two fat handlers, built here (not inside TopBar) per the
+  // modularisation gate: onSearchChange carries the leave-first invariant
+  // (typing a semantic query while a similar-set is open exits it now,
+  // rather than letting the query silently explode onto the feed once the
+  // image closes); onAddFolder owns the duplicate-folder confirm + mutation
+  // flow. Both are prebuilt callbacks passed down as props.
+  const handleSearchChange = (selectedTags: Tag[], text: string) => {
+    recordAction("search_change", {
+      text,
+      tagIds: selectedTags.map((t) => t.id),
+    });
+    setSearchTags(selectedTags);
+    setSearchText(text);
+    const q = text.trim();
+    if (q.length > 0 && !q.startsWith("#") && selectedItem) {
+      navigate("/");
+    }
+  };
+
+  const handleCreateTag = async (name: string, color: string) => {
+    const tag = await createTagMutation.mutateAsync({ name, color });
+    return tag;
+  };
+
+  const handleAddFolder = async () => {
+    try {
+      const folder = await pickScanFolder();
+      if (!folder) return; // user cancelled
+      // Pre-empt the backend UNIQUE constraint with a friendly message. The
+      // backend still rejects duplicates as a safety net (the cache could
+      // be stale on cold start).
+      if (roots?.some((r) => r.path === folder)) {
+        await confirm({
+          title: "Folder already added",
+          description: "That folder is already in your library.",
+          alert: true,
+        });
+        return;
+      }
+      recordAction("folder_add", { path: folder, via: "topbar" });
+      await addRootMutation.mutateAsync(folder);
+    } catch (err) {
+      console.error("Folder picker failed:", err);
+      await confirm({
+        title: "Could not add folder",
+        description: err instanceof Error ? err.message : String(err),
+        alert: true,
+      });
+    }
+  };
+
   const handleClose = () => {
     recordAction("image_close", { id: selectedItem?.id });
     setIsInspecting(false);
@@ -808,114 +861,22 @@ export default function Home() {
 
       <div className="h-full w-full overflow-y-auto overscroll-contain">
         {/* Search Bar + folder-picker control */}
-        <header className="chrome-surface sticky top-0 z-40 border-b">
-          <div className="mx-auto flex h-[72px] w-full items-center gap-3 px-5 md:px-8 lg:gap-4 lg:px-10">
-            {/* Library drawer toggle (folders-as-tags) — always visible, the
-                left-most anchor of the top bar. */}
-            <LibraryMenuButton
-              open={libraryDrawerOpen}
-              onOpen={() => setLibraryDrawerOpen(true)}
-              drawerId="library-drawer"
-            />
-            <div className="hidden w-32 shrink-0 items-center xl:flex">
-              <button
-                type="button"
-                onClick={handleGoHome}
-                aria-label="Lynceus — back to library"
-                title="Back to library"
-                className="cursor-pointer rounded-[8px] px-1 py-0.5 text-[15px] font-[650] tracking-[-0.035em] text-foreground transition-opacity hover:opacity-70 active:scale-[0.98]"
-              >
-                Lynceus
-              </button>
-            </div>
-
-            <div className="mx-auto min-w-0 max-w-3xl flex-1">
-              <SearchBar
-                tags={tags.data}
-                selectedTags={searchTags}
-                searchText={searchText}
-                mode={searchMode}
-                onSearchChange={(selectedTags, text) => {
-                  recordAction("search_change", {
-                    text,
-                    tagIds: selectedTags.map((t) => t.id),
-                  });
-                  setSearchTags(selectedTags);
-                  setSearchText(text);
-                  // Typing a semantic query while an image's similar-set is
-                  // open would otherwise be silently deferred (the query is
-                  // suppressed while selectedItem is set) and then "explode"
-                  // onto the feed when the image closes. Exit the similar
-                  // view now so the search runs immediately and visibly.
-                  const q = text.trim();
-                  if (q.length > 0 && !q.startsWith("#") && selectedItem) {
-                    navigate("/");
-                  }
-                }}
-                placeholder="Search images or type # to filter by tags..."
-                onCreateTag={async (name, color) => {
-                  const tag = await createTagMutation.mutateAsync({
-                    name,
-                    color,
-                  });
-                  return tag;
-                }}
-              />
-            </div>
-
-            <div className="flex shrink-0 items-center gap-2">
-            <button
-              type="button"
-              title="Add image folder"
-              aria-label="Add image folder"
-              className="flex h-10 shrink-0 items-center gap-2 rounded-[10px] border border-border-strong bg-surface-raised/65 px-3.5 text-[12px] font-[560] text-secondary-foreground transition-[background-color,border-color,transform] hover:border-border-strong hover:bg-accent active:scale-[0.98]"
-              onClick={async () => {
-                try {
-                  const folder = await pickScanFolder();
-                  if (!folder) return; // user cancelled
-                  // Pre-empt the backend UNIQUE constraint with a friendly
-                  // message. The backend still rejects duplicates as a
-                  // safety net (the cache could be stale on cold start).
-                  if (roots?.some((r) => r.path === folder)) {
-                    await confirm({
-                      title: "Folder already added",
-                      description: "That folder is already in your library.",
-                      alert: true,
-                    });
-                    return;
-                  }
-                  recordAction("folder_add", { path: folder, via: "topbar" });
-                  await addRootMutation.mutateAsync(folder);
-                } catch (err) {
-                  console.error("Folder picker failed:", err);
-                  await confirm({
-                    title: "Could not add folder",
-                    description:
-                      err instanceof Error ? err.message : String(err),
-                    alert: true,
-                  });
-                }
-              }}
-            >
-              <FolderPlus className="h-4 w-4" strokeWidth={1.8} />
-              <span className="hidden md:inline">Add folder</span>
-            </button>
-
-            <button
-              type="button"
-              title="Settings (⌘,)"
-              aria-label="Settings"
-              className="grid size-10 shrink-0 place-items-center rounded-[10px] border border-border bg-surface/60 text-muted-foreground transition-[color,background-color,border-color,transform] hover:border-border-strong hover:bg-accent hover:text-foreground active:scale-[0.98]"
-              onClick={() => {
-                recordAction("settings_open", { via: "button" });
-                setSettingsOpen(true);
-              }}
-            >
-              <SettingsIcon className="h-4 w-4" strokeWidth={1.8} />
-            </button>
-            </div>
-          </div>
-        </header>
+        <TopBar
+          libraryDrawerOpen={libraryDrawerOpen}
+          onOpenLibraryDrawer={() => setLibraryDrawerOpen(true)}
+          onGoHome={handleGoHome}
+          tags={tags.data}
+          searchTags={searchTags}
+          searchText={searchText}
+          searchMode={searchMode}
+          onSearchChange={handleSearchChange}
+          onCreateTag={handleCreateTag}
+          onAddFolder={handleAddFolder}
+          onOpenSettings={() => {
+            recordAction("settings_open", { via: "button" });
+            setSettingsOpen(true);
+          }}
+        />
 
         <div className="box-border w-full px-5 pb-16 pt-7 md:px-8 lg:px-10 lg:pt-9">
 
@@ -926,147 +887,30 @@ export default function Home() {
             flight. */}
         {!selectedItem &&
           !shouldUseSemanticSearch &&
-          feed.length === 0 &&
-          (isIndexing || (manifest.data && manifest.data.length > 0) ? (
-            <section className="mx-auto mb-12 flex min-h-[340px] max-w-2xl flex-col items-center justify-center text-center">
-              <div className="mb-7 flex h-24 items-end gap-2.5" aria-hidden="true">
-                <div className="skeleton-tile h-16 w-16 rounded-[10px]" />
-                <div className="skeleton-tile h-24 w-20 rounded-[10px]" />
-                <div className="skeleton-tile h-20 w-14 rounded-[10px]" />
-              </div>
-              <h2 className="mb-2 text-[22px] font-[620] tracking-[-0.035em] text-foreground">
-                Indexing your library…
-              </h2>
-              <p className="max-w-md text-[13px] leading-relaxed text-muted-foreground">
-                Tiles appear here as each image's thumbnail is generated.
-                You can keep using the app while indexing runs in the
-                background.
-              </p>
-            </section>
-          ) : manifest.data && manifest.data.length === 0 ? (
-            <section className="mx-auto mb-12 flex min-h-[340px] max-w-2xl flex-col items-center justify-center text-center">
-              <div className="mb-6 grid size-14 place-items-center rounded-[14px] border border-border bg-surface text-muted-foreground shadow-[var(--shadow-soft)]">
-                <FolderPlus className="h-5 w-5" strokeWidth={1.6} />
-              </div>
-              <h2 className="mb-2 text-[22px] font-[620] tracking-[-0.035em] text-foreground">
-                No images yet
-              </h2>
-              <p className="max-w-lg text-[13px] leading-relaxed text-muted-foreground">
-                Pick a folder above to start indexing your library. The app
-                searches recursively, so you can point it at a parent folder
-                and let it sweep through every subfolder.
-              </p>
-            </section>
-          ) : null)}
+          feed.length === 0 && (
+            <EmptyState isIndexing={isIndexing} manifestCount={manifest.data?.length} />
+          )}
 
         {/* Section header when viewing similar images */}
-        <AnimatePresence>
-          {selectedItem && (
-            <motion.div
-              initial={{ opacity: 0, y: -10 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -10 }}
-              className="mb-7 flex flex-col gap-4 border-b border-border pb-5"
-            >
-              {/* Similarity breadcrumb trail — the images dived through to
-                  reach here; click any thumbnail to rewind to that fork. */}
-              {simTrail.length > 0 && (
-                <div className="flex items-center gap-1.5 overflow-x-auto pb-0.5">
-                  {simTrail.map((img, i) => (
-                    <button
-                      key={`${img.id}-${i}`}
-                      onClick={() => handleRewindTo(i)}
-                      title={`Back to ${img.name}`}
-                      className="group flex shrink-0 items-center gap-1.5"
-                    >
-                      <img
-                        src={img.thumbnailUrl ?? img.url}
-                        alt={img.name}
-                        className="h-8 w-8 rounded-[7px] object-cover opacity-65 ring-1 ring-border transition-opacity group-hover:opacity-100"
-                      />
-                      <span className="text-[11px] text-muted-foreground">›</span>
-                    </button>
-                  ))}
-                  <img
-                    src={selectedItem.thumbnailUrl ?? selectedItem.url}
-                    alt={selectedItem.name}
-                    className="h-8 w-8 shrink-0 rounded-[7px] object-cover ring-2 ring-primary/60"
-                  />
-                </div>
-              )}
-
-              <div className="flex items-end justify-between gap-5">
-                <div>
-                  <h2 className="text-[24px] font-[620] tracking-[-0.04em] text-foreground">
-                    More like this
-                  </h2>
-                  <p className="mt-1 text-[12px] tabular-nums text-muted-foreground">
-                    {tieredSimilarImages.isFetching
-                      ? "Finding similar images..."
-                      : `${tieredSimilarImages.data?.length || 0} similar images`}
-                  </p>
-                </div>
-                <div className="flex shrink-0 items-center gap-2">
-                  {simTrail.length > 0 && (
-                    <button
-                      onClick={handleBackHop}
-                      className="h-9 rounded-[10px] border border-border bg-surface/65 px-3.5 text-[12px] font-[560] text-foreground transition-[background-color,border-color,transform] hover:border-border-strong hover:bg-accent active:scale-[0.98]"
-                    >
-                      ‹ Back one
-                    </button>
-                  )}
-                  <button
-                    onClick={handleClose}
-                    className="h-9 rounded-[10px] border border-border bg-surface/65 px-3.5 text-[12px] font-[560] text-secondary-foreground transition-[background-color,border-color,transform] hover:border-border-strong hover:bg-accent active:scale-[0.98]"
-                  >
-                    ← Back to all
-                  </button>
-                </div>
-              </div>
-            </motion.div>
-          )}
-        </AnimatePresence>
+        <SimilarHeader
+          selectedItem={selectedItem}
+          simTrail={simTrail}
+          isFetchingSimilar={tieredSimilarImages.isFetching}
+          similarCount={tieredSimilarImages.data?.length || 0}
+          onRewindTo={handleRewindTo}
+          onBackHop={handleBackHop}
+          onClose={handleClose}
+        />
 
         {/* Semantic search status */}
-        <AnimatePresence>
-          {shouldUseSemanticSearch && !selectedItem && (
-            <motion.div
-              initial={{ opacity: 0, y: -10 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -10 }}
-              className="mb-7 border-b border-border pb-5"
-            >
-              <div className="flex items-center gap-2">
-                <h2 className="text-[24px] font-[620] tracking-[-0.04em] text-foreground">
-                  {isSearchLoading ? (
-                    <span className="flex items-center gap-2.5">
-                      <span className="inline-block h-4 w-4 animate-spin rounded-full border-[1.5px] border-input border-t-primary" />
-                      Searching for "{semanticQuery}"...
-                    </span>
-                  ) : (
-                    `Results for "${semanticQuery}"`
-                  )}
-                </h2>
-              </div>
-              {!isSearchLoading && semanticSearchResults.data && (
-                <p className="mt-1 text-[12px] tabular-nums text-muted-foreground">
-                  Found {semanticSearchResults.data.length} matching images
-                </p>
-              )}
-              {semanticSearchResults.isError && (
-                <p
-                  className="mt-2 rounded-[10px] border border-destructive/25 bg-destructive/8 px-3 py-2 text-[12px] text-destructive"
-                  title={String(semanticSearchResults.error)}
-                >
-                  Search failed:{" "}
-                  {semanticSearchResults.error instanceof Error
-                    ? semanticSearchResults.error.message
-                    : String(semanticSearchResults.error)}
-                </p>
-              )}
-            </motion.div>
-          )}
-        </AnimatePresence>
+        <SemanticStatus
+          visible={shouldUseSemanticSearch && !selectedItem}
+          isSearchLoading={isSearchLoading}
+          semanticQuery={semanticQuery}
+          resultsCount={semanticSearchResults.data?.length}
+          isError={semanticSearchResults.isError}
+          error={semanticSearchResults.error}
+        />
 
         {/* Masonry Grid — column count and animation level driven by user prefs.
             Wrapped in React.Profiler so the profiling system can correlate

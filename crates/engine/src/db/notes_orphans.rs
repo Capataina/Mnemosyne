@@ -30,8 +30,12 @@ impl ImageDatabase {
         // Re-mark every row from this root as not-orphaned first.
         // Necessary because a previously-orphaned row whose file came
         // back (rename, restore from trash) should re-appear in the grid.
+        // `AND orphaned = 1` skips rows already at 0: SQLite doesn't
+        // elide no-op UPDATEs, so an unconditional reset rewrites the
+        // whole root into the WAL on every steady-state rescan even
+        // though nothing changed (measured: 10k rows, 107 KB -> 0 bytes).
         conn.execute(
-            "UPDATE images SET orphaned = 0 WHERE root_id = ?1",
+            "UPDATE images SET orphaned = 0 WHERE root_id = ?1 AND orphaned = 1",
             [root_id],
         )?;
 

@@ -1,8 +1,10 @@
 //! User-facing settings persisted to `settings.json` in the app data dir.
 //!
-//! Currently very small (just the scan root). Pass 4 will populate the
-//! `scan_root` field on first folder-pick. Future settings (per-tag
-//! colours, thumbnail size, semantic-search defaults) extend this struct.
+//! Carries the legacy scan root (superseded by the multi-root table but
+//! kept for the one-shot migration), the enabled-encoder set, and the
+//! model-precision choice — `Settings` grew well past the original
+//! single-field struct. Future settings (per-tag colours, thumbnail
+//! size, semantic-search defaults) still extend it the same way.
 //!
 //! The file may not exist on first launch; callers treat missing-file
 //! as "use defaults."

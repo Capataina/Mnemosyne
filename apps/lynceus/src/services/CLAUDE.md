@@ -32,8 +32,16 @@ services/
 │                     paths, errors/rejections/console tee, image + slow-resource
 │                     observability, ⌘⇧M / on-error state bundles (query keys + status,
 │                     never data; typed text never captured). Profiling mode only;
-│                     nothing leaves the machine.
+│                     nothing leaves the machine. Imports the masonry monitor for
+│                     state-bundle/pointer-handler geometry; the reflow observer itself
+│                     lives in masonryMonitor.ts.
 ├── telemetry.test.ts Capture-layer contracts.
+├── masonryMonitor.ts Masonry geometry (captureGridGeometry, tilesOverlap) + the
+│                     unified rAF layout monitor (startLayoutMonitor, monitorContext,
+│                     classifyMove) — split out of telemetry.ts at its own
+│                     header-drawn seam, 2026-08-03. One-directional coupling:
+│                     references no telemetry.ts symbol; telemetry.ts imports
+│                     captureGridGeometry/monitorContext/startLayoutMonitor from here.
 └── services.test.ts  IPC wrapper tests over the shared mockInvoke.
 ```
 
@@ -43,7 +51,7 @@ The profiling system is deliberately split: the **sink lives in the engine** (`c
 
 `perfInvoke` is opt-in per call site, not an automatic interceptor — a global interceptor would profile every IPC including uninteresting ones; the explicit wrapper makes profiling intent visible where it's used. `recordAction` breadcrumbs are fire-and-forget (awaiting the IPC would add latency to every user-action handler for nothing); the backend correlates the next ≤500ms of span activity to each action in the on-exit report.
 
-## The masonry layout monitor
+## The masonry layout monitor (masonryMonitor.ts)
 
 The telemetry surface that made reflow bugs observable rather than guessed (the instrument behind the teleport and reorder-drift fixes, 91564f0/e3adc2e). Event-armed, never free-running: capture-phase pointerdown/held-pointermove arm it for gestures, a masonry-scoped MutationObserver catches non-pointer reflows (feed-delta merges). It samples every second animation frame while motion is live or was seen within 1.5s, then stops completely — the earlier free-running version read every visible tile at 60fps forever, allocated fresh maps per frame, and interleaved geometry with computed-style reads, both costing frames and manufacturing the jank it reported. It emits ONE `reflow` event per reflow (after ~6 still frames): trigger context, per-tile `moved` list with a `classifyMove` verdict, mounted/unmounted ids, `teleportCount`, and a settled geometry snapshot. The teleport threshold is capped at 0.75 of the displacement per two-frame sample, not 1.0 — requiring the entire displacement in one sample silently missed teleports diluted by co-occurring motion (detection SENSITIVITY changes with sampling cadence, not just cost; 0.75 sits above the steepest smooth ease's measured ~59%-per-sample peak). It reads committed geometry from `data-masonry-*` attributes, never live visual transforms. Reading traps that each cost a wrong diagnosis once: gap events' `above`/ `below` are tile IDS, not y-coordinates; a left-edge-binned gap detector is blind to span-2 tiles (the phantom "306px gaps").
 
@@ -64,6 +72,4 @@ The telemetry surface that made reflow bugs observable rather than guessed (the 
 
 ## Planned work
 
-- **Delete the ~85-line legacy export block in `images.ts`** (dead code; refuter-proven in a worktree: block + its three orphaned `services.test.ts` assertions deleted → `tsc --noEmit` exit 0, suite 247/247). The five symbols (`getScanRoot`, `setScanRoot`, `fetchSimilarImages`, `fetchTieredSimilarImages`, `semanticSearch`) have zero non-test importers; Tauri registration is independent (`src-tauri/src/lib.rs:596-602`), so nothing deregisters; `mapImageSearchResult`/`perfInvoke` stay alive via the fused functions. This is the TS half of the cross-crate legacy-surface removal — the Rust half and the full batch live in `src-tauri/src/commands/CLAUDE.md`'s planned work; land together. [code-health-audit 2026-08-02]
-- **Split `telemetry.ts` (915 lines) at its own header-drawn seam** (modularisation; gate-promoted): the ~466-line masonry-monitor half (lines 197-663) moves out; coupling proven one-directional (zero generic-half symbols referenced in the monitor half; `monitorContext` is self-defined). Reference batch: `App.tsx:12` (initTelemetry, stays), `services/telemetry.test.ts:13` (four masonry names move import lines). Distinct from the documented Syrinx package-lift trigger — this is the app-local split the file's own header comment (197-206) plans for. Settle: suite + a `--profiling` overlay smoke. [code-health-audit 2026-08-02]
-- Pointer: the tree-wide zero-importer batch in `../CLAUDE.md` un-exports `tileUnderPoint` in `telemetry.ts` — land with that batch, not separately.
+None outstanding for this folder. The legacy export block in `images.ts` (`getScanRoot`, `setScanRoot`, `fetchSimilarImages`, `fetchTieredSimilarImages`, `semanticSearch` — five symbols, zero non-test importers) is deleted along with its `services.test.ts` assertions and the two describe-block renames (`services/fusedSemantic`/`fusedSimilar` → both named after their real module, `services/images`); `mapImageSearchResult`/`perfInvoke` stayed alive via the fused functions as expected. The Rust half (the matching `commands/similarity.rs` + `commands/semantic.rs` removal and `lib.rs` invoke_handler entries) landed in the same change — see `src-tauri/src/commands/CLAUDE.md`. Suite: 247/247. [code-health-audit 2026-08-02, landed]

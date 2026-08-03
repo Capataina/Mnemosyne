@@ -15,7 +15,9 @@ import {
   SETTLE_EASE,
   cursorFrame,
   cursorTrack,
+  holdTrack,
   normaliseTimes,
+  pressAt,
   visualFrame,
   visualMotion,
   visualTrack,
@@ -29,7 +31,7 @@ import type { OnboardingSceneProps } from "../types";
 import { DemoSceneRoot } from "../primitives/DemoAppChrome";
 import { OnboardingSkeleton } from "../primitives/OnboardingSkeleton";
 import {
-  StaticFrameArt,
+  reducedFrames,
   type StaticFrameKind,
 } from "../primitives/ReducedMotionFilmstrip";
 
@@ -70,27 +72,22 @@ const cursor = cursorTrack(
   [
     cursorFrame(CURSOR_PARK.x, CURSOR_PARK.y),
     cursorFrame(CURSOR_PARK.x, CURSOR_PARK.y),
-    cursorFrame(CLICK_START.x, CLICK_START.y),
-    cursorFrame(CLICK_START.x, CLICK_START.y, 0.92, 0.75, 1),
-    cursorFrame(CLICK_START.x, CLICK_START.y),
-    cursorFrame(CLICK_PLUS.x, CLICK_PLUS.y),
-    cursorFrame(CLICK_PLUS.x, CLICK_PLUS.y, 0.92, 0.75, 1),
-    cursorFrame(CLICK_PLUS.x, CLICK_PLUS.y),
+    ...pressAt(CLICK_START),
+    ...pressAt(CLICK_PLUS),
     cursorFrame(PAN_FROM.x, PAN_FROM.y),
     cursorFrame(PAN_FROM.x, PAN_FROM.y, 0.92),
     cursorFrame(PAN_TO.x, PAN_TO.y, 0.92),
     cursorFrame(PAN_TO.x, PAN_TO.y),
-    cursorFrame(CLICK_FIT.x, CLICK_FIT.y),
-    cursorFrame(CLICK_FIT.x, CLICK_FIT.y, 0.92, 0.75, 1),
-    cursorFrame(CLICK_FIT.x, CLICK_FIT.y),
-    cursorFrame(CLICK_PAUSE.x, CLICK_PAUSE.y),
+    ...pressAt(CLICK_FIT),
+    // Pause is pressed twice in place: the arrival frame the second
+    // press would need is identical to the first press's release, so
+    // only the first is a self-contained pressAt() triple — the second
+    // press/release stays hand-typed to avoid inserting a duplicate
+    // frame the original 25-frame track never had.
+    ...pressAt(CLICK_PAUSE),
     cursorFrame(CLICK_PAUSE.x, CLICK_PAUSE.y, 0.92, 0.75, 1),
     cursorFrame(CLICK_PAUSE.x, CLICK_PAUSE.y),
-    cursorFrame(CLICK_PAUSE.x, CLICK_PAUSE.y, 0.92, 0.75, 1),
-    cursorFrame(CLICK_PAUSE.x, CLICK_PAUSE.y),
-    cursorFrame(CLICK_EXIT.x, CLICK_EXIT.y),
-    cursorFrame(CLICK_EXIT.x, CLICK_EXIT.y, 0.92, 0.75, 1),
-    cursorFrame(CLICK_EXIT.x, CLICK_EXIT.y),
+    ...pressAt(CLICK_EXIT),
     cursorFrame(CURSOR_PARK.x, CURSOR_PARK.y),
     cursorFrame(CURSOR_PARK.x, CURSOR_PARK.y),
   ],
@@ -101,31 +98,19 @@ const cursor = cursorTrack(
   ]),
 );
 
-const inspector = visualTrack(
-  [
-    visualFrame(undefined, 1),
-    visualFrame(undefined, 1),
-    visualFrame(undefined, 0),
-    visualFrame(undefined, 0),
-    visualFrame(undefined, 1),
-    visualFrame(undefined, 1),
-  ],
-  normaliseTimes(GESTURE_PRACTICE_DURATION_MS, [0, 1100, 1360, 7950, 8260, 10800]),
-  ["linear", FADE_EASE, "linear", FADE_EASE, "linear"],
-);
+const setupView = holdTrack([0, 1100, 1360, 7950, 8260, 10800], {
+  hidden: visualFrame(undefined, 1),
+  shown: visualFrame(undefined, 0),
+  easeIn: FADE_EASE,
+  easeOut: FADE_EASE,
+});
 
-const timer = visualTrack(
-  [
-    visualFrame("translate3d(0px, 8px, 0px) scale(1)", 0),
-    visualFrame("translate3d(0px, 8px, 0px) scale(1)", 0),
-    visualFrame(undefined, 1),
-    visualFrame(undefined, 1),
-    visualFrame("translate3d(0px, 8px, 0px) scale(1)", 0),
-    visualFrame("translate3d(0px, 8px, 0px) scale(1)", 0),
-  ],
-  normaliseTimes(GESTURE_PRACTICE_DURATION_MS, [0, 1100, 1360, 7950, 8260, 10800]),
-  ["linear", SETTLE_EASE, "linear", FADE_EASE, "linear"],
-);
+const timer = holdTrack([0, 1100, 1360, 7950, 8260, 10800], {
+  hidden: visualFrame("translate3d(0px, 8px, 0px) scale(1)", 0),
+  shown: visualFrame(undefined, 1),
+  easeIn: SETTLE_EASE,
+  easeOut: FADE_EASE,
+});
 
 const artwork = visualTrack(
   [
@@ -142,31 +127,19 @@ const artwork = visualTrack(
   ["linear", SETTLE_EASE, SETTLE_EASE, "linear", SETTLE_EASE, "linear", "linear"],
 );
 
-const zoomControls = visualTrack(
-  [
-    visualFrame(undefined, 0),
-    visualFrame(undefined, 0),
-    visualFrame(undefined, 1),
-    visualFrame(undefined, 1),
-    visualFrame(undefined, 0),
-    visualFrame(undefined, 0),
-  ],
-  normaliseTimes(GESTURE_PRACTICE_DURATION_MS, [0, 2550, 2950, 4550, 4810, 10800]),
-  ["linear", FADE_EASE, "linear", FADE_EASE, "linear"],
-);
+const zoomControls = holdTrack([0, 2550, 2950, 4550, 4810, 10800], {
+  hidden: visualFrame(undefined, 0),
+  shown: visualFrame(undefined, 1),
+  easeIn: FADE_EASE,
+  easeOut: FADE_EASE,
+});
 
-const nextReference = visualTrack(
-  [
-    visualFrame(undefined, 0),
-    visualFrame(undefined, 0),
-    visualFrame(undefined, 1),
-    visualFrame(undefined, 1),
-    visualFrame(undefined, 0),
-    visualFrame(undefined, 0),
-  ],
-  normaliseTimes(GESTURE_PRACTICE_DURATION_MS, [0, 5150, 5510, 7950, 8260, 10800]),
-  ["linear", FADE_EASE, "linear", FADE_EASE, "linear"],
-);
+const nextReference = holdTrack([0, 5150, 5510, 7950, 8260, 10800], {
+  hidden: visualFrame(undefined, 0),
+  shown: visualFrame(undefined, 1),
+  easeIn: FADE_EASE,
+  easeOut: FADE_EASE,
+});
 
 const arc = visualTrack(
   [
@@ -193,22 +166,16 @@ const arc = visualTrack(
   ["linear", "linear", "linear", "linear", "linear", "linear", "linear", FADE_EASE, "linear"],
 );
 
-const pauseState = visualTrack(
-  [
-    visualFrame(undefined, 0),
-    visualFrame(undefined, 0),
-    visualFrame(undefined, 1),
-    visualFrame(undefined, 1),
-    visualFrame(undefined, 0),
-    visualFrame(undefined, 0),
-  ],
-  normaliseTimes(GESTURE_PRACTICE_DURATION_MS, [0, 5950, 6450, 6950, 7050, 10800]),
-  ["linear", FADE_EASE, "linear", FADE_EASE, "linear"],
-);
+const pauseState = holdTrack([0, 5950, 6450, 6950, 7050, 10800], {
+  hidden: visualFrame(undefined, 0),
+  shown: visualFrame(undefined, 1),
+  easeIn: FADE_EASE,
+  easeOut: FADE_EASE,
+});
 
 export const GESTURE_PRACTICE_TRACKS = {
   cursor,
-  inspector,
+  setupView,
   timer,
   artwork,
   zoomControls,
@@ -244,9 +211,7 @@ const reducedKinds: readonly [StaticFrameKind, string][] = [
   ["gesture-zoomed", "Zoom, pan, and return to Fit"],
 ];
 
-export const GESTURE_PRACTICE_REDUCED_FRAMES = reducedKinds.map(
-  ([kind, caption]) => ({ caption, content: <StaticFrameArt kind={kind} /> }),
-);
+export const GESTURE_PRACTICE_REDUCED_FRAMES = reducedFrames(reducedKinds);
 
 export function GesturePracticeScene({ animationLevel }: OnboardingSceneProps) {
   const motionOptions = { subtle: animationLevel === "subtle" };
@@ -255,7 +220,7 @@ export function GesturePracticeScene({ animationLevel }: OnboardingSceneProps) {
     <DemoSceneRoot>
       <motion.div
         className="absolute inset-0 flex bg-background"
-        animate={visualMotion(inspector, GESTURE_PRACTICE_DURATION_MS, motionOptions)}
+        animate={visualMotion(setupView, GESTURE_PRACTICE_DURATION_MS, motionOptions)}
       >
         <div className="flex flex-1 items-center justify-center bg-surface-sunken p-10">
           <OnboardingSkeleton className="h-full w-full rounded-[14px]" raised />

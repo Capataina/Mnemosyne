@@ -4,7 +4,7 @@ import {
   naturalPixelScale,
   resolveWheelGesture,
   zoomTransformAroundPoint,
-} from "./useGestureZoom";
+} from "./zoomGeometry";
 
 const geometry = {
   viewportWidth: 1000,

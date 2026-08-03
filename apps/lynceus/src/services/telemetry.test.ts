@@ -1,16 +1,18 @@
 import { describe, expect, it, vi } from "vitest";
 import { QueryClient } from "@tanstack/react-query";
 import {
-  classifyMove,
-  captureGridGeometry,
   describeElement,
   domPathFor,
   serialiseDomOutline,
   shouldRecordKey,
   summariseQueries,
+} from "./telemetry";
+import {
+  classifyMove,
+  captureGridGeometry,
   tilesOverlap,
   type TileGeometry,
-} from "./telemetry";
+} from "./masonryMonitor";
 
 describe("classifyMove", () => {
   it("calls a one-frame jump a TELEPORT", () => {

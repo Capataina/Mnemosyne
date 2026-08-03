@@ -13,6 +13,9 @@ primitives/
 ├── SkeletonInspector.tsx      Static inspector mock (SimilarityScene's dive target).
 └── ReducedMotionFilmstrip.tsx StaticFrameArt: the per-scene three-frame static art keyed
                                by StaticFrameKind — the reduced-motion/small-stage path.
+                               Also reducedFrames(kinds): builds a scene's three
+                               ReducedFrame entries from its `[kind, caption]` pairs —
+                               every scene's *_REDUCED_FRAMES export goes through it.
 ```
 
 Adding a control a scene will click: give it a rect in `sceneGeometry.ts` CHROME and position it absolutely here — never let flex compute its x/y.

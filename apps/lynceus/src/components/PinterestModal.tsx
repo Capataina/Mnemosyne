@@ -109,7 +109,7 @@ export function PinterestModal(props: PinterestModalProps) {
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [props.onClose, props.onNavigate]);
 
-  const persistNotesSoon = () => {
+  const persistNotes = () => {
     if (!props.onSaveNotes || !props.item) return;
     props.onSaveNotes(props.item.id, notesValue);
   };
@@ -268,7 +268,7 @@ export function PinterestModal(props: PinterestModalProps) {
                   id={`image-notes-${props.item.id}`}
                   value={notesValue}
                   onChange={(e) => setNotesValue(e.target.value)}
-                  onBlur={persistNotesSoon}
+                  onBlur={persistNotes}
                   placeholder="Add a note about this image..."
                   className="min-h-[104px] w-full resize-y rounded-[10px] border border-border bg-surface-sunken/65 px-3.5 py-3 text-[12px] leading-relaxed text-foreground outline-none transition-[border-color,box-shadow,background-color] placeholder:text-muted-foreground focus:border-primary/55 focus:bg-surface-sunken focus:ring-3 focus:ring-primary/10"
                 />
@@ -296,7 +296,7 @@ export function PinterestModal(props: PinterestModalProps) {
  */
 function pickContrastingText(hex: string): string {
   // Naive luma — sum of RGB channels normalised to 0-1, scaled by
-  // perceptual weights. Threshold 0.5 picks black on light bgs.
+  // perceptual weights. Threshold 0.6 picks black on light bgs.
   if (!/^#[0-9a-fA-F]{6}$/.test(hex)) return "#111827";
   const r = parseInt(hex.slice(1, 3), 16) / 255;
   const g = parseInt(hex.slice(3, 5), 16) / 255;

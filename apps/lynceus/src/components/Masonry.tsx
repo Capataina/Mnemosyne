@@ -17,8 +17,6 @@ import { useTileDrag } from "../hooks/useTileDrag";
 import { useTileResize } from "../hooks/useTileResize";
 import { useIsIndexing } from "../hooks/useIndexingStatus";
 
-export type MasonryItemData = MasonryItemPlacement;
-
 /**
  * How many of the visible tiles the settle-time effect pre-warms. The prefetch
  * fans one tile into a 3-encoder fused-similar search plus a detail hydrate, so

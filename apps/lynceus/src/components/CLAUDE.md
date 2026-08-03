@@ -22,6 +22,11 @@ components/
 │                                  LEFT column), MasonryPlacementAnchor (placement pins),
 │                                  buildPackInput/computeMasonryGeometry. Shared verbatim by
 │                                  worker and sync fallback — outputs bit-identical.
+│                                  `lowestFreeY` is module-private (3 intra-file callers).
+├── resizeGeometry.ts              Pure resize-corner geometry (anchorStartColFor,
+│                                  resizePreviewForSpan, resizeVisualForPointer), mirroring
+│                                  masonryReorder.ts's split from its stateful hook.
+│                                  `hooks/useTileResize.ts` re-exports it verbatim.
 ├── masonryWorker.ts               Web Worker entry; caches input per base revision, pointer
 │                                  frames reuse cached arrays.
 ├── masonryPacker.ts               Worker client: one in-flight computation + one replaceable
@@ -122,10 +127,6 @@ The three process lessons, hard-won:
 - **Stale worker results.** Pack responses are generation-tagged; a late response for an old generation must be dropped, and a worker FAILURE must not overwrite an adopted layout (8fa6288). Don't "simplify" the guard away.
 - **Prewarm fan-out.** Each prewarmed tile costs a 3-encoder fused search plus a detail hydrate. The cap in Masonry.tsx exists because uncapped prewarm froze clicks under indexing load; hover still warms any tile on intent.
 - **Footprint convention.** `startCol` is the physical left column, always. The old left/right/centre edge-reference convention was removed because centre was ambiguous for even spans — don't reintroduce it.
-
-## Planned work (pointers — the plans live where noted)
-
-- Cross-folder audit batches edit four files here: `masonryPacking.ts` (`lowestFreeY` un-export), `Masonry.tsx` (`MasonryItemData` deletion), `PinterestModal.tsx` (two meaning-renames), `masonryPacking.test.ts` (header + fixture typing) — full batch entries in `../CLAUDE.md`'s planned work. The resize split in `../hooks/CLAUDE.md` lands its pure half as a NEW `components/resizeGeometry.ts` beside `masonryReorder.ts`. [code-health-audit 2026-08-02]
 
 ## Key findings
 

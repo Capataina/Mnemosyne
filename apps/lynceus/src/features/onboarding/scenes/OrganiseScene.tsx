@@ -7,7 +7,9 @@ import {
   SETTLE_EASE,
   cursorFrame,
   cursorTrack,
+  holdTrack,
   normaliseTimes,
+  pressAt,
   visualFrame,
   visualMotion,
   visualTrack,
@@ -25,7 +27,7 @@ import type { ClosedTrack, OnboardingSceneProps, VisualFrame } from "../types";
 import { DemoAppChrome, DemoSceneRoot } from "../primitives/DemoAppChrome";
 import { OnboardingSkeleton } from "../primitives/OnboardingSkeleton";
 import {
-  StaticFrameArt,
+  reducedFrames,
   type StaticFrameKind,
 } from "../primitives/ReducedMotionFilmstrip";
 
@@ -38,7 +40,7 @@ export const ORGANISE_DURATION_MS = 9600;
  * survivors: each survivor translates from its base cell to the cell of
  * its new index among survivors — computed, so nothing stacks or drifts.
  */
-export const ORGANISE_GRID = makeGrid({
+const ORGANISE_GRID = makeGrid({
   originX: 382,
   originY: 104,
   cellW: 168,
@@ -119,24 +121,12 @@ const cursor = cursorTrack(
   [
     cursorFrame(CURSOR_PARK.x, CURSOR_PARK.y),
     cursorFrame(CURSOR_PARK.x, CURSOR_PARK.y),
-    cursorFrame(CLICK_LIBRARY.x, CLICK_LIBRARY.y),
-    cursorFrame(CLICK_LIBRARY.x, CLICK_LIBRARY.y, 0.92, 0.75, 1),
-    cursorFrame(CLICK_LIBRARY.x, CLICK_LIBRARY.y),
-    cursorFrame(CLICK_FOLDER.x, CLICK_FOLDER.y),
-    cursorFrame(CLICK_FOLDER.x, CLICK_FOLDER.y, 0.92, 0.75, 1),
-    cursorFrame(CLICK_FOLDER.x, CLICK_FOLDER.y),
-    cursorFrame(CLICK_INCLUDE.x, CLICK_INCLUDE.y),
-    cursorFrame(CLICK_INCLUDE.x, CLICK_INCLUDE.y, 0.92, 0.75, 1),
-    cursorFrame(CLICK_INCLUDE.x, CLICK_INCLUDE.y),
-    cursorFrame(CLICK_EXCLUDE.x, CLICK_EXCLUDE.y),
-    cursorFrame(CLICK_EXCLUDE.x, CLICK_EXCLUDE.y, 0.92, 0.75, 1),
-    cursorFrame(CLICK_EXCLUDE.x, CLICK_EXCLUDE.y),
-    cursorFrame(CLICK_CLEAR.x, CLICK_CLEAR.y),
-    cursorFrame(CLICK_CLEAR.x, CLICK_CLEAR.y, 0.92, 0.75, 1),
-    cursorFrame(CLICK_CLEAR.x, CLICK_CLEAR.y),
-    cursorFrame(CLICK_CLOSE.x, CLICK_CLOSE.y),
-    cursorFrame(CLICK_CLOSE.x, CLICK_CLOSE.y, 0.92, 0.75, 1),
-    cursorFrame(CLICK_CLOSE.x, CLICK_CLOSE.y),
+    ...pressAt(CLICK_LIBRARY),
+    ...pressAt(CLICK_FOLDER),
+    ...pressAt(CLICK_INCLUDE),
+    ...pressAt(CLICK_EXCLUDE),
+    ...pressAt(CLICK_CLEAR),
+    ...pressAt(CLICK_CLOSE),
     cursorFrame(CURSOR_PARK.x, CURSOR_PARK.y),
     cursorFrame(CURSOR_PARK.x, CURSOR_PARK.y),
   ],
@@ -146,70 +136,40 @@ const cursor = cursorTrack(
   ]),
 );
 
-const drawer = visualTrack(
-  [
-    visualFrame("translate3d(-360px, 0px, 0px) scale(1)", 1),
-    visualFrame("translate3d(-360px, 0px, 0px) scale(1)", 1),
-    visualFrame(undefined, 1),
-    visualFrame(undefined, 1),
-    visualFrame("translate3d(-360px, 0px, 0px) scale(1)", 1),
-    visualFrame("translate3d(-360px, 0px, 0px) scale(1)", 1),
-  ],
-  normaliseTimes(ORGANISE_DURATION_MS, [0, 500, 1000, 6720, 7200, 9600]),
-  ["linear", SETTLE_EASE, "linear", SETTLE_EASE, "linear"],
-);
+const drawer = holdTrack([0, 500, 1000, 6720, 7200, 9600], {
+  hidden: visualFrame("translate3d(-360px, 0px, 0px) scale(1)", 1),
+  shown: visualFrame(undefined, 1),
+  easeIn: SETTLE_EASE,
+  easeOut: SETTLE_EASE,
+});
 
-const backdrop = visualTrack(
-  [
-    visualFrame(undefined, 0),
-    visualFrame(undefined, 0),
-    visualFrame(undefined, 1),
-    visualFrame(undefined, 1),
-    visualFrame(undefined, 0),
-    visualFrame(undefined, 0),
-  ],
-  normaliseTimes(ORGANISE_DURATION_MS, [0, 500, 1000, 6720, 7200, 9600]),
-  ["linear", FADE_EASE, "linear", FADE_EASE, "linear"],
-);
+const backdrop = holdTrack([0, 500, 1000, 6720, 7200, 9600], {
+  hidden: visualFrame(undefined, 0),
+  shown: visualFrame(undefined, 1),
+  easeIn: FADE_EASE,
+  easeOut: FADE_EASE,
+});
 
-const folderState = visualTrack(
-  [
-    visualFrame(undefined, 0),
-    visualFrame(undefined, 0),
-    visualFrame(undefined, 1),
-    visualFrame(undefined, 1),
-    visualFrame(undefined, 0),
-    visualFrame(undefined, 0),
-  ],
-  normaliseTimes(ORGANISE_DURATION_MS, [0, 1800, 2200, 6000, 6420, 9600]),
-  ["linear", FADE_EASE, "linear", FADE_EASE, "linear"],
-);
+const folderState = holdTrack([0, 1800, 2200, 6000, 6420, 9600], {
+  hidden: visualFrame(undefined, 0),
+  shown: visualFrame(undefined, 1),
+  easeIn: FADE_EASE,
+  easeOut: FADE_EASE,
+});
 
-const includeState = visualTrack(
-  [
-    visualFrame(undefined, 0),
-    visualFrame(undefined, 0),
-    visualFrame(undefined, 1),
-    visualFrame(undefined, 1),
-    visualFrame(undefined, 0),
-    visualFrame(undefined, 0),
-  ],
-  normaliseTimes(ORGANISE_DURATION_MS, [0, 3000, 3360, 6000, 6420, 9600]),
-  ["linear", FADE_EASE, "linear", FADE_EASE, "linear"],
-);
+const includeState = holdTrack([0, 3000, 3360, 6000, 6420, 9600], {
+  hidden: visualFrame(undefined, 0),
+  shown: visualFrame(undefined, 1),
+  easeIn: FADE_EASE,
+  easeOut: FADE_EASE,
+});
 
-const excludeState = visualTrack(
-  [
-    visualFrame(undefined, 0),
-    visualFrame(undefined, 0),
-    visualFrame(undefined, 1),
-    visualFrame(undefined, 1),
-    visualFrame(undefined, 0),
-    visualFrame(undefined, 0),
-  ],
-  normaliseTimes(ORGANISE_DURATION_MS, [0, 4150, 4510, 6000, 6420, 9600]),
-  ["linear", FADE_EASE, "linear", FADE_EASE, "linear"],
-);
+const excludeState = holdTrack([0, 4150, 4510, 6000, 6420, 9600], {
+  hidden: visualFrame(undefined, 0),
+  shown: visualFrame(undefined, 1),
+  easeIn: FADE_EASE,
+  easeOut: FADE_EASE,
+});
 
 const searchChip = folderState;
 
@@ -258,10 +218,7 @@ const reducedKinds: readonly [StaticFrameKind, string][] = [
   ["organise-refined", "Refine without moving originals"],
 ];
 
-export const ORGANISE_REDUCED_FRAMES = reducedKinds.map(([kind, caption]) => ({
-  caption,
-  content: <StaticFrameArt kind={kind} />,
-}));
+export const ORGANISE_REDUCED_FRAMES = reducedFrames(reducedKinds);
 
 export function OrganiseScene({ animationLevel }: OnboardingSceneProps) {
   const motionOptions = { subtle: animationLevel === "subtle" };

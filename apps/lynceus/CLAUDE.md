@@ -8,7 +8,7 @@ Version **0.7.14** — kept in lockstep across `package.json`, `src-tauri/Cargo.
 
 ## The three-way split
 
-- `src/` — the React frontend (own CLAUDE.md tree). Vitest suite, 250/250.
+- `src/` — the React frontend (own CLAUDE.md tree). Vitest suite, 247/247.
 - `src-tauri/` — the Rust app crate `lynceus` (lib `lynceus_lib`): Tauri commands, thumbnail pipeline, search orchestration, `Entitlements.plist`, `tauri.conf.json` (own CLAUDE.md files under `src-tauri/src/`).
 - `design/` — non-code product artefacts: brand mark and store listing (own CLAUDE.md).
 
@@ -46,7 +46,7 @@ Store-shaped and waiting on the founder's Apple Developer enrolment. Sandbox ent
 
 ## Gaps and planned work
 
-- **April 2026 audit's top-3 — adjudicated by the 2026-08-02 re-audit.** (1) Legacy single-encoder commands: still present, now a gate-promoted removal batch (~870 Rust + ~80 TS lines) in `src-tauri/src/commands/CLAUDE.md`'s planned work. (2) `priority_image_encoder`: RESOLVED — no live read exists any more; the settings field stays only for deserialisation compat. (3) `db.get_embedding` writer-mutex routing: still open (I-DB-1/2, pinned by the ignored diagnostic), but landing (1) deletes all three foreground callers, collapsing most of its surface. The 2026-07-15 "all three unresolved" claim above is superseded. [code-health-audit 2026-08-02]
+- **April 2026 audit's top-3 — adjudicated by the 2026-08-02 re-audit, closed out 2026-08-03.** (1) Legacy single-encoder commands: RESOLVED — the ~870 Rust + ~80 TS line removal batch landed (`get_similar_images`/`get_tiered_similar_images`/`semantic_search` and their TS wrappers deleted); see `src-tauri/src/commands/CLAUDE.md`. (2) `priority_image_encoder`: RESOLVED — no live read exists any more; the settings field stays only for deserialisation compat. (3) `db.get_embedding` writer-mutex routing (I-DB-1/2): still open, but landing (1) deleted its `get_image_embedding` callers, collapsing most of the finding's surface down to `get_embedding` alone — see `src-tauri/tests/CLAUDE.md`. [code-health-audit 2026-08-02]
 
 ### Enhancement ideas ledger (Hermes-era research, 2026-07, unverified)
 

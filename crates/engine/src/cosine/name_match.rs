@@ -200,6 +200,12 @@ fn strip_ext(basename: &str) -> &str {
 /// first erases the `Dr|Mundo` boundary that makes `mundo` an exact
 /// token.
 fn tokenize(s: &str) -> Vec<String> {
+    // Lowercase at flush time, in the same pass that splits tokens — the
+    // old shape built the raw-token Vec first and lowercased it in a
+    // second pass (`tokens.iter().map(to_lowercase).collect()`), doubling
+    // the Vec/String allocations. Same `str::to_lowercase`, same content,
+    // same Unicode behaviour; exact-equivalence swept by
+    // `cha_ret_name_match_bench.rs`.
     let mut tokens = Vec::new();
     let mut cur = String::new();
     let mut prev: Option<char> = None;
@@ -207,7 +213,8 @@ fn tokenize(s: &str) -> Vec<String> {
         if !c.is_alphanumeric() {
             // Separator — flush the current token.
             if !cur.is_empty() {
-                tokens.push(std::mem::take(&mut cur));
+                tokens.push(cur.to_lowercase());
+                cur.clear();
             }
             prev = None;
             continue;
@@ -218,16 +225,17 @@ fn tokenize(s: &str) -> Vec<String> {
             let camel = p.is_lowercase() && c.is_uppercase();
             let digit_boundary = p.is_alphabetic() != c.is_alphabetic();
             if (camel || digit_boundary) && !cur.is_empty() {
-                tokens.push(std::mem::take(&mut cur));
+                tokens.push(cur.to_lowercase());
+                cur.clear();
             }
         }
         cur.push(c);
         prev = Some(c);
     }
     if !cur.is_empty() {
-        tokens.push(cur);
+        tokens.push(cur.to_lowercase());
     }
-    tokens.iter().map(|t| t.to_lowercase()).collect()
+    tokens
 }
 
 /// Normalised Levenshtein similarity in [0, 1]: `1 − dist / max_len`.

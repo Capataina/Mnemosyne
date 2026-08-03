@@ -23,9 +23,13 @@
 //! ## Object safety
 //!
 //! Both traits are object-safe (no generic methods, no Self return
-//! values) so they can be held as `Box<dyn ImageEncoder>` /
-//! `Box<dyn TextEncoder>` in Tauri-managed state. This is what enables
-//! the "user picks encoder in Settings" UX.
+//! values). Nothing currently holds a `Box<dyn ImageEncoder>` /
+//! `Box<dyn TextEncoder>` — `TextEncoderState` (lib.rs) holds concrete
+//! `Option<ClipTextEncoder>` / `Option<Siglip2TextEncoder>` slots instead,
+//! and the indexing pipeline dispatches per-encoder by matching on the
+//! enabled-encoder id rather than through a trait object. Object safety
+//! is kept anyway: it's what would let a future dynamic-dispatch picker
+//! hold either concrete type behind one field without a signature change.
 
 use std::error::Error;
 use std::path::Path;
@@ -57,11 +61,11 @@ pub trait ImageEncoder: Send {
     /// validate that query and corpus vectors match.
     fn embedding_dim(&self) -> usize;
 
-    /// Stable identifier for this encoder. Used as the database
-    /// embedding-column suffix (`embedding_clip`, `embedding_siglip2`,
-    /// `embedding_dinov2`) and as the user-facing label in the
-    /// Settings encoder picker. Must be a valid SQL identifier
-    /// fragment — `[a-z0-9_]+` only.
+    /// Stable identifier for this encoder. Used as the `encoder_id` key
+    /// in the shared per-encoder `embeddings` table (one table, not one
+    /// column per encoder — see `db/mod.rs`'s schema) and as the
+    /// user-facing label in the Settings encoder picker. Must be a valid
+    /// SQL identifier fragment — `[a-z0-9_]+` only.
     fn id(&self) -> &'static str;
 }
 

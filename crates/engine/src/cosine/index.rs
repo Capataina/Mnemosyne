@@ -137,28 +137,33 @@ impl CosineIndex {
         // Embedding-quality diagnostics: emit per encoder so the
         // report shows per-encoder L2-norm distribution, per-dim
         // sanity stats, NaN/Inf counts, pairwise distance histogram,
-        // and self-similarity check.
-        crate::perf::record_diagnostic(
-            "embedding_stats",
-            serde_json::json!({
-                "encoder_id": encoder_id,
-                "stats": super::diagnostics::embedding_stats(&self.cached_images),
-            }),
-        );
-        crate::perf::record_diagnostic(
-            "pairwise_distance_distribution",
-            serde_json::json!({
-                "encoder_id": encoder_id,
-                "stats": super::diagnostics::pairwise_distance_distribution(&self.cached_images),
-            }),
-        );
-        crate::perf::record_diagnostic(
-            "self_similarity_check",
-            serde_json::json!({
-                "encoder_id": encoder_id,
-                "stats": super::diagnostics::self_similarity_check(&self.cached_images),
-            }),
-        );
+        // and self-similarity check. Each is three full passes over the
+        // store, so gate the whole block on profiling being on — the
+        // eager-argument-evaluation cost (not just the record call) is
+        // otherwise paid on every populate regardless of the flag.
+        if crate::perf::is_profiling_enabled() {
+            crate::perf::record_diagnostic(
+                "embedding_stats",
+                serde_json::json!({
+                    "encoder_id": encoder_id,
+                    "stats": super::diagnostics::embedding_stats(&self.cached_images),
+                }),
+            );
+            crate::perf::record_diagnostic(
+                "pairwise_distance_distribution",
+                serde_json::json!({
+                    "encoder_id": encoder_id,
+                    "stats": super::diagnostics::pairwise_distance_distribution(&self.cached_images),
+                }),
+            );
+            crate::perf::record_diagnostic(
+                "self_similarity_check",
+                serde_json::json!({
+                    "encoder_id": encoder_id,
+                    "stats": super::diagnostics::self_similarity_check(&self.cached_images),
+                }),
+            );
+        }
     }
 
     /// Populate the in-memory index by SELECTing every embedding in one
@@ -269,16 +274,23 @@ impl CosineIndex {
         let ids = store.ids();
         let inv = store.inv_norms();
 
+        // Indexed collect: rayon can pre-size and write in place instead of
+        // falling back to unindexed collect's per-thread-Vec-then-concat
+        // (`filter_map` loses the range's known length). Exclusion moves to
+        // a serial post-pass `retain` so row order and scores stay
+        // identical to the old shape — `dot_slice` and the summation order
+        // are untouched. Bitwise row-order equivalence is guarded by
+        // `cha_ret_scan_collect_shape.rs`.
+        let mut scored: Vec<(usize, f32)> = Vec::new();
         (0..store.len())
             .into_par_iter()
-            .filter_map(|row| {
-                if Some(ids[row]) == exclude_id {
-                    return None;
-                }
+            .map(|row| {
                 let c = &block[row * dim..(row + 1) * dim];
-                Some((row, dot_slice(q, c) * q_inv * inv[row]))
+                (row, dot_slice(q, c) * q_inv * inv[row])
             })
-            .collect()
+            .collect_into_vec(&mut scored);
+        scored.retain(|(row, _)| Some(ids[*row]) != exclude_id);
+        scored
     }
 
     /// Diversity retrieval: random sample from the top ~20% by score.

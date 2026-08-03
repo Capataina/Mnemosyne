@@ -9,7 +9,9 @@ import {
   STAGGER_MS,
   cursorFrame,
   cursorTrack,
+  holdTrack,
   normaliseTimes,
+  pressAt,
   visualFrame,
   visualMotion,
   visualTrack,
@@ -29,7 +31,7 @@ import {
 } from "../primitives/DemoAppChrome";
 import { OnboardingSkeleton } from "../primitives/OnboardingSkeleton";
 import {
-  StaticFrameArt,
+  reducedFrames,
   type StaticFrameKind,
 } from "../primitives/ReducedMotionFilmstrip";
 
@@ -77,15 +79,9 @@ const cursor = cursorTrack(
   [
     cursorFrame(CURSOR_PARK.x, CURSOR_PARK.y),
     cursorFrame(CURSOR_PARK.x, CURSOR_PARK.y),
-    cursorFrame(CLICK_ADD_FOLDER.x, CLICK_ADD_FOLDER.y),
-    cursorFrame(CLICK_ADD_FOLDER.x, CLICK_ADD_FOLDER.y, 0.92, 0.75, 1),
-    cursorFrame(CLICK_ADD_FOLDER.x, CLICK_ADD_FOLDER.y),
-    cursorFrame(CLICK_ROW_1.x, CLICK_ROW_1.y),
-    cursorFrame(CLICK_ROW_1.x, CLICK_ROW_1.y, 0.92, 0.75, 1),
-    cursorFrame(CLICK_ROW_1.x, CLICK_ROW_1.y),
-    cursorFrame(CLICK_ADD.x, CLICK_ADD.y),
-    cursorFrame(CLICK_ADD.x, CLICK_ADD.y, 0.92, 0.75, 1),
-    cursorFrame(CLICK_ADD.x, CLICK_ADD.y),
+    ...pressAt(CLICK_ADD_FOLDER),
+    ...pressAt(CLICK_ROW_1),
+    ...pressAt(CLICK_ADD),
     cursorFrame(CLICK_ADD.x, CLICK_ADD.y),
     cursorFrame(CURSOR_PARK.x, CURSOR_PARK.y),
     cursorFrame(CURSOR_PARK.x, CURSOR_PARK.y),
@@ -124,56 +120,31 @@ const picker = visualTrack(
   ["linear", SETTLE_EASE, "linear", FADE_EASE, "linear"],
 );
 
-const rowSelection = visualTrack(
-  [
-    visualFrame(undefined, 0),
-    visualFrame(undefined, 0),
-    visualFrame(undefined, 1),
-    visualFrame(undefined, 1),
-    visualFrame(undefined, 0),
-    visualFrame(undefined, 0),
-  ],
-  normaliseTimes(ADD_FOLDER_DURATION_MS, [0, 2120, 2320, 2960, 3140, 8000]),
-  ["linear", FADE_EASE, "linear", FADE_EASE, "linear"],
-);
+const rowSelection = holdTrack([0, 2120, 2320, 2960, 3140, 8000], {
+  hidden: visualFrame(undefined, 0),
+  shown: visualFrame(undefined, 1),
+  easeIn: FADE_EASE,
+  easeOut: FADE_EASE,
+});
 
-const indexingPill = visualTrack(
-  [
-    visualFrame("translate3d(0px, -8px, 0px) scale(1)", 0),
-    visualFrame("translate3d(0px, -8px, 0px) scale(1)", 0),
-    visualFrame(undefined, 1),
-    visualFrame(undefined, 1),
-    visualFrame("translate3d(0px, -8px, 0px) scale(1)", 0),
-    visualFrame("translate3d(0px, -8px, 0px) scale(1)", 0),
-  ],
-  normaliseTimes(ADD_FOLDER_DURATION_MS, [0, 2960, 3140, 5100, 5520, 8000]),
-  ["linear", SETTLE_EASE, "linear", FADE_EASE, "linear"],
-);
+const indexingPill = holdTrack([0, 2960, 3140, 5100, 5520, 8000], {
+  hidden: visualFrame("translate3d(0px, -8px, 0px) scale(1)", 0),
+  shown: visualFrame(undefined, 1),
+  easeIn: SETTLE_EASE,
+  easeOut: FADE_EASE,
+});
 
-const pillCheck = visualTrack(
-  [
-    visualFrame(undefined, 0),
-    visualFrame(undefined, 0),
-    visualFrame(undefined, 1),
-    visualFrame(undefined, 1),
-    visualFrame(undefined, 0),
-    visualFrame(undefined, 0),
-  ],
-  normaliseTimes(ADD_FOLDER_DURATION_MS, [0, 3610, 3790, 5100, 5280, 8000]),
-  ["linear", FADE_EASE, "linear", FADE_EASE, "linear"],
-);
+const pillCheck = holdTrack([0, 3610, 3790, 5100, 5280, 8000], {
+  hidden: visualFrame(undefined, 0),
+  shown: visualFrame(undefined, 1),
+  easeIn: FADE_EASE,
+  easeOut: FADE_EASE,
+});
 
-const progress = visualTrack(
-  [
-    visualFrame("translate3d(0px, 0px, 0px) scaleX(0)", 0),
-    visualFrame("translate3d(0px, 0px, 0px) scaleX(0)", 0),
-    visualFrame("translate3d(0px, 0px, 0px) scaleX(1)", 1),
-    visualFrame("translate3d(0px, 0px, 0px) scaleX(1)", 1),
-    visualFrame("translate3d(0px, 0px, 0px) scaleX(0)", 0),
-    visualFrame("translate3d(0px, 0px, 0px) scaleX(0)", 0),
-  ],
-  normaliseTimes(ADD_FOLDER_DURATION_MS, [0, 3140, 3790, 5100, 5520, 8000]),
-);
+const progress = holdTrack([0, 3140, 3790, 5100, 5520, 8000], {
+  hidden: visualFrame("translate3d(0px, 0px, 0px) scaleX(0)", 0),
+  shown: visualFrame("translate3d(0px, 0px, 0px) scaleX(1)", 1),
+});
 
 function tileTrack(index: number): ClosedTrack<VisualFrame> {
   const enter = 3160 + index * STAGGER_MS;
@@ -274,10 +245,7 @@ const reducedKinds: readonly [StaticFrameKind, string][] = [
   ["add-indexed", "Browse as thumbnails arrive"],
 ];
 
-export const ADD_FOLDER_REDUCED_FRAMES = reducedKinds.map(([kind, caption]) => ({
-  caption,
-  content: <StaticFrameArt kind={kind} />,
-}));
+export const ADD_FOLDER_REDUCED_FRAMES = reducedFrames(reducedKinds);
 
 export function AddFolderScene({ animationLevel }: OnboardingSceneProps) {
   const subtle = animationLevel === "subtle";

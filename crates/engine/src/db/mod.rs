@@ -254,11 +254,11 @@ impl ImageDatabase {
         // adding a new encoder = inserting rows, not migrating schema.
         // Storage cost ~2KB per (image × encoder) — negligible.
         //
-        // The legacy `images.embedding` column is preserved for one
-        // release cycle; the indexing pipeline now also writes the
-        // CLIP embedding to this table with encoder_id="clip_vit_b_32".
-        // A future migration can drop the old column once everyone has
-        // re-indexed.
+        // The legacy `images.embedding` column is preserved for old-binary
+        // read compatibility; the indexing pipeline writes only this
+        // table now (`legacy_clip_too = false` on every live call site —
+        // R8 dropped the double-write). A future migration can drop the
+        // old column once everyone has re-indexed.
         self.connection.lock().unwrap().execute(
             "CREATE TABLE IF NOT EXISTS embeddings (
                 image_id INTEGER NOT NULL,

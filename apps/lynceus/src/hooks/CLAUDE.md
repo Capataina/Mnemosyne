@@ -19,9 +19,11 @@ hooks/
 │                              footprint until authoritative geometry commits; exactly one
 │                              reorder derived from the final rectangle at release.
 ├── useTileDrag.test.ts        Release-barrier + settle-token assertions (imported tokens).
-├── useTileResize.ts           Corner-grip resize: anchorStartColFor preserves the
-│                              opposite horizontal edge (right grips fix left, left grips
-│                              fix right); publishes the same footprint/pin shapes as drag.
+├── useTileResize.ts           Corner-grip resize state machine; publishes the same
+│                              footprint/pin shapes as drag. Re-exports the pure geometry
+│                              from `components/resizeGeometry.ts` so external importers
+│                              (`MasonryItem.tsx`'s `ResizeCorner`, this file's own test)
+│                              are unaffected by the split.
 ├── useTileResize.test.ts      Anchor arithmetic + preview/visual pure functions.
 ├── masonryReorder.ts          Pure commit-time reorder: buildIndexMap O(N) once, O(1)
 │                              incremental patching (indices outside the touched window
@@ -97,7 +99,3 @@ One module-level listener (registered lazily on first subscription, never torn d
 - The shuffle key must stay a pure function of (id, seed). Any dependence on array length or neighbours reintroduces the full-refresh flicker that got shuffle demoted in 2026-04.
 - `useIndexingStatus` slices return primitive snapshots so a changing `message` doesn't re-render `useIsIndexing` consumers — keep new selectors primitive.
 
-## Planned work
-
-- **Split `useTileResize.ts` (594 lines): the pure-geometry block (lines 13-167) moves to `components/resizeGeometry.ts`, mirroring drag's existing `masonryReorder.ts`** (modularisation; gate-promoted). Coupling proven zero (no React hook/namespace references in the block); with `export * from "./resizeGeometry"` the importer edit set is EMPTY — external references stay valid as-is (`components/MasonryItem.tsx:4` `ResizeCorner` type, `useTileResize.test.ts:9-16` five names, `components/Masonry.tsx:17` hook only). Constraint: move verbatim — the resize corner suite locks the arithmetic. Settle: suite incl. corner suite + masonryGestureRegression. [code-health-audit 2026-08-02]
-- Pointer: the tree-wide zero-importer batch in `../CLAUDE.md` un-exports `useIndexingPhase`/`IndexingPhaseState` in `useIndexingStatus.ts` — land with that batch.

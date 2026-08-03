@@ -73,4 +73,4 @@ Cache lifecycle, in one place:
 
 ## Place in the whole
 
-Instances live in Tauri-managed state (`TextEncoderState` slots, lazy-loaded and kept resident for free picker switches) and inside the indexing pipeline's encoder phase. Consumers are `commands/{semantic,semantic_fused,similarity}.rs` through `FusionIndexState`. Embedding-distribution changes (filter swaps, preprocessing edits) require an embedding-pipeline version bump so existing libraries re-encode.
+Instances live in Tauri-managed state (`TextEncoderState` slots, lazy-loaded and kept resident for free picker switches) and inside the indexing pipeline's encoder phase. Consumers are `commands/{semantic_fused,similarity}.rs` through `FusionIndexState` (the legacy `commands/semantic.rs` was deleted 2026-08-03 along with the rest of the single-encoder search surface — see `commands/CLAUDE.md`). Embedding-distribution changes (filter swaps, preprocessing edits) require an embedding-pipeline version bump so existing libraries re-encode.

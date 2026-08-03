@@ -11,8 +11,12 @@
 //!    and the model files exist on disk, the setup callback spawns
 //!    `run_pipeline` immediately so the catalog refreshes whenever the
 //!    user reopens the app.
-//! 2. `set_scan_root` IPC command — the user picks a new folder; the
-//!    DB is wiped and the same pipeline is spawned to populate it.
+//! 2. Root mutations — `set_scan_root` (replace-all, wipes every
+//!    existing root), `add_root`, and the watcher's debounced rescan —
+//!    all route through `try_spawn_pipeline` to repopulate the catalog
+//!    against the current root table. Roots are a table now, not a
+//!    single scan_root; see `apps/lynceus/CLAUDE.md`'s multi-root
+//!    semantics for the full replace-all vs granular split.
 //!
 //! Concurrency model: a single AtomicBool guards "one indexing run at
 //! a time". Trying to start a second run while one is in flight returns
@@ -576,9 +580,7 @@ fn run_pipeline_inner(
         // against foreground use. Half the cores (min 2, max 4) keeps most
         // of the throughput while leaving headroom; fall back to the global
         // pool if the dedicated pool fails to build.
-        let backfill_threads = std::thread::available_parallelism()
-            .map(|n| (n.get() / 2).clamp(2, 4))
-            .unwrap_or(2);
+        let backfill_threads = bounded_pool_size();
 
         // Reuse Phase::Scan — a deliberate choice, not the old closed-set
         // constraint (that died when the phase map reopened and the
@@ -595,12 +597,13 @@ fn run_pipeline_inner(
             Some("Hashing existing images".into()),
         );
 
-        let completed = AtomicUsize::new(0);
-        // High-water mark guarding monotonic emits — the same discipline
-        // the thumbnail and eager-preview passes use (emit under the lock so
-        // concurrent workers report strictly increasing values).
-        let last_emit = std::sync::Mutex::new(0usize);
-        let emit_every = (total_backfill / 4000).max(1);
+        // Shared monotonic progress — the same EncodeProgress the encode
+        // phase uses, generalised to every bounded/high-water pass in this
+        // pipeline (audit finding: three near-identical
+        // completed/last_emit/emit_every triples, one per pass). `advance`
+        // already does the "emit under the lock so concurrent workers stay
+        // strictly increasing" discipline these passes need.
+        let progress = EncodeProgress::new(total_backfill, emit_cadence(total_backfill));
 
         let run_backfill = || {
             needs_hash.par_iter().for_each(|(id, path)| {
@@ -613,34 +616,19 @@ fn run_pipeline_inner(
                     Err(e) => warn!("backfill hash failed for {path}: {e}"),
                 }
 
-                let done = completed.fetch_add(1, Ordering::Relaxed) + 1;
-                if done.is_multiple_of(emit_every) || done == total_backfill {
-                    let mut last = last_emit.lock().unwrap();
-                    if done > *last {
-                        *last = done;
-                        emit(
-                            app,
-                            Phase::Scan,
-                            done,
-                            total_backfill,
-                            Some("Hashing existing images".into()),
-                        );
-                    }
-                }
+                progress.advance(1, |done| {
+                    emit(
+                        app,
+                        Phase::Scan,
+                        done,
+                        total_backfill,
+                        Some("Hashing existing images".into()),
+                    );
+                });
             });
         };
 
-        match rayon::ThreadPoolBuilder::new()
-            .num_threads(backfill_threads)
-            .thread_name(|i| format!("backfill-{i}"))
-            .build()
-        {
-            Ok(pool) => pool.install(run_backfill),
-            Err(e) => {
-                warn!("backfill thread pool build failed ({e}); using the global pool");
-                run_backfill();
-            }
-        }
+        run_on_bounded_pool("backfill", backfill_threads, run_backfill);
     }
 
     // 5. Thumbnails phase (rayon-parallel, runs to completion before
@@ -708,21 +696,18 @@ fn run_pipeline_inner(
     if total_thumbs > 0 {
         emit(app, Phase::Thumbnail, 0, total_thumbs, None);
 
-        let completed = AtomicUsize::new(0);
-        // High-water mark of the last value emitted. A Mutex (not an
-        // atomic) because the emit happens WHILE it is held, so concurrent
-        // rayon workers report in strictly increasing order and the bar
-        // never blips backwards — the same discipline the encode phase's
-        // EncodeProgress uses.
-        let last_emit = std::sync::Mutex::new(0usize);
-        // Emit at per-image granularity for typical libraries so the
-        // thumbnail bar climbs continuously on a fresh index rather than
-        // jumping in coarse buckets. The old `/10` (clamped to every 25)
-        // fired only ~10-60 events for a whole library, so the bar sat
+        // EncodeProgress is the same monotonic-emit primitive the encode
+        // phase uses, generalised here (audit finding: three near-
+        // identical completed/last_emit/emit_every triples across the
+        // pipeline). Emit at per-image granularity for typical libraries
+        // so the thumbnail bar climbs continuously on a fresh index rather
+        // than jumping in coarse buckets — the old `/10` (clamped to every
+        // 25) fired only ~10-60 events for a whole library, so the bar sat
         // still between big jumps — the "feels like no progress" complaint.
-        // `/4000` stays per-image (interval 1) up to 4000 images and caps
-        // the event rate to ≈4000 emits above that so a 100k index is sane.
-        let emit_every = (total_thumbs / 4000).max(1);
+        // `emit_cadence`'s `/4000` stays per-image (interval 1) up to 4000
+        // images and caps the event rate to ≈4000 emits above that so a
+        // 100k index is sane.
+        let progress = EncodeProgress::new(total_thumbs, emit_cadence(total_thumbs));
 
         // T3-1 delta buffer: each successfully thumbnailed image becomes a
         // compact `feed-delta` row so the frontend can patch its manifest
@@ -732,29 +717,30 @@ fn run_pipeline_inner(
         // terminal flush after the pass.
         let delta_buffer = std::sync::Mutex::new(Vec::<FeedDeltaRow>::new());
 
-        needs_thumbs.par_iter().for_each(|image| {
-            let root_id = path_to_root.get(&image.path).copied().flatten();
+        needs_thumbs.par_iter().for_each(|need| {
+            let crate::db::images_query::ThumbnailNeedRow { id, path, name } = need;
+            let root_id = path_to_root.get(path).copied().flatten();
             match thumbnail_generator.generate_thumbnail(
-                Path::new(&image.path),
-                image.id,
+                Path::new(path),
+                *id,
                 root_id,
             ) {
                 Ok(result) => {
                     if let Err(e) = database.update_image_thumbnail(
-                        image.id,
+                        *id,
                         &result.thumbnail_path,
                         result.original_width,
                         result.original_height,
                     ) {
-                        warn!("DB update for thumbnail of image {} failed: {e}", image.id);
+                        warn!("DB update for thumbnail of image {} failed: {e}", id);
                     } else {
                         // Only rows whose DB write landed become deltas —
                         // the manifest cache must never claim a thumbnail
                         // the DB doesn't know about (a Ready reconcile
                         // would visibly un-pop the tile).
                         let row = FeedDeltaRow {
-                            id: image.id,
-                            name: image.name.clone(),
+                            id: *id,
+                            name: name.clone(),
                             width: result.original_width,
                             height: result.original_height,
                             thumbnail_path: result
@@ -771,22 +757,17 @@ fn run_pipeline_inner(
                     }
                 }
                 Err(e) => {
-                    warn!("thumbnail generation failed for {}: {e}", image.path);
+                    warn!("thumbnail generation failed for {}: {e}", path);
                 }
             }
 
-            let done = completed.fetch_add(1, Ordering::Relaxed) + 1;
-            // Emit on every `emit_every`-th image, plus always the final
-            // one so the bar lands exactly on total. The emit runs under
-            // the high-water lock so concurrent workers stay monotonic on
-            // the wire.
-            if done.is_multiple_of(emit_every) || done == total_thumbs {
-                let mut last = last_emit.lock().unwrap();
-                if done > *last {
-                    *last = done;
-                    emit(app, Phase::Thumbnail, done, total_thumbs, None);
-                }
-            }
+            // Emit on every cadence-th image, plus always the final one so
+            // the bar lands exactly on total. `advance` runs the emit under
+            // its own high-water lock so concurrent workers stay monotonic
+            // on the wire.
+            progress.advance(1, |done| {
+                emit(app, Phase::Thumbnail, done, total_thumbs, None);
+            });
         });
 
         // Terminal delta flush — before the terminal Thumbnail progress
@@ -906,20 +887,16 @@ fn run_pipeline_inner(
         // hundred MiB of transient peak rather than multi-GiB. Not
         // serialised to 1 thread: that would roughly quarter throughput on
         // the M2 for no extra safety past the ≤4 bound.
-        let preview_threads = std::thread::available_parallelism()
-            .map(|n| (n.get() / 2).clamp(2, 4))
-            .unwrap_or(2);
+        let preview_threads = bounded_pool_size();
         info!(
             "eager preview pass: {} threads over {} images",
             preview_threads, total_thumbs
         );
 
-        let completed = AtomicUsize::new(0);
-        // High-water mark guarding monotonic emits — same discipline as the
-        // base thumbnail and encode phases (emit while the lock is held so
+        // Same EncodeProgress monotonic-emit primitive as the backfill and
+        // base thumbnail passes above (emit under its own lock so
         // concurrent workers report strictly increasing values).
-        let last_emit = std::sync::Mutex::new(0usize);
-        let emit_every = (total_thumbs / 4000).max(1);
+        let progress = EncodeProgress::new(total_thumbs, emit_cadence(total_thumbs));
         // Prime the pill with a coherent 0/total under the honest message.
         emit(
             app,
@@ -935,11 +912,12 @@ fn run_pipeline_inner(
         let bucket_totals =
             std::sync::Mutex::new(std::collections::BTreeMap::<u32, usize>::new());
         let run_preview = || {
-            needs_thumbs.par_iter().for_each(|image| {
-                let root_id = path_to_root.get(&image.path).copied().flatten();
+            needs_thumbs.par_iter().for_each(|need| {
+                let crate::db::images_query::ThumbnailNeedRow { id, path, .. } = need;
+                let root_id = path_to_root.get(path).copied().flatten();
                 match thumbnail_generator.generate_buckets(
-                    Path::new(&image.path),
-                    image.id,
+                    Path::new(path),
+                    *id,
                     root_id,
                     eager_buckets,
                 ) {
@@ -952,24 +930,19 @@ fn run_pipeline_inner(
                         }
                     }
                     Err(e) => {
-                        warn!("eager bucket generation failed for {}: {e}", image.path);
+                        warn!("eager bucket generation failed for {}: {e}", path);
                     }
                 }
 
-                let done = completed.fetch_add(1, Ordering::Relaxed) + 1;
-                if done.is_multiple_of(emit_every) || done == total_thumbs {
-                    let mut last = last_emit.lock().unwrap();
-                    if done > *last {
-                        *last = done;
-                        emit(
-                            app,
-                            Phase::Previews,
-                            done,
-                            total_thumbs,
-                            Some("Preparing larger previews".into()),
-                        );
-                    }
-                }
+                progress.advance(1, |done| {
+                    emit(
+                        app,
+                        Phase::Previews,
+                        done,
+                        total_thumbs,
+                        Some("Preparing larger previews".into()),
+                    );
+                });
             });
         };
 
@@ -977,17 +950,7 @@ fn run_pipeline_inner(
         // (the global rayon pool is core-wide). If the pool fails to build
         // — unexpected — fall back to the global pool rather than skipping
         // previews, which would only cost the on-demand fallback later.
-        match rayon::ThreadPoolBuilder::new()
-            .num_threads(preview_threads)
-            .thread_name(|i| format!("preview-{i}"))
-            .build()
-        {
-            Ok(pool) => pool.install(run_preview),
-            Err(e) => {
-                warn!("preview thread pool build failed ({e}); using the global pool");
-                run_preview();
-            }
-        }
+        run_on_bounded_pool("preview", preview_threads, run_preview);
 
         let totals = bucket_totals.lock().unwrap();
         if totals.is_empty() {
@@ -1005,7 +968,17 @@ fn run_pipeline_inner(
     }
 
     // 8. Done — total image count is what the user sees in the grid.
-    let final_count = database.get_all_images().map(|v| v.len()).unwrap_or(0);
+    // Audit finding: this used to be `get_all_images().map(|v| v.len())`
+    // — the whole tag-join unroll + HashMap aggregation + materialise +
+    // sort, run on EVERY pipeline pass including steady-state watcher
+    // rescans, for one integer. `get_all_images` carries no WHERE, so
+    // `get_pipeline_stats().total_images` (a bare `COUNT(*) FROM images`,
+    // same writer connection) is byte-identical including orphaned and
+    // disabled-root rows. Proofs: cha_l3_db_waste.rs, cha_b_ready_count.rs.
+    let final_count = database
+        .get_pipeline_stats()
+        .map(|s| s.total_images.max(0) as usize)
+        .unwrap_or(0);
     emit(
         app,
         Phase::Ready,
@@ -1017,32 +990,92 @@ fn run_pipeline_inner(
     Ok(())
 }
 
-/// Shared, monotonic aggregate for the concurrent encode phase.
+/// Cadence divisor shared by every high-water progress emitter in this
+/// pipeline (backfill, base thumbnails, eager previews, encode): per-item
+/// (interval 1) up to 4000 items, capping the Tauri event rate to ≈4000
+/// emits above that so a 100k-image pass doesn't fire ~100k events. The
+/// old fixed-`/10`-clamped-to-25 cadence fired only ~10-60 events for a
+/// whole library, which read as "stuck" between jumps.
+const EMIT_CADENCE_DIVISOR: usize = 4000;
+
+/// `(total / EMIT_CADENCE_DIVISOR).max(1)` — named once so every pass
+/// computing an `EncodeProgress` cadence shares the same rule instead of
+/// re-deriving the divisor at each call site.
+fn emit_cadence(total: usize) -> usize {
+    (total / EMIT_CADENCE_DIVISOR).max(1)
+}
+
+/// Half the available cores, clamped 2-4 — the bounded-pool size shared
+/// by the content-hash backfill and eager-preview passes. Both are
+/// decode/IO-bound bulk work that would otherwise saturate all cores
+/// against foreground use; half keeps most of the throughput while
+/// leaving headroom (preview's fuller rationale: bounding peak memory,
+/// see step 7b below).
+fn bounded_pool_size() -> usize {
+    std::thread::available_parallelism()
+        .map(|n| (n.get() / 2).clamp(2, 4))
+        .unwrap_or(2)
+}
+
+/// Run `f` on a dedicated rayon pool of `threads` workers named
+/// `<prefix>-<i>`, falling back to the global pool if the dedicated pool
+/// fails to build (unexpected, but real work should never be skipped for
+/// a pool-creation error). Shared by the backfill and eager-preview
+/// passes — audit finding: the two pool-build blocks were identical
+/// except for the thread-name prefix.
+fn run_on_bounded_pool<F: FnOnce() + Send>(prefix: &'static str, threads: usize, f: F) {
+    match rayon::ThreadPoolBuilder::new()
+        .num_threads(threads)
+        .thread_name(move |i| format!("{prefix}-{i}"))
+        .build()
+    {
+        Ok(pool) => pool.install(f),
+        Err(e) => {
+            warn!("{prefix} thread pool build failed ({e}); using the global pool");
+            f();
+        }
+    }
+}
+
+/// Shared, monotonic aggregate for any concurrent, high-volume pass that
+/// needs a single coherent `processed/total` counter on the wire —
+/// originally built for the concurrent encode phase, now shared by the
+/// content-hash backfill, base thumbnail, and eager-preview passes too
+/// (audit finding: four near-identical completed/last_emit/emit_every
+/// triples, one per pass).
 ///
-/// The bug this replaces: each of the (up to three) encoder threads used
-/// to emit its OWN `processed/total` on the `encode` phase. With the
-/// threads interleaving, a thread that had only just started would emit
-/// `0/N` right after another thread had already reported real progress,
-/// so the top-right status pill snapped back to `0/21` and stuck there
-/// even while `get_pipeline_stats` (DB-backed) correctly climbed to
-/// `21/21`. There was no single coherent counter the frontend could
-/// trust, and no clean terminal `encode` value before `Phase::Ready`.
+/// The bug this replaces on the encode phase: each of the (up to three)
+/// encoder threads used to emit its OWN `processed/total` on the
+/// `encode` phase. With the threads interleaving, a thread that had only
+/// just started would emit `0/N` right after another thread had already
+/// reported real progress, so the top-right status pill snapped back to
+/// `0/21` and stuck there even while `get_pipeline_stats` (DB-backed)
+/// correctly climbed to `21/21`. There was no single coherent counter
+/// the frontend could trust, and no clean terminal `encode` value before
+/// `Phase::Ready`. The other three passes never had that specific bug
+/// (they're not multi-encoder), but they carried the same
+/// completed-Atomic + last-emit-Mutex + emit_every triple by hand; folding
+/// them onto this type is a pure de-duplication, and adopting
+/// `advance`'s `SeqCst` (over their previous `Relaxed`) is a strengthening
+/// with no behaviour change — the emitted value set is decided entirely
+/// under the mutex either way, pinned by this type's own unit tests below.
 ///
-/// Now every encoder increments one shared counter. `processed` is the
-/// number of image-encode completions summed across every *running*
-/// encoder; `total` is the fixed sum of each running encoder's workload,
-/// computed up front so the counter climbs monotonically to exactly
-/// `total`. `advance` guards wire ordering: the emits run under
-/// `last_emitted`, so with three encoder threads reporting concurrently
-/// the pill only ever climbs — a batch whose whole range is below an
-/// already-emitted value (a slower encoder landing after a faster one)
-/// emits nothing. (Doing the emit *outside* the lock would reopen the
-/// race: two threads could each decide to emit, then fire in reverse.)
+/// Now every caller increments one shared counter. `processed` is the
+/// number of completions summed across every *running* concurrent
+/// worker; `total` is the fixed denominator, computed up front so the
+/// counter climbs monotonically to exactly `total`. `advance` guards
+/// wire ordering: the emits run under `last_emitted`, so with several
+/// workers reporting concurrently the pill only ever climbs — a batch
+/// whose whole range is below an already-emitted value (a slower worker
+/// landing after a faster one) emits nothing. (Doing the emit *outside*
+/// the lock would reopen the race: two threads could each decide to
+/// emit, then fire in reverse.)
 ///
-/// Emit granularity is decoupled from the batch size: `encode_batch`
-/// processes 32 images at once for throughput, but `advance` emits each
-/// crossed cadence value (per-image by default) so the aggregate bar
-/// climbs smoothly instead of jumping a whole batch of 32 at a time.
+/// Emit granularity is decoupled from the batch size: the encode phase's
+/// `encode_batch` processes 32 images at once for throughput, but
+/// `advance` emits each crossed cadence value (per-image by default) so
+/// the aggregate bar climbs smoothly instead of jumping a whole batch of
+/// 32 at a time.
 struct EncodeProgress {
     /// Cumulative encodes completed across all running encoders. Atomic
     /// so the count itself never loses an increment even though the emit
@@ -1091,19 +1124,21 @@ impl EncodeProgress {
     }
 }
 
-/// Encoder phase — runs the CLIP image encoder over every row that
-/// doesn't yet have an embedding, in batches of 32. Lives on its own
-/// thread (spawned from `run_pipeline_inner` in parallel with the
-/// thumbnail rayon loop) so its single-threaded ONNX inference doesn't
-/// block the multi-core JPEG codec work that happens alongside.
+/// Encoder phase — runs every enabled image encoder (CLIP, and
+/// SigLIP-2/DINOv2 where their models are present) over the rows that
+/// don't yet have an embedding, in batches of 32. Called from
+/// `run_pipeline_inner` strictly AFTER the thumbnail phase completes
+/// (Phase 12b reverted the earlier "thumbnails + encoders in parallel"
+/// overlap — see the phase-order note at the thumbnail call site above
+/// for why: per-encoder parallel execution turned that overlap into
+/// rayon workers fighting ORT threads for the same cores).
 ///
-/// Opens its own `ImageDatabase` (separate SQLite connection) so it
-/// doesn't contend with the thumbnail thread for the same Mutex.
-/// WAL mode (initialise() pragmas) makes the concurrent writes safe —
-/// thumbnails write the `thumbnail_path/width/height` columns, this
-/// writes `embedding`; no row-level conflict because the columns are
-/// disjoint and SQLite's WAL serialises commits at the page level
-/// without blocking readers.
+/// Each per-encoder thread opens its own `ImageDatabase` (separate
+/// SQLite connection) so it doesn't contend with the other encoder
+/// threads for the same Mutex; WAL mode (`initialize()` pragmas) makes
+/// their concurrent writes safe — every encoder writes only its own rows
+/// in the `embeddings` table, keyed by `encoder_id`, and SQLite's WAL
+/// serialises commits at the page level without blocking readers.
 fn run_encoder_phase(
     app: &AppHandle,
     db_path: &str,
@@ -1127,11 +1162,13 @@ fn run_encoder_phase(
     // the FusionIndexState lazy-populates per encoder on first fusion
     // call, and there's no single "active" encoder cache to warm.
     //
-    // Why no `_encode_phase` span: each encoder thread opens its own
-    // span via `run_clip_encoder` / `run_trait_encoder`'s tracing
-    // instrumentation, so a parent span here would mostly capture
-    // join wait time, not actual work. Leaving it omitted keeps the
-    // perf report's per-encoder timings clean.
+    // Why no `_encode_phase` span: neither `run_trait_encoder` nor the
+    // encoders it drives carry any `#[instrument]`/span of their own
+    // (audit-verified — this comment previously claimed otherwise), so a
+    // parent span here would only capture join wait time, not actual
+    // work. The per-encoder `encoder_run_summary` diagnostic
+    // (`crate::perf::record_diagnostic`) is the real per-encoder timing
+    // signal in the perf report.
     //
     // Oversubscription note: each encoder still uses the shared
     // `ort_session.rs` builder with `intra_threads(4)` (set for the
@@ -1177,12 +1214,23 @@ fn run_encoder_phase(
     // per-encoder ones (the sticky-`0/21` bug). `total` is the sum, over
     // every encoder that will actually run (enabled AND its model
     // present), of the rows that encoder still has to embed. We count
-    // with the SAME query each encoder drives its loop from, so the
-    // shared counter climbs to exactly `total` and no further; a
-    // missing-model or already-complete encoder contributes 0 and never
-    // moves it. Each encoder is the sole writer of its own embeddings, so
-    // its count is stable between this precompute and the thread's own
-    // requery — no double-count risk.
+    // with the SAME predicate each encoder drives its loop from
+    // (`count_images_without_embedding_for` mirrors
+    // `get_images_without_embedding_for`'s WHERE exactly), so the shared
+    // counter climbs to exactly `total` and no further; a missing-model
+    // or already-complete encoder contributes 0 and never moves it. Each
+    // encoder is the sole writer of its own embeddings, so its count is
+    // stable between this precompute and the thread's own requery — no
+    // double-count risk.
+    //
+    // Audit finding: this used to materialise each encoder's needs-set
+    // (`Vec<(ID, String)>`, one heap path per row) just to call `.len()`
+    // — on a fresh 100k×3-encoder index, ~300k discarded path
+    // allocations for three integers, immediately requeried for real
+    // inside each encoder thread. `count_images_without_embedding_for`
+    // is the COUNT(*) form of the same predicate; equivalence-proven,
+    // the honest win is allocation churn only (release-serial ~1.25%,
+    // the 2.5x headline was debug-profile). Proof: cha_b_needs_count.rs.
     let aggregate_total = {
         let counts_db = ImageDatabase::new(db_path).map_err(|e| e.to_string())?;
         counts_db.initialize().map_err(|e| e.to_string())?;
@@ -1191,38 +1239,35 @@ fn run_encoder_phase(
             .map(|id| match id.as_str() {
                 // CLIP's model presence is guaranteed by the caller (it
                 // only invokes run_encoder_phase when image_model_path
-                // exists). It counts via the SAME per-encoder query its
-                // loop now uses (`get_images_without_embedding_for`), so a
+                // exists). It counts via the SAME predicate its loop now
+                // uses (`get_images_without_embedding_for`), so a
                 // fully-indexed launch contributes 0 here → total 0 → no
                 // encode phase → the pill doesn't flash.
                 "clip_vit_b_32" => counts_db
-                    .get_images_without_embedding_for("clip_vit_b_32")
-                    .map(|v| v.len())
+                    .count_images_without_embedding_for("clip_vit_b_32")
                     .unwrap_or(0),
                 "siglip2_base" if siglip2_path.exists() => counts_db
-                    .get_images_without_embedding_for("siglip2_base")
-                    .map(|v| v.len())
+                    .count_images_without_embedding_for("siglip2_base")
                     .unwrap_or(0),
                 "dinov2_base" if dinov2_path.exists() => counts_db
-                    .get_images_without_embedding_for(
+                    .count_images_without_embedding_for(
                         crate::similarity_and_semantic_search::encoder_dinov2::DINOV2_ENCODER_ID,
                     )
-                    .map(|v| v.len())
                     .unwrap_or(0),
                 _ => 0,
             })
-            .sum::<usize>()
+            .sum::<i64>()
+            .max(0) as usize
     };
 
     // Emit at per-image granularity for typical libraries so the bar
     // climbs smoothly rather than jumping a batch of 32; cap the Tauri
     // event rate at very large scales so a 100k×3-encoder index doesn't
-    // fire ~300k events. `/ 4000` keeps it per-image (interval 1) up to
-    // 4000 encode-units — comfortably covering the fresh small/medium
-    // libraries the "feels stuck" complaint is about — and bounds the
-    // phase to ≈4000 emits above that.
-    let emit_interval = (aggregate_total / 4000).max(1);
-    let progress = Arc::new(EncodeProgress::new(aggregate_total, emit_interval));
+    // fire ~300k events. `emit_cadence` keeps it per-image (interval 1)
+    // up to 4000 encode-units — comfortably covering the fresh
+    // small/medium libraries the "feels stuck" complaint is about — and
+    // bounds the phase to ≈4000 emits above that.
+    let progress = Arc::new(EncodeProgress::new(aggregate_total, emit_cadence(aggregate_total)));
     // Prime the pill with a coherent 0/total the instant the phase
     // starts, so it shows the real denominator rather than lingering on
     // the previous phase's numbers. Skip entirely when there's nothing to
@@ -1259,9 +1304,13 @@ fn run_encoder_phase(
             database.initialize().map_err(|e| e.to_string())?;
 
             match encoder_id.as_str() {
-                "clip_vit_b_32" => {
-                    run_clip_encoder_with_intra(&app, &database, &image_model_path, intra, &progress)
-                }
+                "clip_vit_b_32" => run_trait_encoder(
+                    &app,
+                    &database,
+                    "clip_vit_b_32",
+                    || ClipImageEncoder::new_with_intra(&image_model_path, intra),
+                    &progress,
+                ),
                 "siglip2_base" => {
                     if siglip2_path.exists() {
                         run_trait_encoder(
@@ -1338,151 +1387,20 @@ fn run_encoder_phase(
     Ok(())
 }
 
-/// CLIP encoder phase — writes BOTH the legacy `images.embedding`
-/// column (kept for backward-compat with semantic_search's existing
-/// reader) AND the new `embeddings` table row keyed by encoder_id.
-/// This double-write goes away in a future migration once everyone
-/// has re-indexed.
-/// Phase 12c — CLIP encoder loop. Takes an explicit intra-thread
-/// count so the indexing pipeline can size each parallel encoder's
-/// ORT pool appropriately. See `ort_session.rs::build_tuned_session_with_intra`.
-/// (The previous `run_clip_encoder(app, db, path)` wrapper was
-/// dropped — every caller goes through the with-intra form now.)
-fn run_clip_encoder_with_intra(
-    app: &AppHandle,
-    database: &ImageDatabase,
-    model_path: &Path,
-    intra_threads: usize,
-    progress: &EncodeProgress,
-) -> Result<(), String> {
-    // Needs-set from the PER-ENCODER embeddings store (encoder_id
-    // "clip_vit_b_32"), exactly as SigLIP-2 / DINOv2 do — NOT the legacy
-    // `images.embedding IS NULL` column. Under R8 (legacy_clip_too =
-    // false) that legacy column is never written, so the old query
-    // returned the entire library on every launch and CLIP re-encoded
-    // everything, flashing "Encoding 100%" in the pill even on a
-    // fully-indexed library. Reading the per-encoder table means an
-    // already-encoded image is correctly skipped (fully-indexed launch →
-    // empty set → no encode work), and it also excludes orphaned rows
-    // (deleted files) the way the legacy query did not. Returns
-    // `Vec<(ID, String)>` rather than `Vec<ImageData>`, so the loop below
-    // is tuple-shaped like run_trait_encoder.
-    let needs_embed = database
-        .get_images_without_embedding_for("clip_vit_b_32")
-        .map_err(|e| e.to_string())?;
-    let total = needs_embed.len();
-    if total == 0 {
-        return Ok(());
-    }
-    // No per-encoder start emit here anymore — the phase-level 0/total is
-    // emitted once by run_encoder_phase, and every chunk below reports the
-    // shared aggregate counter, so three concurrent encoders can never
-    // stomp each other back to 0.
-
-    let run_started = std::time::Instant::now();
-    let mut encoder = ClipImageEncoder::new_with_intra(model_path, intra_threads)
-        .map_err(|e| e.to_string())?;
-    const BATCH_SIZE: usize = 32;
-    let mut processed = 0usize;
-    let mut succeeded = 0usize;
-    let mut failed_paths: Vec<String> = Vec::new();
-    let mut sample_emitted = false;
-    for chunk in needs_embed.chunks(BATCH_SIZE) {
-        let batch_paths: Vec<&Path> = chunk.iter().map(|(_, p)| Path::new(p)).collect();
-        match encoder.encode_batch(&batch_paths) {
-            Ok(embeddings) => {
-                // Preprocessing/embedding sample diagnostic — fires
-                // once per encoder run on the first successful batch.
-                // Captures dim, L2 norm, range, NaN count of the first
-                // embedding so the report can show "CLIP first encoded
-                // image: 512-d, norm=1.000, range [-0.18, 0.21], no
-                // NaNs" — pinpoints encoder breakage early.
-                if !sample_emitted {
-                    if let (Some((_, first_path)), Some(first_emb)) =
-                        (chunk.first(), embeddings.first())
-                    {
-                        emit_preprocessing_sample("clip_vit_b_32", first_path, first_emb);
-                        sample_emitted = true;
-                    }
-                }
-                // R1 — single-transaction batch write of every row in
-                // this chunk. R8 — legacy_clip_too = false: we no
-                // longer double-write to the legacy images.embedding
-                // column. The schema bump to pipeline version 3 wipes
-                // any stale legacy data, so the cosine populate
-                // fallback path (cosine/index.rs) just sees an empty
-                // legacy column on first re-index and reads from the
-                // per-encoder embeddings table only.
-                let batch_rows: Vec<(crate::db::ID, Vec<f32>)> = chunk
-                    .iter()
-                    .zip(embeddings.iter())
-                    .map(|((id, _), emb)| (*id, emb.clone()))
-                    .collect();
-                let row_count = batch_rows.len();
-                match database.upsert_embeddings_batch(
-                    "clip_vit_b_32",
-                    &batch_rows,
-                    false,
-                ) {
-                    Ok(()) => succeeded += row_count,
-                    Err(e) => {
-                        // Whole batch failed at the DB level — record
-                        // every row as a write failure rather than
-                        // pretending some succeeded.
-                        let err_str = e.to_string();
-                        for (_, path) in chunk.iter() {
-                            failed_paths.push(format!("{path}: db batch — {err_str}"));
-                        }
-                    }
-                }
-            }
-            Err(e) => {
-                // Whole batch failed — record each path as a failure
-                // with the shared error rather than aborting indexing.
-                let err_str = e.to_string();
-                for (_, path) in chunk.iter() {
-                    failed_paths.push(format!("{path}: encode_batch — {err_str}"));
-                }
-            }
-        }
-        processed += chunk.len();
-        // Report against the shared aggregate at per-image granularity so
-        // the bar climbs smoothly rather than jumping this batch of 32 at
-        // once. Emits fire only while locked and only as the value climbs,
-        // so a slower encoder can never blip the pill backwards.
-        progress.advance(chunk.len(), |done| {
-            emit(app, Phase::Encode, done, progress.total, Some("Encoding".into()));
-        });
-        // R3 — drain the WAL between batches so it can't grow without
-        // bound under wal_autocheckpoint=0. PASSIVE never blocks
-        // foreground readers; it just folds whatever pages are clean
-        // back into the main DB.
-        let _ = database.checkpoint_passive();
-    }
-
-    // Emit a per-encoder run summary so the report shows
-    // "CLIP attempted 1842, succeeded 1840, failed 2 (sample paths
-    // ...), mean 12.3 ms/image". Failed-path samples turn an opaque
-    // 0.1% failure rate into something a user can diagnose.
-    let elapsed_ms = run_started.elapsed().as_millis() as u64;
-    let mean_per_image_ms = if processed > 0 { elapsed_ms as f64 / processed as f64 } else { 0.0 };
-    crate::perf::record_diagnostic(
-        "encoder_run_summary",
-        serde_json::json!({
-            "encoder_id": "clip_vit_b_32",
-            "attempted": processed,
-            "succeeded": succeeded,
-            "failed": failed_paths.len(),
-            "elapsed_ms": elapsed_ms,
-            "mean_per_image_ms": mean_per_image_ms,
-            "failed_sample": failed_paths.iter().take(10).cloned().collect::<Vec<_>>(),
-        }),
-    );
-    Ok(())
-}
-
-/// Generic per-encoder loop using the ImageEncoder trait. Used for
-/// SigLIP-2 + DINOv2; each writes only to the new embeddings table.
+/// Generic per-encoder loop using the ImageEncoder trait. Used for CLIP,
+/// SigLIP-2, and DINOv2; each writes only to the new embeddings table.
+///
+/// Audit finding: CLIP used to have its own near-identical loop
+/// (`run_clip_encoder_with_intra`) predating the `ImageEncoder` trait.
+/// Every line that looked CLIP-specific was already parameterised here —
+/// `ClipImageEncoder::new_with_intra` builds through the same
+/// `encode_batch` the trait forwards to (`encoder.rs`'s `impl
+/// ImageEncoder for ClipImageEncoder` delegates to the inherent method),
+/// and CLIP's batch-1 ONNX constraint lives inside that inherent method,
+/// invisible here. Deleting the duplicate needed no behaviour change —
+/// same needs-set predicate, same per-chunk write/emit/checkpoint
+/// sequence, same diagnostic shape — token-diffed equal against the
+/// deleted function before removal.
 fn run_trait_encoder<F, E>(
     app: &AppHandle,
     database: &ImageDatabase,
@@ -1502,9 +1420,9 @@ where
     if total == 0 {
         return Ok(());
     }
-    // No per-encoder start emit — see run_clip_encoder_with_intra: the
-    // phase-level 0/total and the shared aggregate below replace the old
-    // per-encoder counter that produced the sticky-0/21 bug.
+    // No per-encoder start emit — the phase-level 0/total and the shared
+    // aggregate below replace the old per-encoder counter that produced
+    // the sticky-0/21 bug.
 
     let run_started = std::time::Instant::now();
     let mut encoder = make_encoder().map_err(|e| e.to_string())?;
@@ -1526,9 +1444,9 @@ where
                         sample_emitted = true;
                     }
                 }
-                // R1 — same BEGIN IMMEDIATE batch write as the CLIP
-                // path. legacy_clip_too = false because only CLIP
-                // double-writes to the legacy column.
+                // R1 — one BEGIN IMMEDIATE batch write per chunk, every
+                // encoder including CLIP. legacy_clip_too = false: no
+                // encoder double-writes the legacy column any more.
                 let batch_rows: Vec<(crate::db::ID, Vec<f32>)> = chunk
                     .iter()
                     .zip(embeddings.iter())
@@ -1567,9 +1485,9 @@ where
         let _ = database.checkpoint_passive();
     }
 
-    // Per-encoder run summary diagnostic — same shape as the CLIP
-    // path. Lets the report show side-by-side cost + failure rates
-    // across CLIP / SigLIP-2 / DINOv2.
+    // Per-encoder run summary diagnostic, one shape for every encoder.
+    // Lets the report show side-by-side cost + failure rates across
+    // CLIP / SigLIP-2 / DINOv2.
     let elapsed_ms = run_started.elapsed().as_millis() as u64;
     let mean_per_image_ms = if processed > 0 { elapsed_ms as f64 / processed as f64 } else { 0.0 };
     crate::perf::record_diagnostic(

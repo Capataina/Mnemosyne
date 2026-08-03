@@ -333,7 +333,7 @@ export function useIsIndexing(): boolean {
 
 /** Fine-grained event-derived state for the status pill: the phase label,
  *  the live message, and the current phase's per-image fraction. */
-export interface IndexingPhaseState {
+interface IndexingPhaseState {
   isIndexing: boolean;
   phase: IndexingPhase | null;
   message: string | null;
@@ -342,7 +342,7 @@ export interface IndexingPhaseState {
   eventFraction: number | null;
 }
 
-export function useIndexingPhase(): IndexingPhaseState {
+function useIndexingPhase(): IndexingPhaseState {
   const phase = useSyncExternalStore(subscribe, getPhase);
   const message = useSyncExternalStore(subscribe, getMessage);
   const eventFraction = useSyncExternalStore(subscribe, getEventFraction);

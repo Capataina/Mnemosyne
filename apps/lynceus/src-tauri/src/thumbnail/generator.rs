@@ -3,9 +3,7 @@ use std::error::Error;
 use std::fs;
 use std::io::BufReader;
 use std::path::{Path, PathBuf};
-use tracing::{debug, error, info, warn};
-
-use crate::db::ImageDatabase;
+use tracing::{debug, info, warn};
 
 use fast_image_resize::{
     images::Image as FirImage, FilterType as FirFilter, PixelType, ResizeAlg, ResizeOptions,
@@ -423,70 +421,6 @@ impl ThumbnailGenerator {
     /// different bucket width (the on-demand path) share the same maths.
     fn calculate_thumbnail_size(&self, width: u32, height: u32) -> (u32, u32) {
         size_for_width(self.max_width, width, height)
-    }
-
-    /// Generate thumbnails for all images that don't have them yet.
-    /// Similar to `encode_all_images_in_database` in Encoder.
-    pub fn generate_all_missing_thumbnails(
-        &self,
-        db: &ImageDatabase,
-    ) -> Result<(), Box<dyn Error>> {
-        let images = db.get_images_without_thumbnails()?;
-
-        if images.is_empty() {
-            info!("All images already have thumbnails, skipping generation.");
-            return Ok(());
-        }
-
-        info!(
-            "Found {} images without thumbnails, generating...",
-            images.len()
-        );
-
-        let total_images = images.len();
-        let mut success_count = 0;
-        let mut error_count = 0;
-
-        for (idx, image) in images.iter().enumerate() {
-            if (idx + 1) % 10 == 0 || idx == 0 {
-                debug!("Generating thumbnails... {}/{}", idx + 1, total_images);
-            }
-
-            // Legacy bulk path: no per-root segregation (root_id None).
-            // The indexing pipeline calls generate_thumbnail directly
-            // with the actual root_id; this method is kept for the
-            // simple "regenerate all missing" use case.
-            match self.generate_thumbnail(Path::new(&image.path), image.id, None) {
-                Ok(result) => {
-                    // Update database with thumbnail info and original dimensions
-                    match db.update_image_thumbnail(
-                        image.id,
-                        &result.thumbnail_path,
-                        result.original_width,
-                        result.original_height,
-                    ) {
-                        Ok(_) => {
-                            success_count += 1;
-                        }
-                        Err(e) => {
-                            error!("Failed to update database for image {}: {}", image.id, e);
-                            error_count += 1;
-                        }
-                    }
-                }
-                Err(e) => {
-                    error!("Failed to generate thumbnail for {}: {}", image.path, e);
-                    error_count += 1;
-                }
-            }
-        }
-
-        info!(
-            "Thumbnail generation complete: {} succeeded, {} failed",
-            success_count, error_count
-        );
-
-        Ok(())
     }
 
     /// Get the thumbnail path for an image ID (without generating).

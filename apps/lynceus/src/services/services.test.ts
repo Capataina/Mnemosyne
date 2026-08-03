@@ -233,15 +233,6 @@ describe("services/images", () => {
     );
   });
 
-  it("setScanRoot sends only the path argument", async () => {
-    const { setScanRoot } = await import("./images");
-    mockInvoke.mockResolvedValueOnce(undefined);
-    await setScanRoot("/new/folder");
-    expect(mockInvoke).toHaveBeenCalledWith("set_scan_root", {
-      path: "/new/folder",
-    });
-  });
-
   it("pickScanFolder returns the selected path", async () => {
     const { pickScanFolder } = await import("./images");
     mockOpen.mockResolvedValueOnce("/picked/path");
@@ -260,34 +251,9 @@ describe("services/images", () => {
     const result = await pickScanFolder();
     expect(result).toBeNull();
   });
-
-  it("semanticSearch invokes with query + topN + textEncoderId (undefined when not passed)", async () => {
-    const { semanticSearch } = await import("./images");
-    mockInvoke.mockResolvedValueOnce([]);
-    await semanticSearch("cyberpunk", 25);
-    expect(mockInvoke).toHaveBeenCalledWith("semantic_search", {
-      query: "cyberpunk",
-      topN: 25,
-      textEncoderId: undefined,
-    });
-  });
-
-  it("semanticSearch passes textEncoderId through when supplied", async () => {
-    // Phase 4 — picker dispatch. The hook reads prefs.textEncoder and
-    // forwards it; backend branches on this id ("siglip2_base" → SigLIP-2,
-    // anything else → CLIP fallback).
-    const { semanticSearch } = await import("./images");
-    mockInvoke.mockResolvedValueOnce([]);
-    await semanticSearch("cyberpunk", 25, "siglip2_base");
-    expect(mockInvoke).toHaveBeenCalledWith("semantic_search", {
-      query: "cyberpunk",
-      topN: 25,
-      textEncoderId: "siglip2_base",
-    });
-  });
 });
 
-describe("services/fusedSemantic", () => {
+describe("services/images (fused semantic search)", () => {
   it("fetchFusedSemanticSearch calls get_fused_semantic_search with query + topN + perEncoderTopK", async () => {
     // Phase 11d — text-image RRF mirrors the image-image fusion.
     // Backend reads the enabled-encoder list from settings.json and
@@ -325,7 +291,7 @@ describe("services/fusedSemantic", () => {
   });
 });
 
-describe("services/fusedSimilar", () => {
+describe("services/images (fused similar images)", () => {
   it("fetchFusedSimilarImages calls get_fused_similar_images with imageId + topN + perEncoderTopK", async () => {
     // Phase 5 — replaces the tiered random-sampling system. Backend
     // calls all three encoders (CLIP, SigLIP-2, DINOv2) and fuses

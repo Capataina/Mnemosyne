@@ -31,6 +31,17 @@ pub struct ImageResultMeta {
     pub height: Option<u32>,
 }
 
+/// A row from `get_images_without_thumbnails` — the same no-join,
+/// tag-free shape as `ImageResultMeta`, but for the pipeline's
+/// needs-thumbnails read: only id/path/name, `name` pre-derived so
+/// callers building a `FeedDeltaRow` don't re-derive it.
+#[derive(Debug, Clone)]
+pub struct ThumbnailNeedRow {
+    pub id: ID,
+    pub path: String,
+    pub name: String,
+}
+
 /// Pipeline progress snapshot — counts of images at each stage.
 ///
 /// Returned by `get_pipeline_stats` and exposed to the frontend via
@@ -121,23 +132,37 @@ fn aggregate_image_rows(
     let mut map: HashMap<ID, AggregatedValue> = HashMap::new();
     while let Some(row) = rows.next()? {
         let img_id: ID = row.get("img_id")?;
-        let img_path: String = row.get("img_path")?;
-        let thumbnail_path: Option<String> = row.get("thumbnail_path")?;
-        let width: Option<i64> = row.get("width")?;
-        let height: Option<i64> = row.get("height")?;
-        let manual_order: Option<i64> = row.get("manual_order")?;
-        let manual_col_span: Option<i64> = row.get("manual_col_span")?;
+        // Lazy on vacant (audit finding — allocation churn): img_path/
+        // thumbnail_path/width/height/manual_order/manual_col_span are
+        // only read from the row when this image id is seen for the
+        // first time. For an image with T tags the eager form allocated
+        // its path/thumbnail Strings T times and dropped T-1 copies on
+        // the floor; reading by column name has no sequential-access
+        // requirement, so skipping the columns on an occupied entry is
+        // safe. Output is unchanged — every column still comes from the
+        // same row shape, just read once per image instead of once per
+        // joined row. `cha_l3_alloc_and_hash.rs` proves the equivalence.
+        let entry = match map.entry(img_id) {
+            std::collections::hash_map::Entry::Occupied(e) => e.into_mut(),
+            std::collections::hash_map::Entry::Vacant(v) => {
+                let img_path: String = row.get("img_path")?;
+                let thumbnail_path: Option<String> = row.get("thumbnail_path")?;
+                let width: Option<i64> = row.get("width")?;
+                let height: Option<i64> = row.get("height")?;
+                let manual_order: Option<i64> = row.get("manual_order")?;
+                let manual_col_span: Option<i64> = row.get("manual_col_span")?;
+                v.insert((
+                    img_path,
+                    Vec::new(),
+                    thumbnail_path,
+                    width,
+                    height,
+                    manual_order,
+                    manual_col_span,
+                ))
+            }
+        };
         let tag_id_opt: Option<ID> = row.get("tag_id")?;
-
-        let entry = map.entry(img_id).or_insert((
-            img_path,
-            Vec::new(),
-            thumbnail_path,
-            width,
-            height,
-            manual_order,
-            manual_col_span,
-        ));
         if let Some(tag_id) = tag_id_opt {
             entry.1.push(Tag {
                 id: tag_id,
@@ -240,35 +265,39 @@ impl ImageDatabase {
         Ok(images)
     }
 
-    /// Get images that don't have thumbnails yet
-    pub fn get_images_without_thumbnails(&self) -> rusqlite::Result<Vec<ImageData>> {
+    /// Get images that don't have thumbnails yet — tuple-shaped
+    /// (id/path/name only), no tag join.
+    ///
+    /// Audit finding: this used to route through `aggregate_image_rows`
+    /// like the other grid queries, LEFT-JOINing images_tags/tags and
+    /// unrolling one row per (image × tag) just to discard the tags —
+    /// both pipeline call sites (base thumbnails, eager previews) read
+    /// only id/path/name. `name` is derived the same way `ImageData::new`
+    /// derives it, so a re-thumbnailed image's `feed-delta` row is
+    /// unchanged. `ORDER BY id` gives deterministic iteration (the old
+    /// HashMap-backed aggregation had none). Kept on the writer
+    /// connection — this is the pipeline's own needs-set read, not a
+    /// foreground grid query, matching `get_images_without_embedding_for`
+    /// and `get_images_without_content_hash`'s routing.
+    pub fn get_images_without_thumbnails(&self) -> rusqlite::Result<Vec<ThumbnailNeedRow>> {
         let conn = self.connection.lock().unwrap();
         let mut stmt = conn.prepare(
-            "SELECT images.id AS img_id, images.path AS img_path,
-            images.thumbnail_path, images.width, images.height,
-            NULL AS manual_order, NULL AS manual_col_span,
-            tags.id AS tag_id, tags.name AS tag_name, tags.color AS tag_color
-            FROM images
-            LEFT JOIN images_tags ON images.id = images_tags.image_id
-            LEFT JOIN tags ON tags.id = images_tags.tag_id
-            WHERE images.thumbnail_path IS NULL OR images.thumbnail_path = '';",
+            "SELECT id, path FROM images
+             WHERE thumbnail_path IS NULL OR thumbnail_path = ''
+             ORDER BY id",
         )?;
-        let mut rows = stmt.query([])?;
-        let aggregated = aggregate_image_rows(&mut rows)?;
-
-        // This function returns images that need thumbnails — by
-        // definition the thumbnail columns are NULL/empty, so we
-        // discard them when materialising into ImageData. The helper
-        // returns them anyway because its contract is uniform.
-        let mut images: Vec<ImageData> = aggregated
-            .into_iter()
-            .map(|(id, path, tags, _tp, _w, _h, _mo, _mcs)| {
-                ImageData::new(id, std::path::Path::new(&path), tags)
-            })
-            .collect();
-        images.sort_by_key(|img| img.id);
-
-        Ok(images)
+        let rows = stmt.query_map([], |row| {
+            let id: ID = row.get(0)?;
+            let path: String = row.get(1)?;
+            Ok((id, path))
+        })?;
+        let mut out = Vec::new();
+        for row in rows {
+            let (id, path) = row?;
+            let name = basename_of(&path);
+            out.push(ThumbnailNeedRow { id, path, name });
+        }
+        Ok(out)
     }
 
     /// Get images with their thumbnail info included.
@@ -662,6 +691,34 @@ impl ImageDatabase {
     /// Snapshot of the pipeline's progress — base counts plus
     /// per-encoder embedding counts.
     ///
+    /// Count-only companion to `get_images_without_embedding_for`
+    /// (`embeddings.rs`) — the identical predicate, no
+    /// `Vec<(ID, String)>` materialisation. The indexing pipeline's
+    /// `aggregate_total` precompute only ever needed the row count: on a
+    /// fresh 100k library with 3 encoders that was ~300k discarded path
+    /// allocations just to sum `.len()`, and the same three queries ran
+    /// again moments later inside each encoder thread to drive the real
+    /// loop. Kept on the writer connection to match
+    /// `get_images_without_embedding_for`'s routing — the precompute
+    /// reads the pipeline's own in-flight writer, not the foreground
+    /// reader. Proof: `cha_b_needs_count.rs`.
+    pub fn count_images_without_embedding_for(
+        &self,
+        encoder_id: &str,
+    ) -> rusqlite::Result<i64> {
+        let conn = self.connection.lock().unwrap();
+        conn.query_row(
+            "SELECT COUNT(*) FROM images i
+             WHERE i.orphaned = 0
+             AND NOT EXISTS (
+                 SELECT 1 FROM embeddings e
+                 WHERE e.image_id = i.id AND e.encoder_id = ?1
+             )",
+            rusqlite::params![encoder_id],
+            |row| row.get(0),
+        )
+    }
+
     /// Base counts come from one SELECT over `images` (total /
     /// with_thumbnail / with_legacy_clip_embedding / orphaned). Then
     /// one COUNT per encoder over the `embeddings` table for the
@@ -748,21 +805,37 @@ impl ImageDatabase {
     /// denominator for "medium previews done" is `width > 960`, not the
     /// library total. Width is NULL until the base thumbnail lands, so
     /// un-thumbnailed rows are correctly not yet eligible for any bucket.
+    /// Audit finding: this used to run one `images` scan per bucket
+    /// width (3 full scans for the 3-bucket ladder). A single SUM(CASE)
+    /// pass returns identical per-bucket counts off one scan, and is
+    /// also safer — one snapshot closes the cross-bucket inconsistency
+    /// window a concurrent write between per-bucket scans could open.
+    /// `COALESCE` pins the empty-table case to 0, matching `COUNT`'s
+    /// behaviour (`SUM` over zero rows is `NULL`). Proof:
+    /// `cha_l3_db_waste.rs`.
     pub fn get_preview_eligibility(
         &self,
         bucket_widths: &[u32],
     ) -> rusqlite::Result<Vec<(u32, i64)>> {
-        let conn = self.read_lock();
-        let mut out = Vec::with_capacity(bucket_widths.len());
-        for &w in bucket_widths {
-            let mut stmt = conn.prepare(
-                "SELECT COUNT(*) FROM images
-                 WHERE orphaned = 0 AND width IS NOT NULL AND width > ?1",
-            )?;
-            let count: i64 = stmt.query_row([w as i64], |row| row.get(0))?;
-            out.push((w, count));
+        if bucket_widths.is_empty() {
+            return Ok(Vec::new());
         }
-        Ok(out)
+        let conn = self.read_lock();
+        let selects: Vec<String> = (1..=bucket_widths.len())
+            .map(|i| format!("COALESCE(SUM(CASE WHEN width > ?{i} THEN 1 ELSE 0 END), 0)"))
+            .collect();
+        let sql = format!(
+            "SELECT {} FROM images WHERE orphaned = 0 AND width IS NOT NULL",
+            selects.join(", ")
+        );
+        let mut stmt = conn.prepare(&sql)?;
+        let params: Vec<i64> = bucket_widths.iter().map(|&w| w as i64).collect();
+        let counts: Vec<i64> = stmt.query_row(params_from_iter(params.iter()), |row| {
+            (0..bucket_widths.len())
+                .map(|i| row.get::<_, i64>(i))
+                .collect::<rusqlite::Result<Vec<i64>>>()
+        })?;
+        Ok(bucket_widths.iter().copied().zip(counts).collect())
     }
 }
 

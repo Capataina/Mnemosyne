@@ -193,7 +193,7 @@ function firstOverlapBottom(
 /** Lowest y where a span-wide rectangle fits. A collision advances y to the
  * furthest colliding bottom; because every advance is monotonic and interval
  * lists are sorted, the loop terminates without scanning the catalogue. */
-export function lowestFreeY(
+function lowestFreeY(
   occupied: readonly (readonly number[])[],
   start: number,
   span: number,

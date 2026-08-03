@@ -42,11 +42,11 @@ pub mod watcher;
 
 /// Per-encoder cosine caches — the ONLY resident embedding cache in the
 /// app (T3-2/#8). Every search command borrows a slot here: image-image
-/// and text-image fusion score each enabled encoder's slot and RRF the
-/// results, and the single-encoder commands (get_similar / get_tiered /
-/// semantic_search) borrow one slot via `with_encoder_index`. All three
-/// encoders' caches stay resident simultaneously so a fused query never
-/// pays a populate-roundtrip per call.
+/// and text-image fusion score each enabled encoder's slot via
+/// `ranked_for_encoder` (a delegation onto `with_encoder_index` +
+/// `get_similar_images_sorted`, CHA-TAURI-P2) and RRF the results. All
+/// three encoders' caches stay resident simultaneously so a fused query
+/// never pays a populate-roundtrip per call.
 ///
 /// Populated lazily on first use OR mapped zero-copy from the persisted
 /// flat store by `spawn_cache_warm` at launch; refreshed + re-persisted
@@ -83,11 +83,19 @@ impl FusionIndexState {
 
     /// Lazy populate (or reuse) the per-encoder cache for `encoder_id`,
     /// then run the cosine query against it. Returns the top-K
-    /// (path, score) list excluding `exclude_path`.
+    /// (id, score) list excluding `exclude_id`.
     ///
     /// Caller hands in `top_k` — fusion tops out at ~50 per encoder
     /// in practice (the rank-fusion contribution at rank 50 with
     /// k_rrf=60 is ~0.009, smaller still beyond that).
+    ///
+    /// A one-line delegation onto `with_encoder_index` +
+    /// `CosineIndex::get_similar_images_sorted` (CHA-TAURI-P2): this and
+    /// `with_encoder_index` used to hand-roll the same double-checked
+    /// populate sequence independently (~40 duplicated locking lines);
+    /// `tests/cha_fusion_wrapper_equivalence.rs` pinned the two paths as
+    /// observationally equivalent before the delegation landed, then
+    /// retired once this became provably a wrapper.
     pub fn ranked_for_encoder(
         &self,
         db: &ImageDatabase,
@@ -96,71 +104,26 @@ impl FusionIndexState {
         top_k: usize,
         exclude_id: Option<i64>,
     ) -> Result<Vec<(i64, f32)>, String> {
-        // Double-checked locking so the common (warm) case scores under a
-        // SHARED read lock — concurrent fused queries against an
-        // already-populated cache never serialise. Only the first query
-        // for an encoder (or after invalidation) takes the write lock to
-        // populate.
-        //
-        // Fast path: read lock, score if the entry is already populated.
-        {
-            let map = self
-                .per_encoder
-                .read()
-                .map_err(|e| format!("fusion rwlock poisoned: {e}"))?;
-            if let Some(entry) = map.get(encoder_id) {
-                if !entry.cached_images.is_empty() {
-                    return Ok(entry.get_similar_images_sorted(query, top_k, exclude_id));
-                }
-            }
-        }
-        // Slow path: write lock, populate if still empty (another thread
-        // may have populated between the read and write locks). Prefer the
-        // persisted flat store (mmap, zero-copy) and fall back to a DB
-        // populate on miss/stale — same order as spawn_cache_warm.
-        {
-            let mut map = self
-                .per_encoder
-                .write()
-                .map_err(|e| format!("fusion rwlock poisoned: {e}"))?;
-            let entry = map
-                .entry(encoder_id.to_string())
-                .or_insert_with(CosineIndex::new);
-            if entry.cached_images.is_empty()
-                && !entry.load_store_if_valid(db, encoder_id)
-            {
-                entry.populate_from_db_for_encoder(db, encoder_id);
-            }
-        }
-        // Re-read and score under a shared read lock.
-        let map = self
-            .per_encoder
-            .read()
-            .map_err(|e| format!("fusion rwlock poisoned: {e}"))?;
-        match map.get(encoder_id) {
-            Some(entry) if !entry.cached_images.is_empty() => {
-                Ok(entry.get_similar_images_sorted(query, top_k, exclude_id))
-            }
-            // No embeddings available for this encoder — return empty
-            // ranked list. Fusion still works with the other encoders.
-            _ => Ok(Vec::new()),
-        }
+        self.with_encoder_index(db, encoder_id, |idx| {
+            idx.get_similar_images_sorted(query, top_k, exclude_id)
+        })
     }
 
     /// Run an arbitrary read-only query against the warm fusion slot for
-    /// `encoder_id`, ensuring the slot is populated first. This is what
-    /// lets the legacy/primary single-encoder commands (get_similar,
-    /// get_tiered, semantic_search) BORROW the fusion slot instead of
-    /// keeping a duplicate primary cache warm (T3-2/#8) —
-    /// the fusion slot already holds exactly the same per-encoder cache.
+    /// `encoder_id`, ensuring the slot is populated first. This is the
+    /// shared populate-and-score primitive every search command borrows
+    /// through: `ranked_for_encoder` is a one-line delegation onto this
+    /// method, so there is exactly one double-checked-locking populate
+    /// path in the crate rather than two independently maintained copies
+    /// (T3-2/#8, CHA-TAURI-P2).
     ///
-    /// Same double-checked shape as `ranked_for_encoder`: the warm case
-    /// scores under a shared read lock (so the prefetch burst stays
-    /// parallel); only a cold slot takes the write lock to map-or-populate.
-    /// The closure is handed the populated index; on an encoder with no
-    /// embeddings it runs against an empty index (returning empty), and if
-    /// the slot is concurrently invalidated between locks the result
-    /// defaults — both degrade to "no results", never an error.
+    /// Double-checked locking: the warm case scores under a shared read
+    /// lock (so the prefetch burst stays parallel); only a cold slot
+    /// takes the write lock to map-or-populate. The closure is handed the
+    /// populated index; on an encoder with no embeddings it runs against
+    /// an empty index (returning empty), and if the slot is concurrently
+    /// invalidated between locks the result defaults — both degrade to
+    /// "no results", never an error.
     pub fn with_encoder_index<R: Default>(
         &self,
         db: &ImageDatabase,
@@ -303,11 +266,8 @@ pub fn run(db: ImageDatabase, db_path: String) {
     use commands::roots::{
         add_root, get_scan_root, list_roots, remove_root, set_root_enabled, set_scan_root,
     };
-    use commands::semantic::semantic_search;
     use commands::semantic_fused::get_fused_semantic_search;
-    use commands::similarity::{
-        get_fused_similar_images, get_similar_images, get_tiered_similar_images,
-    };
+    use commands::similarity::get_fused_similar_images;
     use commands::tags::{
         add_tag_to_image, create_tag, delete_tag, get_tag_counts, get_tags,
         remove_tag_from_image,
@@ -593,10 +553,7 @@ pub fn run(db: ImageDatabase, db_path: String) {
             delete_tag,
             add_tag_to_image,
             remove_tag_from_image,
-            get_similar_images,
-            get_tiered_similar_images,
             get_fused_similar_images,
-            semantic_search,
             get_fused_semantic_search,
             get_scan_root,
             set_scan_root,

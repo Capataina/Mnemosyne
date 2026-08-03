@@ -7,6 +7,7 @@ import {
   SETTLE_EASE,
   cursorFrame,
   cursorTrack,
+  holdTrack,
   normaliseTimes,
   visualFrame,
   visualMotion,
@@ -26,7 +27,7 @@ import type { ClosedTrack, OnboardingSceneProps, VisualFrame } from "../types";
 import { DemoAppChrome, DemoSceneRoot } from "../primitives/DemoAppChrome";
 import { OnboardingSkeleton } from "../primitives/OnboardingSkeleton";
 import {
-  StaticFrameArt,
+  reducedFrames,
   type StaticFrameKind,
 } from "../primitives/ReducedMotionFilmstrip";
 
@@ -39,7 +40,7 @@ export const ARRANGE_DURATION_MS = 12000;
  * beat below is a slot assignment — transforms are COMPUTED from cells,
  * so a tile can neither leak off the stage nor land between columns.
  */
-export const ARRANGE_GRID = makeGrid({
+const ARRANGE_GRID = makeGrid({
   originX: 54,
   originY: 104,
   cellW: 176,
@@ -153,21 +154,6 @@ const CL_BACK = layout({
 /** F and the row-3 tiles go home; only the C/H swap remains. */
 const REST_HOME = layout({ C: slot("C", 3, 1), H: slot("H", 2, 0) });
 const CH_RETURNING = layout({ C: C_RETURN_FLOAT, H: H_RETURN_FLOAT });
-
-export const ARRANGE_TILE_FIXTURES = {
-  home: HOME,
-  cLiveOne: C_LIVE_ONE,
-  cLiveTwo: C_LIVE_TWO,
-  cSettled: C_SETTLED,
-  fGrow: F_GROW,
-  fTwoByTwo: F_TWO_BY_TWO,
-  fMoving: F_MOVING,
-  fMoved: F_MOVED,
-  fShrunk: F_SHRUNK,
-  clBack: CL_BACK,
-  restHome: REST_HOME,
-  chReturning: CH_RETURNING,
-} as const;
 
 const layoutTimeline = [
   HOME,
@@ -299,17 +285,10 @@ const fTelegraph = visualTrack(
   ["linear", LIVE_EASE, "linear", LIVE_EASE, SETTLE_EASE, "linear", "linear"],
 );
 
-const grips = visualTrack(
-  [
-    visualFrame(undefined, 0),
-    visualFrame(undefined, 0),
-    visualFrame(undefined, 1),
-    visualFrame(undefined, 1),
-    visualFrame(undefined, 0),
-    visualFrame(undefined, 0),
-  ],
-  normaliseTimes(ARRANGE_DURATION_MS, [0, 2850, 3350, 8020, 8340, 12000]),
-);
+const grips = holdTrack([0, 2850, 3350, 8020, 8340, 12000], {
+  hidden: visualFrame(undefined, 0),
+  shown: visualFrame(undefined, 1),
+});
 
 export const ARRANGE_TRACKS = {
   cursor,
@@ -373,10 +352,7 @@ const reducedKinds: readonly [StaticFrameKind, string][] = [
   ["arrange-settled", "Settle into the reserved space"],
 ];
 
-export const ARRANGE_REDUCED_FRAMES = reducedKinds.map(([kind, caption]) => ({
-  caption,
-  content: <StaticFrameArt kind={kind} />,
-}));
+export const ARRANGE_REDUCED_FRAMES = reducedFrames(reducedKinds);
 
 export function ArrangeScene({ animationLevel }: OnboardingSceneProps) {
   const motionOptions = { subtle: animationLevel === "subtle" };

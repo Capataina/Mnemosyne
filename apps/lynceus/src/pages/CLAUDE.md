@@ -1,6 +1,30 @@
 # src/pages/
 
-One file: `[...slug].tsx`, the single catch-all route (vite-plugin-pages via `~react-pages`). It is the app's composition root (~1100 lines): owns the one filter state shared by SearchBar and LibraryDrawer, selection/hero state, the inspector's nav list, and wires the feed manifest → shuffle → Masonry pipeline plus all drawers/overlays. There is no second page; navigation state lives in this component, not the URL — except the selected image id, which the URL slug owns as source of truth.
+`[...slug].tsx`, the single catch-all route (vite-plugin-pages via `~react-pages`), plus four route-private presentational components split out of it (2026-08-03 modularisation). The route is the app's composition root: owns the one filter state shared by SearchBar and LibraryDrawer, selection/hero state, the inspector's nav list, and wires the feed manifest → shuffle → Masonry pipeline plus all drawers/overlays. There is no second page; navigation state lives in this component, not the URL — except the selected image id, which the URL slug owns as source of truth.
+
+## Map
+
+```
+pages/
+├── [...slug].tsx       The catch-all route: all state, all handlers, the render
+│                       tree composing TopBar/EmptyState/SimilarHeader/
+│                       SemanticStatus below, plus the still-inline
+│                       PinterestModal/LibraryDrawer/drawers.
+├── TopBar.tsx          Header: library-drawer toggle, wordmark, SearchBar,
+│                       add-folder + settings buttons. onSearchChange
+│                       (leave-first invariant) and onAddFolder (duplicate-
+│                       folder confirm flow) are prebuilt callbacks passed
+│                       down — never rebuilt inside this component.
+├── EmptyState.tsx      Indexing / no-images-yet hint. `manifestCount: number |
+│                       undefined` is the tri-state read of manifest.data?.length.
+├── SimilarHeader.tsx   "More like this" section: similarity breadcrumb trail
+│                       + back controls. Self-contained AnimatePresence,
+│                       gated on `selectedItem`.
+└── SemanticStatus.tsx  Semantic search status: loading/results title, count,
+                        error. Self-contained AnimatePresence, gated on `visible`.
+```
+
+Each extracted component is route-private (lives beside the route, not in `components/`) because the router convention is its only consumer — no other page exists to share it with.
 
 ## The priority chain — what the grid shows
 
@@ -37,11 +61,6 @@ The manifest carries no tags or full-res URL, so selection is two-phase: **seed*
 - **`simTrail`** — diving deeper into a similarity cascade pushes the previous selection; back-one-hop and rewind-to-index render as a thumbnail strip; the trail clears on returning to the feed root — a cascade doesn't survive leaving it, by design.
 - **Lazy notes loader** — fetches on selection with a `cancelled` flag so a slow IPC can't clobber a fast follow-up during rapid prev/next.
 - **`recordAction` breadcrumbs** fire at user-action sites throughout (fire-and-forget; no-op when profiling is off). The `Profiler` wrapper around Masonry runs its callback in production too — it short-circuits internally, minor overhead accepted.
-
-## Planned work
-
-- **Split the route's four JSX blocks out of `[...slug].tsx` (1102 lines)** (modularisation; gate-promoted). The router convention is the only consumer (grep: no import of the route anywhere in src), every extracted symbol is file-internal, and all four blocks consume only prop-passable values. Gate corrections to honour: TopBar needs ~15 props as-is (or the two fat handlers — add-folder and `onSearchChange` — pass as prebuilt callbacks, keeping it near 10); the `onSearchChange` closure (843-853) carries the leave-first invariant and must stay BUILT in the route, passed down, never moved into TopBar; the empty-state block's prop is `manifestCount: number | undefined` (undefined/0/>0 are three states). Settle: suite 250/250 + a manual filter/search/similar pass (no mounted route tests exist — documented gap above). [code-health-audit 2026-08-02]
-- **Fix the three stale `--profile` comments** at lines 73, 76, 85 (doc rot; the real flag is `--profiling`) — refuter-verified plain `//` comments, not template literals. [code-health-audit 2026-08-02]
 
 ## Gaps and known limits
 

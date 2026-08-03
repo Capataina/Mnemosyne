@@ -195,29 +195,6 @@ export async function getThumbnail(
   return await invoke<string>("get_thumbnail", { id: imageId, targetPx });
 }
 
-export async function getScanRoot(): Promise<string | null> {
-  try {
-    return (await invoke<string | null>("get_scan_root")) ?? null;
-  } catch (error) {
-    throw new Error(formatApiError(error));
-  }
-}
-
-/**
- * Persist the chosen scan root and wipe the existing image index.
- *
- * Pass 4a behaviour: the backend persists the path and clears image
- * rows. Re-indexing happens on the next app launch — Pass 5 will
- * trigger it live and emit progress events.
- */
-export async function setScanRoot(path: string): Promise<void> {
-  try {
-    await invoke("set_scan_root", { path });
-  } catch (error) {
-    throw new Error(formatApiError(error));
-  }
-}
-
 /**
  * Persist a drag-resize. `colSpan` of `null` clears back to the
  * default single-column width. Resize is the one manual layout property
@@ -326,46 +303,6 @@ function mapImageSearchResult(res: {
   };
 }
 
-export async function fetchSimilarImages(
-  imageId: number,
-  topN: number = 8,
-  encoderId?: string,
-) {
-  try {
-    // Backend now returns the unified ImageSearchResult shape
-    // (thumbnail_path/width/height included). Audit Performance
-    // finding: dimensions used to be fetched frontend-side via
-    // N parallel `getImageSize` DOM image loads — gone now,
-    // a single IPC round-trip carries the full payload.
-    //
-    // encoderId picks which embedding family to query against
-    // (CLIP / SigLIP-2 / DINOv2). Backend defaults to clip if
-    // omitted, but in practice the frontend always passes the
-    // user's chosen encoder from useUserPreferences.imageEncoder.
-    const results: Parameters<typeof mapImageSearchResult>[0][] = await perfInvoke(
-      "get_similar_images",
-      { imageId, topN, encoderId }
-    );
-    return results.map(mapImageSearchResult);
-  } catch (error) {
-    console.error("[Frontend] Error in fetchSimilarImages:", error);
-    throw new Error(formatApiError(error));
-  }
-}
-
-export async function fetchTieredSimilarImages(imageId: number, encoderId?: string) {
-  try {
-    const results: Parameters<typeof mapImageSearchResult>[0][] = await perfInvoke(
-      "get_tiered_similar_images",
-      { imageId, encoderId }
-    );
-    return results.map(mapImageSearchResult);
-  } catch (error) {
-    console.error("[Frontend] Error in fetchTieredSimilarImages:", error);
-    throw new Error(formatApiError(error));
-  }
-}
-
 /**
  * Phase 5 — multi-encoder rank-fusion similarity.
  *
@@ -425,32 +362,6 @@ export async function fetchFusedSemanticSearch(
     return results.map(mapImageSearchResult);
   } catch (error) {
     console.error("[Frontend] Error in fetchFusedSemanticSearch:", error);
-    throw new Error(formatApiError(error));
-  }
-}
-
-/**
- * LEGACY (Phase 4 single-encoder dispatch). Preserved as an internal
- * fallback so anything that imports `semanticSearch` directly keeps
- * working. New consumers should use `fetchFusedSemanticSearch` so they
- * benefit from text-side rank fusion across enabled text encoders.
- *
- * @param query - The search text
- * @param topN - Maximum number of results to return (default: 50)
- */
-export async function semanticSearch(
-  query: string,
-  topN: number = 50,
-  textEncoderId?: string
-): Promise<SimilarImageItem[]> {
-  try {
-    const results: Parameters<typeof mapImageSearchResult>[0][] = await perfInvoke(
-      "semantic_search",
-      { query, topN, textEncoderId }
-    );
-    return results.map(mapImageSearchResult);
-  } catch (error) {
-    console.error("[Frontend] Error in semanticSearch:", error);
     throw new Error(formatApiError(error));
   }
 }

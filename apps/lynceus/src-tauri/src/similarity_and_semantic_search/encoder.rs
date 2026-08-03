@@ -5,7 +5,7 @@ use ort::{
     value::{Tensor, Value},
 };
 use std::{error::Error, path::Path};
-use tracing::{debug, info, warn};
+use tracing::{info, warn};
 
 use super::encoders::ImageEncoder;
 
@@ -29,8 +29,6 @@ use super::encoders::ImageEncoder;
 
 #[cfg(not(target_os = "macos"))]
 use ort::execution_providers::CUDAExecutionProvider;
-
-use crate::db;
 
 pub struct ClipImageEncoder {
     session: Session,
@@ -90,18 +88,6 @@ impl ClipImageEncoder {
             .commit_from_file(model_path)?;
         info!("session ready (CUDA if available, CPU otherwise — ort routes per-op)");
         Ok(session)
-    }
-
-    pub fn inspect_model(&self) {
-        debug!("Model inputs:");
-        for input in self.session.inputs.iter() {
-            debug!("  Name: {:?}", input.name);
-        }
-
-        debug!("Model outputs:");
-        for output in self.session.outputs.iter() {
-            debug!("  Name: {:?}", output.name);
-        }
     }
 
     #[tracing::instrument(name = "clip.preprocess_image", skip(self, image_path))]
@@ -311,49 +297,6 @@ impl ClipImageEncoder {
         }
 
         Ok(all_embeddings)
-    }
-
-    /// Encode-all-in-database helper. Kept for back-compat with the
-    /// pre-pipeline-thread era; the indexing pipeline now drives this
-    /// loop directly so it can interleave with the thumbnail rayon
-    /// pool. Retained because the test suite + smoke scripts still
-    /// call it.
-    pub fn encode_all_images_in_database(
-        &mut self,
-        batch_size: usize,
-        db: &db::ImageDatabase,
-    ) -> Result<(), Box<dyn std::error::Error>> {
-        let images = db.get_images_without_embeddings()?;
-
-        if images.is_empty() {
-            info!("All images already have embeddings, skipping encoding.");
-            return Ok(());
-        }
-
-        info!("Found {} images without embeddings, encoding...", images.len());
-
-        let total_images = images.len();
-        let batches: Vec<_> = images.chunks(batch_size).collect();
-        let total_batches = batches.len();
-
-        for (batch_idx, batch) in batches.iter().enumerate() {
-            debug!(
-                "Encoding batch {}/{} ({} images)...",
-                batch_idx + 1,
-                total_batches,
-                batch.len()
-            );
-
-            let batch_paths: Vec<&Path> =
-                batch.iter().map(|image| Path::new(&image.path)).collect();
-            let embeddings = self.encode_batch(&batch_paths)?;
-            for (image, embedding) in batch.iter().zip(embeddings.iter()) {
-                db.update_image_embedding(image.id, embedding.clone())?;
-            }
-        }
-
-        info!("Successfully encoded {} images.", total_images);
-        Ok(())
     }
 }
 

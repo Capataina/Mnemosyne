@@ -35,6 +35,7 @@ use crate::db::ImageDatabase;
 use crate::paths;
 use memmap2::Mmap;
 use std::fs;
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tracing::{info, warn};
@@ -87,9 +88,13 @@ impl CosineIndex {
         self.save_store_to(&embstore_path(encoder_id), encoder_id);
     }
 
-    /// Path-explicit store writer (tests write into a tempdir). Serialises
-    /// header + id table + inv-norm table + f32 block, via a temp file +
-    /// atomic rename so a torn write is never mmap'd. Non-fatal on error.
+    /// Path-explicit store writer (tests write into a tempdir). Streams
+    /// header + id table + inv-norm table + f32 block straight into the
+    /// temp file via `write_all` calls, then an atomic rename so a torn
+    /// write is never mmap'd. Non-fatal on error. Byte-identical to the
+    /// old whole-file-assembly shape (proven by
+    /// `cha_res_ret_stream_save.rs`) but without the transient
+    /// `vec![0u8; total]` buffer — ~300 MB at 100k rows × 768 dim.
     pub fn save_store_to(&self, path: &Path, encoder_id: &str) {
         let store = &self.cached_images;
         let rows = store.len();
@@ -102,21 +107,27 @@ impl CosineIndex {
         let id_off = HEADER_LEN;
         let norm_off = id_off + id_bytes.len();
         let block_off = round_up_64(norm_off + norm_bytes.len());
-        let total = block_off + block_bytes.len();
+        let pad_len = block_off - (norm_off + norm_bytes.len());
 
-        let mut buf = vec![0u8; total];
-        buf[0..8].copy_from_slice(&MAGIC);
-        buf[8..12].copy_from_slice(&FORMAT_VERSION.to_le_bytes());
-        buf[16..24].copy_from_slice(&fnv1a_str(encoder_id).to_le_bytes());
-        buf[24..28].copy_from_slice(&(dim as u32).to_le_bytes());
-        buf[28..32].copy_from_slice(&(rows as u32).to_le_bytes());
-        buf[32..40].copy_from_slice(&self.gen_token.to_le_bytes());
-        buf[id_off..norm_off].copy_from_slice(id_bytes);
-        buf[norm_off..norm_off + norm_bytes.len()].copy_from_slice(norm_bytes);
-        buf[block_off..block_off + block_bytes.len()].copy_from_slice(block_bytes);
+        let mut header = [0u8; HEADER_LEN];
+        header[0..8].copy_from_slice(&MAGIC);
+        header[8..12].copy_from_slice(&FORMAT_VERSION.to_le_bytes());
+        header[16..24].copy_from_slice(&fnv1a_str(encoder_id).to_le_bytes());
+        header[24..28].copy_from_slice(&(dim as u32).to_le_bytes());
+        header[28..32].copy_from_slice(&(rows as u32).to_le_bytes());
+        header[32..40].copy_from_slice(&self.gen_token.to_le_bytes());
 
         let tmp = path.with_extension("tmp");
-        match fs::write(&tmp, &buf).and_then(|_| fs::rename(&tmp, path)) {
+        let write_streamed = || -> std::io::Result<()> {
+            let mut f = fs::File::create(&tmp)?;
+            f.write_all(&header)?;
+            f.write_all(id_bytes)?;
+            f.write_all(norm_bytes)?;
+            f.write_all(&[0u8; 63][..pad_len])?;
+            f.write_all(block_bytes)?;
+            Ok(())
+        };
+        match write_streamed().and_then(|_| fs::rename(&tmp, path)) {
             Ok(_) => info!(
                 "embedding store saved to {} ({rows} rows, dim {dim}, token {:#x})",
                 path.display(),

@@ -147,11 +147,12 @@ impl ImageDatabase {
     // Per-encoder embeddings (encoder picker, Phase 2)
     // =================================================================
     //
-    // The above methods read/write the legacy `images.embedding` column.
-    // The methods below read/write the new `embeddings` table, which is
-    // keyed by (image_id, encoder_id). The legacy column is preserved
-    // for backward compatibility through one release; the indexing
-    // pipeline writes to BOTH for now.
+    // The above methods read/write the legacy `images.embedding` column,
+    // kept for old-binary compatibility but no longer written by the
+    // live pipeline. The methods below read/write the `embeddings`
+    // table, keyed by (image_id, encoder_id) — the only store the
+    // indexing pipeline writes today (`upsert_embeddings_batch`'s
+    // `legacy_clip_too` is always `false` on both live call sites).
 
     /// Insert or replace an embedding for a specific encoder.
     pub fn upsert_embedding(
@@ -287,23 +288,41 @@ impl ImageDatabase {
                    OR i.root_id IN (SELECT id FROM roots WHERE enabled = 1)
                )",
         )?;
+        // Single-copy extraction: `get_ref` borrows the SQLite-owned blob
+        // bytes for the row callback instead of materialising a `Vec<u8>`
+        // first, halving the copy volume. The borrowed pointer carries no
+        // alignment guarantee (unlike a `Vec<u8>`'s heap allocation), so
+        // the copy goes through the always-aligned `Vec<f32>` destination
+        // (`cast_slice_mut::<f32, u8>` + `copy_from_slice`) rather than
+        // `cast_slice::<u8, f32>` on the borrowed bytes, which can panic
+        // on misalignment. This also fixes a latent panic on empty BLOBs:
+        // `cast_slice::<u8, f32>` checks alignment even at length 0 and
+        // panics on the dangling empty-Vec pointer; the destination-side
+        // copy handles length 0 cleanly, returning an empty embedding.
+        let f32_size = std::mem::size_of::<f32>();
         let rows = stmt.query_map(rusqlite::params![encoder_id], |row| {
-            Ok((
-                row.get::<_, ID>(0)?,
-                row.get::<_, String>(1)?,
-                row.get::<_, Vec<u8>>(2)?,
-            ))
+            let id: ID = row.get(0)?;
+            let path: String = row.get(1)?;
+            let vr = row.get_ref(2)?;
+            let bytes = vr.as_blob().map_err(|_| {
+                rusqlite::Error::InvalidColumnType(2, "embedding".into(), vr.data_type())
+            })?;
+            let embedding = if bytes.len() % f32_size == 0 {
+                let mut v = vec![0f32; bytes.len() / f32_size];
+                bytemuck::cast_slice_mut::<f32, u8>(&mut v).copy_from_slice(bytes);
+                Some(v)
+            } else {
+                None
+            };
+            Ok((id, path, embedding))
         })?;
 
         let mut out = Vec::new();
-        let f32_size = std::mem::size_of::<f32>();
         for row in rows {
-            let (id, path, bytes) = row?;
-            if bytes.len() % f32_size != 0 {
-                continue;
+            let (id, path, embedding) = row?;
+            if let Some(embedding) = embedding {
+                out.push((id, path, embedding));
             }
-            let embedding: Vec<f32> = bytemuck::cast_slice::<u8, f32>(&bytes).to_vec();
-            out.push((id, path, embedding));
         }
         Ok(out)
     }

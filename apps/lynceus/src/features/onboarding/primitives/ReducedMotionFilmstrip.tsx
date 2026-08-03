@@ -220,6 +220,17 @@ export function StaticFrameArt({ kind }: { kind: StaticFrameKind }) {
   );
 }
 
+/** Builds a scene's three reduced-motion frames from its `[kind, caption]`
+ * pairs — the one assembly every scene otherwise repeated verbatim. */
+export function reducedFrames(
+  kinds: readonly (readonly [StaticFrameKind, string])[],
+): ReducedFrame[] {
+  return kinds.map(([kind, caption]) => ({
+    caption,
+    content: <StaticFrameArt kind={kind} />,
+  }));
+}
+
 interface ReducedMotionFilmstripProps {
   frames: readonly ReducedFrame[];
 }

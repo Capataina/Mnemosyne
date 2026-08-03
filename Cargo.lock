@@ -2766,7 +2766,7 @@ dependencies = [
 
 [[package]]
 name = "lynceus"
-version = "0.7.14"
+version = "0.7.15"
 dependencies = [
  "accelerate-src",
  "base64 0.22.1",
@@ -2953,7 +2953,7 @@ dependencies = [
 
 [[package]]
 name = "mnemosyne"
-version = "0.5.4"
+version = "0.5.5"
 dependencies = [
  "blake3",
  "bytemuck",

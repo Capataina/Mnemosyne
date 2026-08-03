@@ -15,7 +15,7 @@ Domain types are named `Image*` for the image vertical for now; the recorded dec
 
 ```
 engine/
-├── Cargo.toml   package `mnemosyne` v0.5.4; notable deps: rusqlite (bundled), memmap2
+├── Cargo.toml   package `mnemosyne` v0.5.5; notable deps: rusqlite (bundled), memmap2
 │                (mmap stores, confined to cosine/cache.rs), blake3 (relink hashing),
 │                rayon, ndarray, tracing. Dep comments carry rationale.
 └── src/         the whole implementation; see `src/CLAUDE.md` for the module map.
@@ -23,7 +23,7 @@ engine/
 
 ## Current state — 2026-08-02
 
-- v0.5.4, 141 tests passing (`cargo test -p mnemosyne`, 1.2s), clean tree.
+- v0.5.5, 141 tests passing (`cargo test -p mnemosyne`, 1.2s), clean tree.
 - The last engine code change was f14aaa8 (2026-08-02): the `BUNDLE_ID` fallback constant in `paths.rs` renamed to `com.capataina.lynceus` for the App Store gate (CAP-79). Before that, the July perf round (fc6667a, 1514a90) landed ID-native search and the flat mmap stores, and 6eb05b8 landed BLAKE3 content-hash relinking.
 - Aspiration vs truth: Syrinx and Daedalus do not exist; media-agnosticism is enforced by the boundary discipline above, not yet proven by a second consumer.
 

@@ -15,17 +15,23 @@ db/
 │                           safe to run every launch. New columns for old DBs go here,
 │                           never inline. Also `migrate_embedding_pipeline_version` (see
 │                           below).
-├── images_query.rs         the grid SELECTs (largest submodule, ~1.6k lines); four
-│                           queries share one images↔images_tags↔tags row shape rolled up
-│                           by `aggregate_image_rows` (extracted from 4 duplicated
-│                           ~25-line copies; reads its String/Option columns lazily,
-│                           only when `HashMap::entry` is vacant). Includes the
-│                           manifest-first feed reads, chunked details-by-ID fetches,
-│                           batch search-result hydration (`get_images_metadata_for_ids`),
-│                           `get_pipeline_stats`, `count_images_without_embedding_for`
-│                           (COUNT-only sibling of `embeddings.rs`'s needs-set query),
-│                           `get_images_without_thumbnails` (no-join `ThumbnailNeedRow`
-│                           tuple), and `embedding_generation_token`.
+├── images_query.rs         the grid SELECTs (~1.25k lines); four queries share one
+│                           images↔images_tags↔tags row shape rolled up by
+│                           `aggregate_image_rows` (`pub(super)` — `feed_manifest.rs`
+│                           reuses it too; extracted from 4 duplicated ~25-line copies;
+│                           reads its String/Option columns lazily, only when
+│                           `HashMap::entry` is vacant). Also batch search-result
+│                           hydration (`get_images_metadata_for_ids`), `get_pipeline_stats`,
+│                           `count_images_without_embedding_for` (COUNT-only sibling of
+│                           `embeddings.rs`'s needs-set query), `get_images_without_thumbnails`
+│                           (no-join `ThumbnailNeedRow` tuple, derives its display name via
+│                           `feed_manifest::basename_of`), and `embedding_generation_token`.
+├── feed_manifest.rs        the compact feed manifest + id-batch detail hydration (T3-1):
+│                           `FeedManifestRow`, `basename_of` (`pub(super)` — reused by
+│                           `images_query.rs`'s needs-thumbnails read), `get_feed_manifest`,
+│                           `get_image_names_for_search`, `get_image_details_by_ids`.
+│                           Address-only split out of `images_query.rs` at the T3-1 seam,
+│                           2026-08-03 [code-health-audit 2026-08-02].
 ├── notes_orphans.rs        `add_image` (single-row `INSERT OR IGNORE`, now the NULL-hash
 │                           fallback), `add_images_batch` (superseded — see Traps),
 │                           per-image notes, `mark_orphaned`, `purge_orphaned` +
@@ -147,10 +153,6 @@ Bounded limitations, by design (documented so nobody re-discovers them the hard 
 - **The one destructive migration has zero tests** (`schema_migrations.rs:83-165`, no test module in the file): nothing pins that the wipe fires exactly once, that `stored >= current` is a no-op, which encoder ids are wiped, or that the meta write round-trips. A miswritten bump either re-wipes every launch (hours of re-encode at 100k) or fails to wipe (mixed-distribution embeddings, silently corrupt rankings). [code-health-audit 2026-08-02]
 - **A corrupt `meta.embedding_pipeline_version` silently triggers a full wipe** (`schema_migrations.rs:107-121`): a non-numeric stored value parses to `None` → `needs_migration` → unconditional wipe logged as a routine migration. Cheap fix when touched: treat unparseable-as-corrupt distinctly (warn + explicit choice). [code-health-audit 2026-08-02]
 
-## Planned work
-
-Ordered by severity (impact at real sizes). Proofs live in `crates/engine/tests/`; run each with `cargo test -p mnemosyne --test <name>`.
-
-- **MED — split `images_query.rs` (1646 lines as of the 2026-08-03 content pass, up from 1573 — the new `ThumbnailNeedRow` struct and two new count-only methods landed; line numbers below need re-verification against the new length) at the T3-1 seam into `db/feed_manifest.rs`** (modularisation). Address-only move of the feed-manifest impl block (was lines 769-998), `FeedManifestRow`, `basename_of`, and the four T3-1 tests (cut at the `#[test]` attribute above the manifest tests — re-locate the line, refuter-corrected once already). Complete batch, refuter-verified: `pub mod feed_manifest` in `db/mod.rs`; the one cross-crate edge `apps/lynceus/src-tauri/src/commands/images.rs:7` SPLITS its import (`FeedManifestRow` moves, `PipelineStats` stays); `aggregate_image_rows` widens fn → `pub(super)` (dry-run-proven; its private `AggregatedRow` alias is transparent to type privacy); moved tests keep `use super::super::test_helpers::fresh_db` verbatim; no shared test helper crosses the split (`setup_tagged_images` stays with the staying tests). [code-health-audit 2026-08-02]
-
 **Done 2026-08-03** (content-changes pass, proofs in `crates/engine/tests/`): Ready count via `COUNT(*)` — `get_pipeline_stats().total_images` is the drop-in the finder named, wired at the `indexing.rs` call site (see `apps/lynceus/src-tauri/src/CLAUDE.md`'s Done note for the caller-side half). The thumbnail needs-set query (`get_images_without_thumbnails`) drops its tag join for a no-join `ThumbnailNeedRow { id, path, name }` query with `ORDER BY id`, on the writer connection as the gate specified; its one live caller (`indexing.rs`'s two thumbnail passes) migrated, and the zero-caller second "caller" (`thumbnail/generator.rs::generate_all_missing_thumbnails`) was deleted rather than migrated, citing this audit. `get_preview_eligibility` is now one `SUM(CASE)`-per-bucket pass instead of one scan per bucket, parameterised (works for any bucket-width slice, not just the 3-item ladder) via `params_from_iter`. `aggregate_image_rows` reads its String/Option columns lazily — only on `Entry::Vacant` — instead of eagerly on every joined row. A new `count_images_without_embedding_for` (COUNT-only sibling of `embeddings.rs::get_images_without_embedding_for`) backs the encode-progress-denominator entry (see `apps/lynceus/src-tauri/src/CLAUDE.md`'s Done note — the caller lives in `indexing.rs`), added here rather than in `embeddings.rs` because that file was another seat's surface this pass. Proofs: `cha_l3_db_waste.rs`, `cha_b_ready_count.rs`, `cha_b_thumbnail_needs_shape.rs`, `cha_l3_alloc_and_hash.rs`, `cha_b_needs_count.rs` — all green (`cargo test -p mnemosyne`).
+
+**Done 2026-08-03** (CHA Phase B structural move, proof: `cargo test --workspace` 229/0): `images_query.rs` split at the T3-1 seam into `feed_manifest.rs`, exactly per the entry this note replaces — `FeedManifestRow`, `basename_of`, and the `get_feed_manifest`/`get_image_names_for_search`/`get_image_details_by_ids` impl block moved, plus the four T3-1 tests. `aggregate_image_rows` widened to `pub(super)` (the reverse direction the entry didn't need to state: `basename_of` also widened to `pub(super)`, since `images_query.rs`'s `get_images_without_thumbnails` — added by the later content-changes pass above — still derives its `feed-delta` display name through it). `commands/images.rs`'s import split as specified.

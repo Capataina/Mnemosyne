@@ -1,12 +1,12 @@
 # apps/lynceus/src-tauri/
 
-The Lynceus product crate — Cargo bin `lynceus` v0.7.14, the Tauri v2 desktop host around the media-agnostic Mnemosyne engine (`crates/engine/`, path dependency, no frozen API). Everything image-specific lives here: the ONNX image/text encoders, the thumbnailer, the indexing pipeline, the filesystem watcher, and the Tauri command surface the React frontend (`../src/`) invokes. The engine owns DB, paths, perf, cosine/RRF; this crate re-exports those modules at their old crate-root paths (`lib.rs`) so `crate::db::…` call sites survived the extraction unchanged.
+The Lynceus product crate — Cargo bin `lynceus` v0.7.15, the Tauri v2 desktop host around the media-agnostic Mnemosyne engine (`crates/engine/`, path dependency, no frozen API). Everything image-specific lives here: the ONNX image/text encoders, the thumbnailer, the indexing pipeline, the filesystem watcher, and the Tauri command surface the React frontend (`../src/`) invokes. The engine owns DB, paths, perf, cosine/RRF; this crate re-exports those modules at their old crate-root paths (`lib.rs`) so `crate::db::…` call sites survived the extraction unchanged.
 
 ## Map
 
 ```
 src-tauri/
-├── Cargo.toml            crate manifest v0.7.14; platform-gated ort (CoreML on macOS,
+├── Cargo.toml            crate manifest v0.7.15; platform-gated ort (CoreML on macOS,
 │                         CUDA elsewhere), fast_image_resize, blake3 via engine,
 │                         objc2/objc2-foundation for security-scoped bookmarks
 ├── tauri.conf.json       product identity + bundle config — see the pairing trap below
@@ -52,10 +52,7 @@ cargo test                  # from apps/lynceus/src-tauri — 44 lib + integrati
 
 The plain-English release runbook (every term defined for a first-time Mac publisher) is `design/store/release-runbook.md`; the listing spec is `design/store/listing.md`.
 
-## Planned work
-
-- **This crate's `Cargo.toml:40` carries the dead `bincode = "1.3"` dep** — half of a two-manifest removal; the full audited entry (proof, refuter evidence) lives in `crates/engine/CLAUDE.md`'s planned work; delete both lines in one commit. [code-health-audit 2026-08-02]
-- The `src/` and `src/commands/` CLAUDE.md files carry this crate's audited change queue (the indexing.rs split, the legacy-command removal, dedups, the doc-rot batch) — read those before any cleanup pass here.
+The 2026-08-02 audit's queue for this crate is fully implemented as of 2026-08-03 (bincode removed from both manifests, the indexing/ split, the legacy-command removal, dedups, state-types/shared-aliases, all doc-rot) — the `src/` and `src/commands/` CLAUDE.md files carry the dated Done records and the surviving knowledge entries.
 
 ## Place in the whole
 

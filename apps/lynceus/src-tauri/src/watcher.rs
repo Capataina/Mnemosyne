@@ -39,7 +39,6 @@ use tauri::AppHandle;
 use tracing::{debug, info, warn};
 
 use crate::indexing;
-use crate::similarity_and_semantic_search::cosine_similarity::CosineIndex;
 
 /// Type alias to keep the Debouncer's full type out of public API
 /// signatures (it's gnarly with the watcher backend's generics).
@@ -55,7 +54,7 @@ pub fn start(
     paths_to_watch: Vec<PathBuf>,
     db_path: String,
     indexing_state: Arc<indexing::IndexingState>,
-    fusion: Arc<std::sync::RwLock<std::collections::HashMap<String, CosineIndex>>>,
+    fusion: crate::FusionSlots,
 ) -> Option<WatcherHandle> {
     if paths_to_watch.is_empty() {
         info!("watcher: no enabled roots, skipping watcher init");
@@ -124,7 +123,7 @@ pub fn restart(
     db: &crate::db::ImageDatabase,
     db_path: String,
     indexing_state: Arc<indexing::IndexingState>,
-    fusion: Arc<std::sync::RwLock<std::collections::HashMap<String, CosineIndex>>>,
+    fusion: crate::FusionSlots,
     slot: &std::sync::Mutex<Option<WatcherHandle>>,
 ) {
     let watch_paths: Vec<PathBuf> = db

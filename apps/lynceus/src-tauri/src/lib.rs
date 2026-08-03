@@ -8,16 +8,11 @@
 // require touching ~10 files with no behavioural value.
 #![allow(clippy::doc_lazy_continuation)]
 
-use std::sync::{Arc, Mutex, RwLock};
+use std::sync::{Arc, Mutex};
 use tauri::Manager;
 use tracing::{error, info, warn};
 
-use crate::{
-    db::ImageDatabase,
-    indexing::IndexingState,
-    similarity_and_semantic_search::cosine_similarity::CosineIndex,
-    similarity_and_semantic_search::encoder_text::ClipTextEncoder,
-};
+use crate::{db::ImageDatabase, indexing::IndexingState};
 
 // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
 //
@@ -37,215 +32,100 @@ pub mod model_download;
 pub mod security_scope;
 pub mod settings;
 pub mod similarity_and_semantic_search;
+mod state;
 pub mod thumbnail;
 pub mod watcher;
 
-/// Per-encoder cosine caches — the ONLY resident embedding cache in the
-/// app (T3-2/#8). Every search command borrows a slot here: image-image
-/// and text-image fusion score each enabled encoder's slot via
-/// `ranked_for_encoder` (a delegation onto `with_encoder_index` +
-/// `get_similar_images_sorted`, CHA-TAURI-P2) and RRF the results. All
-/// three encoders' caches stay resident simultaneously so a fused query
-/// never pays a populate-roundtrip per call.
-///
-/// Populated lazily on first use OR mapped zero-copy from the persisted
-/// flat store by `spawn_cache_warm` at launch; refreshed + re-persisted
-/// by the indexing pipeline at Ready (token-gated) so post-index search
-/// is fresh. `invalidate_all()` clears every slot on a root-change IPC.
-pub struct FusionIndexState {
-    /// `RwLock` (not `Mutex`) so a burst of concurrent fused queries can
-    /// score under shared read locks once the per-encoder caches are
-    /// warm; a `Mutex` here serialised every fused query on the whole
-    /// map even when they touched disjoint encoders. Populate (first use,
-    /// startup warm) takes the write lock via the double-checked path in
-    /// `ranked_for_encoder`.
-    pub per_encoder:
-        Arc<RwLock<std::collections::HashMap<String, CosineIndex>>>,
-}
+// The managed-state types (`FusionIndexState`, `TextEncoderState`) and
+// the two shared managed-state aliases (`FusionSlots`, `WatcherSlot`)
+// live in `state.rs` now — address-only extraction, re-exported here so
+// every existing `crate::FusionIndexState`/`crate::TextEncoderState`
+// call site keeps resolving unchanged [code-health-audit 2026-08-02].
+pub use state::{FusionIndexState, FusionSlots, TextEncoderState, WatcherSlot};
 
-impl FusionIndexState {
-    pub fn new() -> Self {
-        Self {
-            per_encoder: Arc::new(RwLock::new(std::collections::HashMap::new())),
-        }
+/// Startup diagnostics, gated on `perf::is_profiling_enabled()` and a
+/// no-op otherwise. Two independent checks: a snapshot of what's on disk
+/// and what's already encoded (lets the on-exit report's Diagnostics
+/// section show "this session started with X CLIP embeddings, Y
+/// SigLIP-2, Z DINOv2" — useful for the "I selected DINOv2 but got 0
+/// results" bug class), and a cosine-math sanity check against synthetic
+/// vectors with known expected outputs (if this ever returns a
+/// surprising number, EVERY semantic-search / similarity result
+/// downstream is suspect because the math itself is broken; cheap,
+/// ~µs). Factored out of the `run()` setup closure so that closure
+/// stays about setup, not diagnostics [code-health-audit 2026-08-02].
+fn emit_startup_profiling_diagnostics(db_path: &str) {
+    if !perf::is_profiling_enabled() {
+        return;
     }
 
-    /// Clear every per-encoder cache. Called from the root-change IPCs so
-    /// a disabled-root toggle flushes the fusion caches; without this,
-    /// search would happily return images from a now-disabled root because
-    /// its cached entries weren't cleared. The indexing pipeline these
-    /// IPCs then re-spawn repopulates the slots fresh at Ready.
-    pub fn invalidate_all(&self) {
-        if let Ok(mut m) = self.per_encoder.write() {
-            m.clear();
-        }
+    if let Ok(temp_db) = ImageDatabase::new(db_path) {
+        let _ = temp_db.initialize();
+        let stats = temp_db.get_pipeline_stats().ok();
+        let models_dir = paths::models_dir();
+        let model_files: Vec<String> = std::fs::read_dir(&models_dir)
+            .ok()
+            .map(|entries| {
+                entries
+                    .filter_map(|e| e.ok())
+                    .map(|e| e.file_name().to_string_lossy().into_owned())
+                    .collect()
+            })
+            .unwrap_or_default();
+        perf::record_diagnostic(
+            "startup_state",
+            serde_json::json!({
+                "db_path": db_path,
+                "models_dir": models_dir.display().to_string(),
+                "model_files_present": model_files,
+                "embedding_counts_per_encoder": stats.as_ref().map(|s| {
+                    s.with_embedding_per_encoder.iter().map(|e| {
+                        serde_json::json!({
+                            "encoder_id": e.encoder_id,
+                            "count": e.count,
+                        })
+                    }).collect::<Vec<_>>()
+                }),
+                "total_images": stats.as_ref().map(|s| s.total_images),
+                "with_thumbnail": stats.as_ref().map(|s| s.with_thumbnail),
+                "orphaned": stats.as_ref().map(|s| s.orphaned),
+            }),
+        );
     }
 
-    /// Lazy populate (or reuse) the per-encoder cache for `encoder_id`,
-    /// then run the cosine query against it. Returns the top-K
-    /// (id, score) list excluding `exclude_id`.
-    ///
-    /// Caller hands in `top_k` — fusion tops out at ~50 per encoder
-    /// in practice (the rank-fusion contribution at rank 50 with
-    /// k_rrf=60 is ~0.009, smaller still beyond that).
-    ///
-    /// A one-line delegation onto `with_encoder_index` +
-    /// `CosineIndex::get_similar_images_sorted` (CHA-TAURI-P2): this and
-    /// `with_encoder_index` used to hand-roll the same double-checked
-    /// populate sequence independently (~40 duplicated locking lines);
-    /// `tests/cha_fusion_wrapper_equivalence.rs` pinned the two paths as
-    /// observationally equivalent before the delegation landed, then
-    /// retired once this became provably a wrapper.
-    pub fn ranked_for_encoder(
-        &self,
-        db: &ImageDatabase,
-        encoder_id: &str,
-        query: &ndarray::Array1<f32>,
-        top_k: usize,
-        exclude_id: Option<i64>,
-    ) -> Result<Vec<(i64, f32)>, String> {
-        self.with_encoder_index(db, encoder_id, |idx| {
-            idx.get_similar_images_sorted(query, top_k, exclude_id)
-        })
+    // Cosine math sanity check — synthetic vectors with known expected
+    // outputs.
+    {
+        use ndarray::Array1;
+        use crate::similarity_and_semantic_search::cosine::CosineIndex;
+        let a = Array1::from_vec(vec![1.0_f32, 0.0, 0.0]);
+        let b = Array1::from_vec(vec![0.0_f32, 1.0, 0.0]);
+        let c = Array1::from_vec(vec![1.0_f32, 0.0, 0.0]);
+        let d = Array1::from_vec(vec![-1.0_f32, 0.0, 0.0]);
+        let zero = Array1::from_vec(vec![0.0_f32, 0.0, 0.0]);
+        let high_dim_a: Array1<f32> = Array1::from_vec((0..512).map(|i| (i as f32).sin()).collect());
+        let high_dim_b: Array1<f32> = Array1::from_vec((0..512).map(|i| (i as f32).cos()).collect());
+
+        let orthogonal = CosineIndex::cosine_similarity(&a, &b);
+        let parallel = CosineIndex::cosine_similarity(&a, &c);
+        let opposite = CosineIndex::cosine_similarity(&a, &d);
+        let zero_vec = CosineIndex::cosine_similarity(&a, &zero);
+        let dim_mismatch = CosineIndex::cosine_similarity(&a, &high_dim_a);
+        let high_dim_random = CosineIndex::cosine_similarity(&high_dim_a, &high_dim_b);
+
+        perf::record_diagnostic(
+            "cosine_math_sanity",
+            serde_json::json!({
+                "orthogonal_3d":   { "got": orthogonal,    "expected": 0.0,  "passes": orthogonal.abs() < 1e-5 },
+                "parallel_3d":     { "got": parallel,      "expected": 1.0,  "passes": (parallel - 1.0).abs() < 1e-5 },
+                "opposite_3d":     { "got": opposite,      "expected": -1.0, "passes": (opposite + 1.0).abs() < 1e-5 },
+                "zero_vector_3d":  { "got": zero_vec,      "expected": 0.0,  "passes": zero_vec.abs() < 1e-5 },
+                "dim_mismatch":    { "got": dim_mismatch,  "expected": 0.0,  "passes": dim_mismatch.abs() < 1e-5, "note": "3-d vs 512-d should return 0 via guard, not panic" },
+                "high_dim_random": { "got": high_dim_random, "expected_range": "[-0.1, 0.1] for sin/cos quasi-orthogonal", "passes": high_dim_random.abs() < 0.2 },
+                "interpretation": "All passes=true means cosine math is correct — bad search results are an encoder/data issue, not math.",
+            }),
+        );
     }
-
-    /// Run an arbitrary read-only query against the warm fusion slot for
-    /// `encoder_id`, ensuring the slot is populated first. This is the
-    /// shared populate-and-score primitive every search command borrows
-    /// through: `ranked_for_encoder` is a one-line delegation onto this
-    /// method, so there is exactly one double-checked-locking populate
-    /// path in the crate rather than two independently maintained copies
-    /// (T3-2/#8, CHA-TAURI-P2).
-    ///
-    /// Double-checked locking: the warm case scores under a shared read
-    /// lock (so the prefetch burst stays parallel); only a cold slot
-    /// takes the write lock to map-or-populate. The closure is handed the
-    /// populated index; on an encoder with no embeddings it runs against
-    /// an empty index (returning empty), and if the slot is concurrently
-    /// invalidated between locks the result defaults — both degrade to
-    /// "no results", never an error.
-    pub fn with_encoder_index<R: Default>(
-        &self,
-        db: &ImageDatabase,
-        encoder_id: &str,
-        f: impl FnOnce(&CosineIndex) -> R,
-    ) -> Result<R, String> {
-        // Fast path: warm slot, run under a shared read lock.
-        {
-            let map = self
-                .per_encoder
-                .read()
-                .map_err(|e| format!("fusion rwlock poisoned: {e}"))?;
-            if let Some(entry) = map.get(encoder_id) {
-                if !entry.cached_images.is_empty() {
-                    return Ok(f(entry));
-                }
-            }
-        }
-        // Slow path: map the persisted store, else DB-populate.
-        {
-            let mut map = self
-                .per_encoder
-                .write()
-                .map_err(|e| format!("fusion rwlock poisoned: {e}"))?;
-            let entry = map
-                .entry(encoder_id.to_string())
-                .or_insert_with(CosineIndex::new);
-            if entry.cached_images.is_empty()
-                && !entry.load_store_if_valid(db, encoder_id)
-            {
-                entry.populate_from_db_for_encoder(db, encoder_id);
-            }
-        }
-        let map = self
-            .per_encoder
-            .read()
-            .map_err(|e| format!("fusion rwlock poisoned: {e}"))?;
-        Ok(map.get(encoder_id).map(f).unwrap_or_default())
-    }
-}
-
-impl Default for FusionIndexState {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-/// State for the text encoders used in semantic search.
-///
-/// Each encoder is lazy-loaded on first use. We hold one slot per
-/// supported family (CLIP — 512-d English BPE; SigLIP-2 — 768-d
-/// Gemma SentencePiece) so the user can switch the text encoder in
-/// the picker mid-session without paying the model-load cost again
-/// when they swap back.
-///
-/// Two slots not three because DINOv2 is image-only — there is no
-/// DINOv2 text branch to dispatch through.
-pub struct TextEncoderState {
-    /// CLIP English text encoder. 512-d output. Default.
-    pub encoder: Mutex<Option<ClipTextEncoder>>,
-    /// SigLIP-2 base 256 text encoder. 768-d output, Gemma SentencePiece
-    /// tokenizer (256k vocab). The picker dispatches semantic_search
-    /// here when the user has SigLIP-2 selected as the text encoder.
-    pub siglip2_encoder: Mutex<
-        Option<crate::similarity_and_semantic_search::encoder_siglip2::Siglip2TextEncoder>,
-    >,
-}
-
-/// Background cache warm, spawned right at launch so the FIRST similarity
-/// click — and the frontend's prefetch burst across every on-screen tile
-/// — is instant on a cold session instead of paying the DB→memory populate
-/// lazily on first use.
-///
-/// **Fusion slots only (T3-2/#8).** Every search command now borrows the
-/// per-encoder `FusionIndexState` slot (via `with_encoder_index` /
-/// `ranked_for_encoder`), so warming a separate primary cache here
-/// too would be the ~205 MB duplicate the flat-store work exists to
-/// remove — the primary is left to the indexing pipeline, which populates
-/// and persists it as a side effect. For each enabled encoder we prefer
-/// the persisted flat store (`embstore_<encoder>.bin`, mapped zero-copy);
-/// on a miss/stale file we DB-populate AND write the store so the NEXT
-/// launch maps it. One write lock per encoder (not one held across all
-/// three) so a real fused query can slip in between populates.
-///
-/// Runs on its own thread and returns immediately; the window opens
-/// without waiting. On a first-ever launch the DB has no embeddings yet,
-/// so nothing loads and the pipeline populates as it indexes; the payoff
-/// is every subsequent (already-indexed) launch.
-fn spawn_cache_warm(
-    db_path: String,
-    fusion: Arc<RwLock<std::collections::HashMap<String, CosineIndex>>>,
-) {
-    std::thread::spawn(move || {
-        let db = match ImageDatabase::new(&db_path) {
-            Ok(d) => d,
-            Err(e) => {
-                warn!("cache warm: DB open failed: {e}");
-                return;
-            }
-        };
-        if let Err(e) = db.initialize() {
-            warn!("cache warm: DB init failed: {e}");
-            return;
-        }
-        let settings = crate::settings::Settings::load();
-
-        for enc in settings.resolved_enabled_encoders() {
-            // Map the persisted store if valid; only DB-populate (and then
-            // persist) on a miss/stale file. Guarded by is_empty so we
-            // never fight a populate that already landed.
-            if let Ok(mut map) = fusion.write() {
-                let entry = map.entry(enc.clone()).or_insert_with(CosineIndex::new);
-                if entry.cached_images.is_empty() && !entry.load_store_if_valid(&db, &enc) {
-                    entry.populate_from_db_for_encoder(&db, &enc);
-                    if !entry.cached_images.is_empty() {
-                        entry.save_store_for(&enc);
-                    }
-                }
-            }
-        }
-        info!("cache warm complete");
-    });
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -294,7 +174,7 @@ pub fn run(db: ImageDatabase, db_path: String) {
     // launch (mapping the persisted flat stores), so the first similarity
     // click — and the frontend's prefetch burst across every on-screen
     // tile — is instant on a cold session.
-    spawn_cache_warm(db_path.clone(), fusion_slots.clone());
+    state::spawn_cache_warm(db_path.clone(), fusion_slots.clone());
 
     // Single-flight guard for the indexing pipeline. Wrapped in Arc so
     // the .setup() callback (and later set_scan_root commands) can both
@@ -305,8 +185,7 @@ pub fn run(db: ImageDatabase, db_path: String) {
     // duration of the app process. Dropping the handle cancels every
     // watch; we wrap in Mutex<Option<...>> so the setup callback can
     // initialise it (or replace it later if root list changes).
-    let watcher_state: Arc<Mutex<Option<watcher::WatcherHandle>>> =
-        Arc::new(Mutex::new(None));
+    let watcher_state: WatcherSlot = Arc::new(Mutex::new(None));
 
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
@@ -343,84 +222,10 @@ pub fn run(db: ImageDatabase, db_path: String) {
                     paths::set_bundled_resource_dir(resource_models_dir);
                 }
 
-                // Startup diagnostic: snapshot of what's on disk +
-                // what's already encoded. Lets the on-exit report's
-                // Diagnostics section show "this session started with
-                // X CLIP embeddings, Y SigLIP-2, Z DINOv2" — very
-                // useful for the "I selected DINOv2 but got 0 results"
-                // bug class.
-                if perf::is_profiling_enabled() {
-                    if let Ok(temp_db) = ImageDatabase::new(&db_path) {
-                        let _ = temp_db.initialize();
-                        let stats = temp_db.get_pipeline_stats().ok();
-                        let models_dir = paths::models_dir();
-                        let model_files: Vec<String> = std::fs::read_dir(&models_dir)
-                            .ok()
-                            .map(|entries| {
-                                entries
-                                    .filter_map(|e| e.ok())
-                                    .map(|e| e.file_name().to_string_lossy().into_owned())
-                                    .collect()
-                            })
-                            .unwrap_or_default();
-                        perf::record_diagnostic(
-                            "startup_state",
-                            serde_json::json!({
-                                "db_path": &db_path,
-                                "models_dir": models_dir.display().to_string(),
-                                "model_files_present": model_files,
-                                "embedding_counts_per_encoder": stats.as_ref().map(|s| {
-                                    s.with_embedding_per_encoder.iter().map(|e| {
-                                        serde_json::json!({
-                                            "encoder_id": e.encoder_id,
-                                            "count": e.count,
-                                        })
-                                    }).collect::<Vec<_>>()
-                                }),
-                                "total_images": stats.as_ref().map(|s| s.total_images),
-                                "with_thumbnail": stats.as_ref().map(|s| s.with_thumbnail),
-                                "orphaned": stats.as_ref().map(|s| s.orphaned),
-                            }),
-                        );
-                    }
-
-                    // Cosine math sanity check — synthetic vectors with
-                    // known expected outputs. If this ever returns a
-                    // surprising number, EVERY semantic-search /
-                    // similarity result downstream is suspect because
-                    // the math itself is broken. Cheap (~µs).
-                    {
-                        use ndarray::Array1;
-                        use crate::similarity_and_semantic_search::cosine::CosineIndex;
-                        let a = Array1::from_vec(vec![1.0_f32, 0.0, 0.0]);
-                        let b = Array1::from_vec(vec![0.0_f32, 1.0, 0.0]);
-                        let c = Array1::from_vec(vec![1.0_f32, 0.0, 0.0]);
-                        let d = Array1::from_vec(vec![-1.0_f32, 0.0, 0.0]);
-                        let zero = Array1::from_vec(vec![0.0_f32, 0.0, 0.0]);
-                        let high_dim_a: Array1<f32> = Array1::from_vec((0..512).map(|i| (i as f32).sin()).collect());
-                        let high_dim_b: Array1<f32> = Array1::from_vec((0..512).map(|i| (i as f32).cos()).collect());
-
-                        let orthogonal = CosineIndex::cosine_similarity(&a, &b);
-                        let parallel = CosineIndex::cosine_similarity(&a, &c);
-                        let opposite = CosineIndex::cosine_similarity(&a, &d);
-                        let zero_vec = CosineIndex::cosine_similarity(&a, &zero);
-                        let dim_mismatch = CosineIndex::cosine_similarity(&a, &high_dim_a);
-                        let high_dim_random = CosineIndex::cosine_similarity(&high_dim_a, &high_dim_b);
-
-                        perf::record_diagnostic(
-                            "cosine_math_sanity",
-                            serde_json::json!({
-                                "orthogonal_3d":   { "got": orthogonal,    "expected": 0.0,  "passes": orthogonal.abs() < 1e-5 },
-                                "parallel_3d":     { "got": parallel,      "expected": 1.0,  "passes": (parallel - 1.0).abs() < 1e-5 },
-                                "opposite_3d":     { "got": opposite,      "expected": -1.0, "passes": (opposite + 1.0).abs() < 1e-5 },
-                                "zero_vector_3d":  { "got": zero_vec,      "expected": 0.0,  "passes": zero_vec.abs() < 1e-5 },
-                                "dim_mismatch":    { "got": dim_mismatch,  "expected": 0.0,  "passes": dim_mismatch.abs() < 1e-5, "note": "3-d vs 512-d should return 0 via guard, not panic" },
-                                "high_dim_random": { "got": high_dim_random, "expected_range": "[-0.1, 0.1] for sin/cos quasi-orthogonal", "passes": high_dim_random.abs() < 0.2 },
-                                "interpretation": "All passes=true means cosine math is correct — bad search results are an encoder/data issue, not math.",
-                            }),
-                        );
-                    }
-                }
+                // Startup diagnostics (profiling-only) — factored into a
+                // file-local fn so the setup closure stays about setup,
+                // not diagnostics [code-health-audit 2026-08-02].
+                emit_startup_profiling_diagnostics(&db_path);
 
                 // One-shot legacy migration: if the user upgraded from
                 // a single-folder build, settings.json has a `scan_root`

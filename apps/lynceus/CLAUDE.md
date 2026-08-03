@@ -4,7 +4,7 @@
 
 The shipping product: a local-first macOS image browser — masonry board with drag-to-reorder/resize, semantic search over on-device encoders (OpenCLIP, SigLIP-2, DINOv2), similarity trails, tags-as-folders with must/must-not filters, a gesture-drawing timer, folder watching with BLAKE3 content-hash relinking, and a replayable skeleton-demo onboarding. Tauri 2 + React 19 frontend over a Rust app crate that wraps `crates/engine`.
 
-Version **0.7.14** — kept in lockstep across `package.json`, `src-tauri/Cargo.toml`, and `src-tauri/tauri.conf.json` (the root CLAUDE.md owns the lockstep rule).
+Version **0.7.15** — kept in lockstep across `package.json`, `src-tauri/Cargo.toml`, and `src-tauri/tauri.conf.json` (the root CLAUDE.md owns the lockstep rule).
 
 ## The three-way split
 
@@ -22,7 +22,7 @@ apps/lynceus/
 ├── public/            static assets served by Vite — only the vite.svg scaffold file today
 ├── dist/              built frontend (gitignored output), what src-tauri bundles
 ├── index.html         Vite entry
-├── package.json       lynceus-ui manifest, v0.7.14; dev/build/test/tauri scripts
+├── package.json       lynceus-ui manifest, v0.7.15; dev/build/test/tauri scripts
 ├── vite.config.ts     Vite + React + Tailwind 4 + vite-plugin-pages
 ├── vitest.config.ts   happy-dom test environment
 ├── components.json    shadcn/ui generator config

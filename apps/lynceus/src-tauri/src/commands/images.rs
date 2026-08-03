@@ -4,7 +4,8 @@ use tauri::State;
 
 use crate::commands::ApiError;
 use crate::db::{
-    images_query::{FeedManifestRow, PipelineStats},
+    feed_manifest::FeedManifestRow,
+    images_query::PipelineStats,
     ImageDatabase, ID,
 };
 use crate::image_struct::ImageData;

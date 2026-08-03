@@ -11,12 +11,11 @@ use crate::root_struct::Root;
 use crate::settings;
 use crate::watcher;
 use crate::FusionIndexState;
-
-/// Managed slot holding the live filesystem-watcher handle (see
-/// lib.rs setup and watcher.rs). Every root mutation ends by
-/// rebuilding the watcher through this, so the watch set tracks the
-/// enabled root list instead of freezing at whatever startup saw.
-type WatcherSlot = Arc<Mutex<Option<watcher::WatcherHandle>>>;
+// WatcherSlot is the crate-shared managed-state alias (state.rs); every
+// root mutation ends by rebuilding the watcher through it, so the watch
+// set tracks the enabled root list instead of freezing at whatever
+// startup saw.
+use crate::WatcherSlot;
 
 fn restart_watcher(
     app: &AppHandle,

@@ -69,7 +69,7 @@ The profiling system is deliberately split: the **sink lives here** (span aggreg
 ## Operating manual
 
 - Doc comments use `//!`/`///` with left-aligned continuations on purpose (terminal readability); `#![allow(clippy::doc_lazy_continuation)]` in lib.rs exists for exactly this — match the style, don't "fix" it.
-- The `cosine_similarity` shim means public-surface moves inside `cosine/` must keep the re-exported names compiling; the integration consumers (Lynceus's indexing.rs, watcher.rs) import through the shim path.
+- The `cosine_similarity` shim means public-surface moves inside `cosine/` must keep the re-exported names compiling; the integration consumers (Lynceus's indexing/, watcher.rs) import through the shim path.
 
 ## Traps
 

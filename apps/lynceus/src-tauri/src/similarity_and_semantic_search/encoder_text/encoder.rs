@@ -170,19 +170,6 @@ impl ClipTextEncoder {
         self.max_seq_length
     }
 
-    /// Inspect the model's input and output names (useful for debugging)
-    pub fn inspect_model(&self) {
-        debug!("Text Model inputs:");
-        for input in self.session.inputs.iter() {
-            debug!("  Name: {:?}", input.name);
-        }
-
-        debug!("\nText Model outputs:");
-        for output in self.session.outputs.iter() {
-            debug!("  Name: {:?}", output.name);
-        }
-    }
-
     /// Tokenize + pad/truncate to `max_seq_length`. Returns the
     /// fixed-length token ids only — the OpenCLIP `textual/model.onnx`
     /// export does not accept an attention_mask input (the mask is

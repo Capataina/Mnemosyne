@@ -15,6 +15,7 @@ use std::sync::{Mutex, OnceLock};
 
 pub mod content_hash;
 mod embeddings;
+pub mod feed_manifest;
 pub mod images_query;
 mod manual_layout;
 mod notes_orphans;

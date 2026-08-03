@@ -46,7 +46,7 @@ Each `audit_*` test's doc-comment states its finding inline and is the finding's
 
 ## Knowledge (2026-08-02 audit)
 
-- **The failed-scan-must-not-orphan guard has no regression test** — the guard at `src/indexing.rs:444-457` protects against the HIGH-severity corruption vector 6eb05b8 documented (fail-fast scan failure → whole root orphaned → relink lets byte-identical files in other roots steal tags/placements), and `db/CLAUDE.md` itself records it was caught in adversarial review, not tests. No failed-scan scenario exists in `indexing_pipeline.rs`; the highest-severity known bug class rides a green suite. A test that fails one root's scan and asserts zero orphaning would close it. [code-health-audit 2026-08-02]
+- **The failed-scan-must-not-orphan guard has no regression test** — the guard at `src/indexing/mod.rs:456-471` protects against the HIGH-severity corruption vector 6eb05b8 documented (fail-fast scan failure → whole root orphaned → relink lets byte-identical files in other roots steal tags/placements), and `db/CLAUDE.md` itself records it was caught in adversarial review, not tests. No failed-scan scenario exists in `indexing_pipeline.rs`; the highest-severity known bug class rides a green suite. A test that fails one root's scan and asserts zero orphaning would close it. [code-health-audit 2026-08-02]
 
 ## Conventions and traps
 

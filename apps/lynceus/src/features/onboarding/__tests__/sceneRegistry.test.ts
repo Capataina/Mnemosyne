@@ -12,7 +12,7 @@ describe("onboarding scene registry", () => {
       "gesture-practice",
     ]);
     expect(sceneRegistry.map(({ durationMs }) => durationMs)).toEqual([
-      8000, 12000, 9600, 8400, 10800, 10800,
+      7000, 8400, 7500, 7000, 9000, 11200,
     ]);
   });
 

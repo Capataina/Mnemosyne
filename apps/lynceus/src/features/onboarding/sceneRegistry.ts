@@ -44,7 +44,7 @@ export const sceneRegistry: readonly OnboardingSceneDefinition[] = [
     id: "add-folder",
     title: "Bring in your library",
     caption:
-      "Choose any folder. Lynceus keeps the originals in place and builds the browsable library locally.",
+      "Open Settings and add any folder. Lynceus keeps the originals in place and builds the browsable library locally.",
     durationMs: ADD_FOLDER_DURATION_MS,
     Component: AddFolderScene,
     reducedFrames: ADD_FOLDER_REDUCED_FRAMES,
@@ -64,7 +64,7 @@ export const sceneRegistry: readonly OnboardingSceneDefinition[] = [
     id: "organise",
     title: "Organise without moving files",
     caption:
-      "Tags become folders automatically. Combine what must be present—and what must not—without touching the originals.",
+      "Slide the library out from the screen edge, combine what must be present—and what must not—and watch the grid refine live beside it.",
     durationMs: ORGANISE_DURATION_MS,
     Component: OrganiseScene,
     reducedFrames: ORGANISE_REDUCED_FRAMES,
@@ -94,7 +94,7 @@ export const sceneRegistry: readonly OnboardingSceneDefinition[] = [
     id: "gesture-practice",
     title: "Turn references into practice",
     caption:
-      "Build a timed session from similar images, zoom into the reference, pan across it, and let Lynceus keep the pace.",
+      "Run timed sessions where the countdown advances references, zoom rides the cursor, and the history strip revisits any of them.",
     durationMs: GESTURE_PRACTICE_DURATION_MS,
     Component: GesturePracticeScene,
     reducedFrames: GESTURE_PRACTICE_REDUCED_FRAMES,

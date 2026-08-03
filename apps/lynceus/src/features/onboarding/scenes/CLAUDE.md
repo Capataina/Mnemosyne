@@ -7,19 +7,30 @@ The six demo scenes. Each file follows one fixed pattern:
 
 ```
 scenes/
-├── AddFolderScene.tsx        8.0s — add a folder, picker, tiles arrive as a computed
-│                             4-column masonry stack (overlap impossible by construction).
-├── ArrangeScene.tsx          12.0s — slot model: 4×3 board + overflow row, every beat a
-│                             declared cell-occupancy map; drag swap and 2×2 resize with
-│                             exact footprint scales; telegraphs are the target cells.
-├── OrganiseScene.tsx         9.6s — tag filters REMOVE and COMPACT: survivors translate to
-│                             the cell of their index among survivors, computed.
-├── SearchScene.tsx           8.4s — semantic search; rank fusion as a bijective per-row
-│                             column permutation at the true 202px pitch.
-├── SimilarityScene.tsx       10.8s — hero maps onto its exact 2×2 footprint, results
-│                             re-pack, inspector dive via SkeletonInspector.
-└── GesturePracticeScene.tsx  10.8s — timer setup/transport/zoom, all controls on
-                              computed rects.
+├── AddFolderScene.tsx        7.0s — Settings gear → right-edge slide-out panel → Add
+│                             folder → picker → diagonal masonry cascade with per-tile
+│                             settle physics (delays derived from each tile's own rect).
+├── ArrangeScene.tsx          8.4s — slot model: 4×3 board + overflow row, four caused
+│                             gestures (drag swap, 2×2 grow, shrink, drag home — the last
+│                             drag IS the loop closure); per-tile tracks keyframed only at
+│                             each tile's own beats so cursor↔tile coupling is exact.
+├── OrganiseScene.tsx         7.5s — left-edge slide-out panel (real LibraryDrawer shape);
+│                             tag swatch dots pre-motivate removals, telegraph rings fire
+│                             at press-release, survivors translate to the cell of their
+│                             index among survivors, diagonal return wave on Clear.
+├── SearchScene.tsx           7.0s — semantic search; 12 distinct oklch hue tints make the
+│                             rank-fusion permutation trackable (swap partners hue-opposed);
+│                             bijective per-row column permutation at the true 202px pitch,
+│                             top-hit ring lands last.
+├── SimilarityScene.tsx       9.0s — full trail: hover-ring select, hero maps onto its
+│                             exact 2×2 footprint, dive shrinks the old hero into the
+│                             breadcrumb chip, inspector rebuilt to the real PinterestModal
+│                             (header outside scroll, image-footprint-confined next-image
+│                             swap); header band manifest-pinned disjoint from all tiles.
+└── GesturePracticeScene.tsx  11.2s — countdown bar whose zero CAUSES the reference swap,
+                              bottom-left history strip (ring slides between thumbs,
+                              history click pauses, tip click resumes), cursor-centred
+                              zoom (translate=(1−s)(P−A)) and drag-coupled pan.
 ```
 
 Rules when editing (the parent file's traps apply in full here):

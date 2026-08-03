@@ -29,8 +29,8 @@ onboarding/
 │                            rectStyle), STAGE 960×600, the CHROME rects every scene
 │                            targets, SceneGeometryManifest type.
 ├── sceneRegistry.ts         The accepted six-scene order + durations (locked by test):
-│                            add-folder 8000 · arrange 12000 · organise 9600 · search 8400
-│                            · similarity 10800 · gesture-practice 10800.
+│                            add-folder 7000 · arrange 8400 · organise 7500 · search 7000
+│                            · similarity 9000 · gesture-practice 11200.
 ├── onboardingMotion.ts      Onboarding's own motion tokens (LIVE 200 / SETTLE 260 mirror
 │                            the grid's feel) + visualFrame/visualTrack/cursorTrack
 │                            helpers, CURSOR_PARK, plus two pattern extractions:
@@ -56,7 +56,11 @@ onboarding/
 - **Persistence semantics.** Reset-all-preferences deliberately preserves `onboardingVersionSeen`; Skip and Finish both persist; Settings' replay bypasses persistence entirely. Bump `CURRENT_ONBOARDING_VERSION` (in useUserPreferences.ts) only to force a re-showing for every user.
 - Real text appears only on invariant chrome (a plan whitelist); user content is always skeleton bars.
 - **`holdTrack` omits its `ease` array when `easeIn`/`easeOut` are left unset**, exactly matching a literal `visualTrack(values, times)` call with no third argument (e.g. Arrange's `grips`). Passing `"linear"` explicitly instead would still animate identically through framer-motion, but would stop being a bit-identical `ClosedTrack` object — pass nothing, not `"linear"`, when a track never varied its easing.
-- **A press-frame instance doesn't always mean a `pressAt()` call site.** GesturePractice's pause button is pressed twice in place; the second press's "arrival" frame is literally the first press's release, so only the first triple is self-contained — the second press/release stays two hand-typed `cursorFrame` lines right after `...pressAt(CLICK_PAUSE)` (ArrangeScene has no such case; its two named exclusions are full drags, not shared-boundary triples).
+- **Drag presses stay hand-built.** `pressAt()` covers only the same-point arrive/press/release case; a press whose release lands elsewhere (Arrange's drags, GesturePractice's pan) is hand-typed `cursorFrame` lines by design. (The old shared-boundary double-press on GesturePractice's pause button died in the 2026-08-03 v2 rebuild — every remaining press in the tree is either a clean `pressAt` triple or a drag.)
+
+## 2026-08-03 v2 rebuild (landed, same day as the audit migration below)
+
+All six scenes were rebuilt in one six-agent parallel pass after a live founder review — one agent per scene file, orchestrator-owned shared surfaces. The through-lines: every beat is causally motivated (the cursor or the timer visibly causes each change; the uncaused loop-restore motions v1 used are gone — Arrange's closing swap became a deliberate drag, GesturePractice's reference swap is caused by the countdown hitting zero); trailing dead time is eliminated in every scene (~200-400ms parked tails, durations retimed to 7.0/8.4/7.5/7.0/9.0/11.2s); and the scenes now mirror the current app (edge slide-out panels in AddFolder/Organise, thin ring-primary hover instead of the deleted expand pill in Similarity, PinterestModal's header-outside-scroll inspector, the gesture history strip). Two mechanical bug classes were found and fixed in Similarity: mixed one-arg/two-arg `scale()` frames in a single track break framer-motion string interpolation (keep one transform template per track — the "weird image" bug), and header-band rects are now declared in the manifest's disjoint sets so label-vs-tile overlap is test-pinned. `SkeletonInspector.tsx` lost its last consumer and was deleted. The audit-migration counts below (press/holdTrack call sites) describe the pre-rebuild tree and no longer match — kept for the trap reasoning, not the numbers.
 
 ## 2026-08-03 audit migration (landed)
 

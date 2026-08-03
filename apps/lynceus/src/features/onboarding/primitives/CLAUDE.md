@@ -10,7 +10,6 @@ primitives/
 │                              flex flow may not place anything a cursor aims at.
 ├── OnboardingSkeleton.tsx     Base skeleton bar/tile, optional animated sheen track.
 ├── SkeletonGrid.tsx           Absolute-positioned tile field from SkeletonTileGeometry[].
-├── SkeletonInspector.tsx      Static inspector mock (SimilarityScene's dive target).
 └── ReducedMotionFilmstrip.tsx StaticFrameArt: the per-scene three-frame static art keyed
                                by StaticFrameKind — the reduced-motion/small-stage path.
                                Also reducedFrames(kinds): builds a scene's three

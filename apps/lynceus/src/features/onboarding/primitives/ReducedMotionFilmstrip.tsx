@@ -55,7 +55,11 @@ export function StaticFrameArt({ kind }: { kind: StaticFrameKind }) {
           const hidden =
             (kind === "add-empty" || kind === "add-picker") ||
             (kind === "organise-refined" && index % 3 === 1) ||
-            (kind === "search-results" && index > 5);
+            (kind === "search-results" && index > 5) ||
+            // The similarity header band (48-84px) sits where tile row 0
+            // starts (58px) — the live scene reserves that strip, so the
+            // static art must too or the label gets covered.
+            (kind === "similarity-trail" && index < 3);
           if (hidden) return null;
           const moved =
             kind === "arrange-telegraph" && index > 1
@@ -109,7 +113,10 @@ export function StaticFrameArt({ kind }: { kind: StaticFrameKind }) {
       )}
 
       {organise && (
-        <aside className="absolute bottom-0 left-0 top-10 w-[104px] border-r border-border bg-card p-2.5">
+        /* Mirrors the real LibraryDrawer edge slide-out: flush left, floating
+         * below the header, rounded on the inner edge only, no full-height
+         * sidebar (that shape died with the 2026-08-03 drawer redesign). */
+        <aside className="absolute bottom-2 left-0 top-12 w-[104px] rounded-r-[10px] border border-l-0 border-border bg-card p-2.5 shadow-[var(--shadow-soft)]">
           <p className="mb-2 text-[8px] font-[650]">Library</p>
           <p className="mb-2 text-[7px] text-muted-foreground">Folders</p>
           {[0, 1, 2].map((index) => (
@@ -209,8 +216,27 @@ export function StaticFrameArt({ kind }: { kind: StaticFrameKind }) {
                 : undefined
             }
           />
+          {/* Countdown pill — the live scene's linear depleting bar. */}
+          <div className="absolute left-1/2 top-3 h-2 w-16 -translate-x-1/2 overflow-hidden rounded-full border border-border bg-card">
+            <div className="h-full w-3/5 rounded-full bg-primary" />
+          </div>
+          {/* History strip: past references bottom-left, ring on the current
+           * one — mirrors GestureTimerView's strip under "Reference x of y". */}
+          <div className="absolute bottom-3 left-3">
+            <span className="text-[6px] font-[650]">Reference</span>
+            <div className="mt-1 flex gap-1">
+              {[0, 1, 2].map((index) => (
+                <OnboardingSkeleton
+                  key={index}
+                  className={[
+                    "size-4 rounded",
+                    index === 2 ? "ring-1 ring-primary" : "",
+                  ].join(" ")}
+                />
+              ))}
+            </div>
+          </div>
           <div className="absolute bottom-3 left-1/2 flex -translate-x-1/2 gap-2 text-[6px] font-[650]">
-            <span>Reference</span>
             <span>Fit</span>
             <span>Exit</span>
           </div>

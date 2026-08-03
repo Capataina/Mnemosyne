@@ -272,4 +272,112 @@ impl ImageDatabase {
 
         Ok(())
     }
+
+    /// Rebuild `roots` and `images` with `AUTOINCREMENT` so SQLite never
+    /// recycles a deleted row's id.
+    ///
+    /// Why this matters: without AUTOINCREMENT, deleting the highest rows
+    /// (remove_root's CASCADE does exactly that) lets the next insert
+    /// reuse their ids. Thumbnail asset URLs are derived from
+    /// `root_{root_id}/thumb_{image_id}_{bucket}.jpg`, so a recycled id
+    /// pair reproduces a URL the webview has already cached — and WKWebView
+    /// then serves the OLD image's cached bytes for the NEW image without
+    /// ever touching the (correct) file on disk. Observed live 2026-08-03:
+    /// a removed wallpapers root's thumbnails appeared on a freshly added
+    /// museum library. Non-reusable ids also make the frontend's stable
+    /// identity keys (React/query caches keyed by image id) actually
+    /// stable across root removal.
+    ///
+    /// SQLite can't ALTER a table to add AUTOINCREMENT, so this is the
+    /// documented rebuild dance: new table, copy, drop, rename — with
+    /// foreign keys off so dropping `images` doesn't cascade into
+    /// `images_tags`/`embeddings`/`image_notes` (their rows keep their
+    /// image_id values, which the copy preserves). Runs after the
+    /// column-add migrations (the copy names the full current column
+    /// list) and before index creation in `initialize()` (the drop
+    /// removes the images indexes; the CREATE INDEX IF NOT EXISTS calls
+    /// there recreate them).
+    ///
+    /// The sequence seeding at the end adds a safety margin (+1000 roots,
+    /// +100000 images) above the CURRENT max id, because the HISTORICAL
+    /// max — ids handed out and deleted before this migration ran — is
+    /// unknowable, and any URL the webview cached under such an id would
+    /// otherwise still be reachable by a future insert.
+    pub(super) fn migrate_rebuild_ids_autoincrement(&self) -> rusqlite::Result<()> {
+        let conn = self.connection.lock().unwrap();
+
+        let needs_rebuild = |table: &str| -> rusqlite::Result<bool> {
+            let sql: String = conn.query_row(
+                "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?1",
+                [table],
+                |row| row.get(0),
+            )?;
+            Ok(!sql.to_uppercase().contains("AUTOINCREMENT"))
+        };
+        if !needs_rebuild("roots")? && !needs_rebuild("images")? {
+            return Ok(());
+        }
+        info!("Migrating database: rebuilding roots/images with AUTOINCREMENT ids...");
+
+        // foreign_keys can't change inside a transaction; toggle around it.
+        conn.pragma_update(None, "foreign_keys", "OFF")?;
+        let result = conn.execute_batch(
+            "BEGIN;
+             CREATE TABLE roots_new (
+                 id INTEGER PRIMARY KEY AUTOINCREMENT,
+                 path TEXT NOT NULL UNIQUE,
+                 enabled INTEGER NOT NULL DEFAULT 1,
+                 added_at INTEGER NOT NULL,
+                 bookmark BLOB
+             );
+             INSERT INTO roots_new (id, path, enabled, added_at, bookmark)
+                 SELECT id, path, enabled, added_at, bookmark FROM roots;
+             DROP TABLE roots;
+             ALTER TABLE roots_new RENAME TO roots;
+
+             CREATE TABLE images_new (
+                 id INTEGER PRIMARY KEY AUTOINCREMENT,
+                 path TEXT NOT NULL UNIQUE,
+                 embedding BLOB,
+                 thumbnail_path TEXT,
+                 width INTEGER,
+                 height INTEGER,
+                 root_id INTEGER REFERENCES roots(id) ON DELETE CASCADE,
+                 notes TEXT,
+                 orphaned INTEGER NOT NULL DEFAULT 0,
+                 manual_order INTEGER,
+                 manual_col_span INTEGER,
+                 content_hash BLOB,
+                 size INTEGER
+             );
+             INSERT INTO images_new (id, path, embedding, thumbnail_path, width,
+                                     height, root_id, notes, orphaned, manual_order,
+                                     manual_col_span, content_hash, size)
+                 SELECT id, path, embedding, thumbnail_path, width,
+                        height, root_id, notes, orphaned, manual_order,
+                        manual_col_span, content_hash, size FROM images;
+             DROP TABLE images;
+             ALTER TABLE images_new RENAME TO images;
+
+             INSERT INTO sqlite_sequence (name, seq)
+                 SELECT 'roots', 0
+                 WHERE NOT EXISTS (SELECT 1 FROM sqlite_sequence WHERE name = 'roots');
+             UPDATE sqlite_sequence
+                 SET seq = (SELECT COALESCE(MAX(id), 0) FROM roots) + 1000
+                 WHERE name = 'roots';
+             INSERT INTO sqlite_sequence (name, seq)
+                 SELECT 'images', 0
+                 WHERE NOT EXISTS (SELECT 1 FROM sqlite_sequence WHERE name = 'images');
+             UPDATE sqlite_sequence
+                 SET seq = (SELECT COALESCE(MAX(id), 0) FROM images) + 100000
+                 WHERE name = 'images';
+             COMMIT;",
+        );
+        // Re-enable enforcement whether or not the rebuild succeeded — a
+        // connection left with FKs off would silently break every CASCADE.
+        conn.pragma_update(None, "foreign_keys", "ON")?;
+        result?;
+        info!("AUTOINCREMENT rebuild complete.");
+        Ok(())
+    }
 }

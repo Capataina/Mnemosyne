@@ -14,7 +14,14 @@ db/
 │                           table_info` check so it only fires when the column is missing;
 │                           safe to run every launch. New columns for old DBs go here,
 │                           never inline. Also `migrate_embedding_pipeline_version` (see
-│                           below).
+│                           below) and `migrate_rebuild_ids_autoincrement` (2026-08-03):
+│                           roots/images ids are AUTOINCREMENT — an id is identity and is
+│                           NEVER recycled after deletion, because thumbnail asset URLs
+│                           and frontend cache keys embed ids, and a recycled id made the
+│                           webview serve a deleted root's cached thumbnails for new
+│                           images. Sequence seeding adds +1000/+100000 margins over the
+│                           current max since the historical max is unknowable. Pinned by
+│                           tests/id_reuse_regression.rs.
 ├── images_query.rs         the grid SELECTs (~1.25k lines); four queries share one
 │                           images↔images_tags↔tags row shape rolled up by
 │                           `aggregate_image_rows` (`pub(super)` — `feed_manifest.rs`

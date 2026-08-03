@@ -183,7 +183,7 @@ impl ImageDatabase {
         // folder users get migrated below.
         self.connection.lock().unwrap().execute(
             "CREATE TABLE IF NOT EXISTS roots (
-                id INTEGER PRIMARY KEY,
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
                 path TEXT NOT NULL UNIQUE,
                 enabled INTEGER NOT NULL DEFAULT 1,
                 added_at INTEGER NOT NULL,
@@ -198,7 +198,7 @@ impl ImageDatabase {
         // ALTER TABLE below.
         self.connection.lock().unwrap().execute(
             "CREATE TABLE IF NOT EXISTS images (
-                id INTEGER PRIMARY KEY,
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
                 path TEXT NOT NULL UNIQUE,
                 embedding BLOB,
                 thumbnail_path TEXT,
@@ -225,6 +225,11 @@ impl ImageDatabase {
         self.migrate_add_notes_and_orphaned_columns()?;
         self.migrate_add_manual_order_columns()?;
         self.migrate_add_content_hash_columns()?;
+        // Runs AFTER the column migrations (it copies the full current
+        // column list) and BEFORE the index creation below (the rebuild
+        // drops the tables, and the CREATE INDEX IF NOT EXISTS calls
+        // below recreate what the drop removed).
+        self.migrate_rebuild_ids_autoincrement()?;
 
         self.connection.lock().unwrap().execute(
             "CREATE TABLE IF NOT EXISTS tags (

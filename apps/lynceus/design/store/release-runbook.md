@@ -19,9 +19,11 @@
 - **App Sandbox** — the padded room every App Store app must run in.
   The app can freely use its own private folder (where the library
   index, previews, and AI models live) but can touch nothing else
-  except what the entitlements grant. Required for the store; also the
-  strongest form of our privacy pitch — with no network permission in
-  the slip, the OS itself enforces "nothing ever leaves your Mac".
+  except what the entitlements grant. Required for the store. One
+  honest nuance (2026-08-03): the permission slip carries a network
+  key because the system webview refuses to render without it — but
+  Lynceus itself makes zero network requests, verified from sealed
+  boot logs, and the privacy pitch rests on that behaviour.
 - **Provisioning profile** — a laminated pass from Apple tying together
   your identity, the app's ID (com.capataina.lynceus), and its permission
   slip. Downloaded from Apple's site, referenced in the build config.

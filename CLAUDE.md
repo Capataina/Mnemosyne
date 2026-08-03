@@ -4,7 +4,7 @@
 
 One engine, many asset browsers. `crates/engine/` is **Mnemosyne the engine** — a media-agnostic catalogue + retrieval core (scan, index, embed, search, thumbnails, paths). `apps/lynceus/` is **Lynceus** — the shipping local-first image browser built on it. Future siblings (Syrinx for audio, Daedalus for 3D) join as `apps/<product>/` with their own `src-tauri` crate depending on the same engine. The engine's public API is deliberately unfrozen until a second product proves the seams.
 
-Local-first is the product thesis, not a feature: the store build bundles its AI models, requests no network entitlement, and the OS itself enforces "nothing ever leaves your Mac".
+Local-first is the product thesis, not a feature: the store build bundles its AI models and makes zero network requests (verified by sealed-boot logs). The entitlement slip does carry `network.client` — WKWebView refuses to render under the sandbox without it — so the privacy claim is behavioural ("it never phones home"), not OS-structural.
 
 ## Local-first — the reasoning
 
@@ -56,7 +56,7 @@ python3 scripts/download_models.py --modality image # materialise models/image/
 
 ## Version lockstep
 
-Lynceus's version lives in three text manifests that move together in the same commit, with `Cargo.lock` following: `apps/lynceus/package.json`, `apps/lynceus/src-tauri/Cargo.toml`, `apps/lynceus/src-tauri/tauri.conf.json` — all `0.7.18` today. The engine (`crates/engine/Cargo.toml`, `0.5.5`) versions independently and bumps only when its own code changes. The root `package.json` (`0.2.0`) tracks monorepo-level structure, not either product.
+Lynceus's version lives in three text manifests that move together in the same commit, with `Cargo.lock` following: `apps/lynceus/package.json`, `apps/lynceus/src-tauri/Cargo.toml`, `apps/lynceus/src-tauri/tauri.conf.json` — all `0.7.19` today. The engine (`crates/engine/Cargo.toml`, `0.5.5`) versions independently and bumps only when its own code changes. The root `package.json` (`0.2.0`) tracks monorepo-level structure, not either product.
 
 ## Invariants and traps
 
@@ -86,4 +86,4 @@ The per-folder `CLAUDE.md` layer is the repository's single documentation layer:
 
 ## Current state (2026-08-03)
 
-Lynceus 0.7.18, engine 0.5.5. The onboarding's six scenes were rebuilt v2 in a six-agent parallel pass after a live founder review (causal motion throughout, edge-panel/history-strip app truth, retimed durations). Packaging is done: sandbox entitlements wired, the store-shaped bundle slimmed 2.9GB → 674MB (int8 models only), ad-hoc-sealed app boots clean with zero network attempts (5968d2e), bundle ID renamed to `com.capataina.lynceus` (f14aaa8). Tests green: engine 141/141, frontend 294/294. The sole release blocker is the founder's Apple Developer enrolment; repo-side the remaining item is the 5-minute live folder-persistence test described in `apps/lynceus/design/store/release-runbook.md`. The knowledge layer settled today: the stranded 24-July Hermes migration was recovered (12d1712, 31217fc), every folder gained a CLAUDE.md, and the `docs/` tree was dissolved into those files — per-folder CLAUDE.md is now the only documentation layer.
+Lynceus 0.7.19, engine 0.5.5. The onboarding's six scenes were rebuilt v2 in a six-agent parallel pass after a live founder review (causal motion throughout, edge-panel/history-strip app truth, retimed durations). Packaging is done: sandbox entitlements wired, the store-shaped bundle slimmed 2.9GB → 674MB (int8 models only), bundle ID renamed to `com.capataina.lynceus` (f14aaa8). The 5968d2e "boots clean" claim was log-verified only — the sealed webview was actually blank until `network.client` was added on 2026-08-03 (sandboxed WKWebView requires it to render; caught by the founder on a live look). Tests green: engine 141/141, frontend 294/294. The sole release blocker is the founder's Apple Developer enrolment; repo-side the remaining item is the 5-minute live folder-persistence test described in `apps/lynceus/design/store/release-runbook.md`. The knowledge layer settled today: the stranded 24-July Hermes migration was recovered (12d1712, 31217fc), every folder gained a CLAUDE.md, and the `docs/` tree was dissolved into those files — per-folder CLAUDE.md is now the only documentation layer.

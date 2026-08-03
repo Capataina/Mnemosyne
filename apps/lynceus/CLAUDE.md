@@ -4,7 +4,7 @@
 
 The shipping product: a local-first macOS image browser — masonry board with drag-to-reorder/resize, semantic search over on-device encoders (OpenCLIP, SigLIP-2, DINOv2), similarity trails, tags-as-folders with must/must-not filters, a gesture-drawing timer, folder watching with BLAKE3 content-hash relinking, and a replayable skeleton-demo onboarding. Tauri 2 + React 19 frontend over a Rust app crate that wraps `crates/engine`.
 
-Version **0.7.18** — kept in lockstep across `package.json`, `src-tauri/Cargo.toml`, and `src-tauri/tauri.conf.json` (the root CLAUDE.md owns the lockstep rule).
+Version **0.7.19** — kept in lockstep across `package.json`, `src-tauri/Cargo.toml`, and `src-tauri/tauri.conf.json` (the root CLAUDE.md owns the lockstep rule).
 
 ## The three-way split
 
@@ -22,7 +22,7 @@ apps/lynceus/
 ├── public/            static assets served by Vite — only the vite.svg scaffold file today
 ├── dist/              built frontend (gitignored output), what src-tauri bundles
 ├── index.html         Vite entry
-├── package.json       lynceus-ui manifest, v0.7.18; dev/build/test/tauri scripts
+├── package.json       lynceus-ui manifest, v0.7.19; dev/build/test/tauri scripts
 ├── vite.config.ts     Vite + React + Tailwind 4 + vite-plugin-pages
 ├── vitest.config.ts   happy-dom test environment
 ├── components.json    shadcn/ui generator config
@@ -42,7 +42,7 @@ pnpm tauri build --bundles app   # store-shaped .app — lands in the WORKSPACE
 
 ## Release posture (2026-08-02)
 
-Store-shaped and waiting on the founder's Apple Developer enrolment. Sandbox entitlements are wired (read-only user-selected folders + security-scoped bookmarks, deliberately no network), the 674MB bundle ships five int8 models plus two tokenizers, and the ad-hoc-sealed app boots clean in the sandbox with zero network attempts (5968d2e). Repo-side gates cleared: real icon (b5005e4), bundle ID `com.capataina.lynceus` (f14aaa8), listing copy drafted. Outstanding: `design/store/release-runbook.md`'s 5-minute live folder-persistence test, the pricing decision, and enrolment itself.
+Store-shaped and waiting on the founder's Apple Developer enrolment. Sandbox entitlements are wired (read-only user-selected folders + security-scoped bookmarks + `network.client`, which WKWebView requires to render at all under the sandbox — added 2026-08-03 after two blank-window live tests), the 674MB bundle ships five int8 models plus two tokenizers, and the sealed app's own code makes zero network requests (boot-log verified, 5968d2e). Repo-side gates cleared: real icon (b5005e4), bundle ID `com.capataina.lynceus` (f14aaa8), listing copy drafted. Outstanding: `design/store/release-runbook.md`'s 5-minute live folder-persistence test, the pricing decision, and enrolment itself.
 
 ## Gaps and planned work
 

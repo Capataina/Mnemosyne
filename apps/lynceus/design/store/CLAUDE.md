@@ -27,4 +27,4 @@ The one repo-side remaining check is the 5-minute live folder-persistence run: `
 
 ## Staleness notes
 
-listing.md's review-risk self-check predates 5968d2e: its "entitlements wiring + enforcement run pending" line is done, and the description's "models downloaded on first launch" hedge is superseded — the store build bundles them. The copy still awaits founder sign-off, so reconcile when it's next edited, not silently.
+Reconciled 2026-08-03: the description now claims zero network requests ever (bundled models), the privacy label rationale matches, the support/privacy URLs are the live verified pages, the review self-check reflects the finished sandbox work, and screenshot shot 5 names the countdown bar + history strip (the arc timer died in the onboarding/timer v2 work). The copy still awaits founder sign-off as a whole. One fact worth preserving verbatim: the entitlement slip carries `network.client` because sandboxed WKWebView cannot render without it — the "no network entitlement" phrasing must never come back into the copy.

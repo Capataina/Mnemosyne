@@ -19,9 +19,15 @@
 	     re-ask for every folder. -->
 	<key>com.apple.security.files.bookmarks.app-scope</key>
 	<true/>
-	<!-- Deliberately ABSENT: com.apple.security.network.client. The
-	     store build bundles the AI models as resources, so the app makes
-	     zero network requests — and the sandbox now enforces that,
-	     which is the strongest possible form of the privacy claim. -->
+	<!-- Required by WKWebView itself: without this key a sandboxed
+	     webview never renders — the window stays blank (observed live
+	     twice; A/B-isolated 2026-08-03: sandbox without this key =
+	     blank, sandbox with it = renders). The app's own code makes
+	     zero network requests — models ship bundled, and boot logs
+	     under the sealed build prove no attempts — but the OS-level
+	     "no network capability" form of that claim is no longer
+	     available; the claim is now behavioural, not structural. -->
+	<key>com.apple.security.network.client</key>
+	<true/>
 </dict>
 </plist>

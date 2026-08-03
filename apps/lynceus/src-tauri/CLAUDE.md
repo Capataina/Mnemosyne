@@ -1,16 +1,17 @@
 # apps/lynceus/src-tauri/
 
-The Lynceus product crate — Cargo bin `lynceus` v0.7.18, the Tauri v2 desktop host around the media-agnostic Mnemosyne engine (`crates/engine/`, path dependency, no frozen API). Everything image-specific lives here: the ONNX image/text encoders, the thumbnailer, the indexing pipeline, the filesystem watcher, and the Tauri command surface the React frontend (`../src/`) invokes. The engine owns DB, paths, perf, cosine/RRF; this crate re-exports those modules at their old crate-root paths (`lib.rs`) so `crate::db::…` call sites survived the extraction unchanged.
+The Lynceus product crate — Cargo bin `lynceus` v0.7.19, the Tauri v2 desktop host around the media-agnostic Mnemosyne engine (`crates/engine/`, path dependency, no frozen API). Everything image-specific lives here: the ONNX image/text encoders, the thumbnailer, the indexing pipeline, the filesystem watcher, and the Tauri command surface the React frontend (`../src/`) invokes. The engine owns DB, paths, perf, cosine/RRF; this crate re-exports those modules at their old crate-root paths (`lib.rs`) so `crate::db::…` call sites survived the extraction unchanged.
 
 ## Map
 
 ```
 src-tauri/
-├── Cargo.toml            crate manifest v0.7.18; platform-gated ort (CoreML on macOS,
+├── Cargo.toml            crate manifest v0.7.19; platform-gated ort (CoreML on macOS,
 │                         CUDA elsewhere), fast_image_resize, blake3 via engine,
 │                         objc2/objc2-foundation for security-scoped bookmarks
 ├── tauri.conf.json       product identity + bundle config — see the pairing trap below
-├── Entitlements.plist    the sandbox contract: exactly three grants, no network
+├── Entitlements.plist    the sandbox contract: four grants incl. network.client
+│                         (WKWebView needs it to render — see the story below)
 ├── build.rs              stock tauri-build shim
 ├── capabilities/         Tauri v2 permission manifest for the main window (own CLAUDE.md)
 ├── src/                  the crate source (own CLAUDE.md)
@@ -22,11 +23,11 @@ src-tauri/
 
 ## Current state — 2026-08-02
 
-Store-shaped and repo-side release-ready (commits 5968d2e, f14aaa8). Sandbox entitlements wired and empirically tested with ad-hoc seals on fresh containers: container created, DB initialised inside it, zero network attempts. Bundle slimmed 2.9GB → 674MB by naming exactly seven resource files (five int8 models + two tokenizers) instead of the whole models directory. Bundle ID is `com.capataina.lynceus` (Apple rejects personal-looking IDs; CAP-79 closed repo-side). Tests: 44 lib tests plus the integration suites, all green. What remains for release is outside this repo: Apple Developer enrolment, then the five-minute live folder-persistence pass (ad-hoc bookmark identity does not survive rebuilds, so that half can only be proven on a stable signed build).
+Store-shaped and repo-side release-ready (commits 5968d2e, f14aaa8; entitlements corrected 2026-08-03). The 5968d2e sandbox test was log-level only (container created, DB initialised, zero network attempts) and missed that the webview never rendered — the blank window surfaced on live founder tests and was fixed by the `network.client` grant (story below). Bundle slimmed 2.9GB → 674MB by naming exactly seven resource files (five int8 models + two tokenizers) instead of the whole models directory. Bundle ID is `com.capataina.lynceus` (Apple rejects personal-looking IDs; CAP-79 closed repo-side). Tests: 44 lib tests plus the integration suites, all green. What remains for release is outside this repo: Apple Developer enrolment, then the five-minute live folder-persistence pass (ad-hoc bookmark identity does not survive rebuilds, so that half can only be proven on a stable signed build).
 
 ## The sandbox and entitlements story
 
-`Entitlements.plist` grants exactly three things: the App Sandbox master switch, `files.user-selected.read-only` (Lynceus never writes into user folders — DB, previews, models all live in the app container), and `files.bookmarks.app-scope` so granted folders persist across relaunches (`src/security_scope.rs` creates/resolves them). **Deliberately absent: `com.apple.security.network.client`.** The store build bundles its models as resources, so the OS itself enforces the "nothing ever leaves your Mac" pitch. Do not add the network entitlement to fix a download failure — a sandboxed build attempting a model download is a bug in precision/presence resolution (see the int8 trap), not a missing entitlement.
+`Entitlements.plist` grants four things: the App Sandbox master switch, `files.user-selected.read-only` (Lynceus never writes into user folders — DB, previews, models all live in the app container), `files.bookmarks.app-scope` so granted folders persist across relaunches (`src/security_scope.rs` creates/resolves them), and `com.apple.security.network.client`. That last key is NOT for app networking — **sandboxed WKWebView refuses to render without it** (helper processes fail to start; the window stays permanently blank). Proven by A/B on 2026-08-03 after the founder hit the blank window on two live tests: identical .app, sandbox without the key = blank, with it = renders. The app's own code still makes zero network requests (models ship bundled; sealed-boot logs show no attempts), so the privacy claim survives — but as observed behaviour, not OS enforcement, and every doc that said "no network entitlement" was reworded in the same change. The old trap still binds in its narrower form: a sandboxed build attempting a model *download* is a bug in precision/presence resolution (see the int8 trap), and `network.client`'s presence must never be read as licence to add a network call.
 
 ## Traps
 

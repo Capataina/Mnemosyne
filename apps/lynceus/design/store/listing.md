@@ -65,10 +65,9 @@ you need longer. Set the interval, hit start, and draw.
 
 PRIVATE BY ARCHITECTURE
 Lynceus is local-first the whole way down. The library index, the
-previews, the AI models — all of it lives on your Mac. There is no
-account, no telemetry, no cloud. The only network request Lynceus ever
-makes is downloading its AI models on first launch (and even those can
-ship bundled).
+previews, the AI models — all of it ships inside the app and lives on
+your Mac. There is no account, no telemetry, no cloud, and no network
+request — ever. Unplug the internet and nothing changes.
 
 — 
 
@@ -89,17 +88,16 @@ a minute, and you can replay it any time from Settings.
 ## Privacy nutrition label
 
 **Data Not Collected** — the app has no account system, no analytics,
-no third-party SDKs, and makes no network requests except first-launch
-model download from a static host. Declare "Data is not collected" for
-every category.
+no third-party SDKs, and makes no network requests at all (the store
+build bundles its models; sealed-boot logs verified zero attempts).
+Declare "Data is not collected" for every category.
 
 ## URLs (required by App Store Connect)
 
-- Support URL: `https://capataina.dev/lynceus` (to build — board #19;
-  a single page with contact + FAQ satisfies review)
-- Privacy policy URL: `https://capataina.dev/lynceus/privacy` (to
-  build; three paragraphs: nothing collected, everything local, models
-  downloaded once)
+- Support URL: `https://capataina.dev/lynceus/support/` (LIVE —
+  verified 200 with content, 2026-08-03)
+- Privacy policy URL: `https://capataina.dev/lynceus/privacy/` (LIVE —
+  verified 200 with content, 2026-08-03)
 
 ## Screenshot plan (2880×1800 native Retina PNG, alpha flattened — per Apple's current spec)
 
@@ -109,7 +107,7 @@ every category.
 | 2 | Semantic search: query typed, ranked results | The headline feature |
 | 3 | Similarity cascade with breadcrumb + inspector open | Depth of discovery |
 | 4 | Library drawer: tags-as-folders + must/must-not filters | Organisation story |
-| 5 | Gesture timer fullscreen, zoomed reference, arc visible | The artist audience |
+| 5 | Gesture timer fullscreen, zoomed reference, countdown bar + history strip visible | The artist audience |
 | 6 | Onboarding scene 2 mid-animation | Polish signal |
 
 ## Pricing — DECISION NEEDED
@@ -133,7 +131,9 @@ launch story urgency without a free tier's gating work.
 - Real app icon ✓ (b5005e4). No placeholder content anywhere in the
   shipping build. Onboarding uses deliberate skeletons — cosmetic, not
   "unfinished UI"; the storyboards label them as demonstrations.
-- Sandbox: security-scoped bookmarks already implemented; entitlements
-  wiring + enforcement run pending (release track).
+- Sandbox: done and live-tested — security-scoped bookmarks
+  implemented, entitlements wired (incl. the `network.client` key the
+  webview needs to render; the app itself makes zero requests), sealed
+  build renders and runs (2026-08-03).
 - Minimum functionality: comfortably clear — search, similarity,
   board, tags, timer, onboarding.

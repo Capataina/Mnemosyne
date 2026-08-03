@@ -43,7 +43,7 @@ File explorers are built for files, not images. When you have thousands of image
 
 Lynceus treats your local image library as a first-class collection: thumbnailed, indexed, tagged, annotated, and searchable — both by text labels and by semantic meaning. Type "dark cinematic lighting" or "forest path at dusk" and find matching images without having manually tagged them. Click any image to instantly surface the visually similar ones from across your entire library. Add per-image notes to capture context the filename can't.
 
-Everything runs locally. Embeddings are generated on your machine using ONNX Runtime. Store-shaped builds bundle the encoder models inside the app and are sandboxed with **no network entitlement** — macOS itself enforces that nothing ever leaves your machine. Dev builds without local weights make exactly one kind of network call: a first-launch model download; after that, you can disconnect entirely.
+Everything runs locally. Embeddings are generated on your machine using ONNX Runtime. Store-shaped builds bundle the encoder models inside the app and run fully sandboxed, making **zero network requests** — no accounts, no telemetry, no cloud. Dev builds without local weights make exactly one kind of network call: a first-launch model download; after that, you can disconnect entirely.
 
 ## Features
 
@@ -126,7 +126,7 @@ Everything runs locally. Embeddings are generated on your machine using ONNX Run
 
 - **Local-only storage** — SQLite database, thumbnail cache, and ONNX model files all live in your platform's app-data directory
 - **No accounts, no telemetry, no API keys**
-- **Store builds are sandboxed with no network entitlement** — models ship inside the app, and macOS itself enforces that nothing ever leaves the machine
+- **Store builds are sandboxed and make zero network requests** — models ship inside the app; nothing ever leaves the machine
 - **Original images are never modified or moved** — only metadata, thumbnails, and embeddings are derived
 
 ## How to use
@@ -262,7 +262,7 @@ All durable architecture and engineering knowledge lives in per-folder `CLAUDE.m
 
 ## Design principles
 
-- **Local-first** — all computation, storage, and inference runs on your machine. No cloud dependencies, no API keys, and in store builds no network _capability_ at all.
+- **Local-first** — all computation, storage, and inference runs on your machine. No cloud dependencies, no API keys, and in store builds not a single network request.
 - **Privacy by construction** — original images are never modified or uploaded; thumbnails, notes, and embeddings are derived locally and stored in a local SQLite database.
 - **Performance at scale** — adaptive preview buckets, batched encoder inference, per-encoder versioned mmap embedding stores, ID-native fused retrieval, a feed manifest/delta protocol, and off-main-thread masonry packing keep the UI responsive at large-library scale.
 - **Offline ML inference** — every encoder runs entirely via ONNX Runtime. No Python, no external ML service, no GPU required (CUDA used on non-macOS when available).

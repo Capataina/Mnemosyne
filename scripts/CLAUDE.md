@@ -23,14 +23,19 @@ scripts/
 │                              for cross-machine search-quality comparison. INTERNAL TEST
 │                              DATA ONLY — Riot's fan-content licence is non-commercial,
 │                              so these may never appear in screenshots or marketing
-├── fetch_demo_library.py      the SCREENSHOT/marketing corpus: ~220 CC0 public-domain
+├── fetch_demo_library.py      the SCREENSHOT/marketing corpus: ~1,350 CC0 public-domain
 │                              artworks (AIC + Met open access — commercial use cleared,
 │                              filtered per item on the API's own public-domain flag) into
 │                              ~/Pictures/LynceusDemoLibrary/ (--dest, --limit-per-query);
-│                              idempotent, stdlib-only. Mix tuned for the artist audience:
-│                              figure studies, portraits, ukiyo-e, landscapes, botanicals.
-│                              Trap: AIC's image CDN 403s bare programmatic requests —
-│                              needs the browser-shaped header set in BROWSER_HEADERS
+│                              idempotent, stdlib-only; 20 AIC query lanes with paging + 8
+│                              Met lanes. Scaled from ~250 on 2026-08-03: a 222-image
+│                              corpus made "More like this" rank loose neighbours.
+│                              Traps: BOTH museums' endpoints 403 bare programmatic
+│                              requests sooner or later (AIC's image CDN immediately,
+│                              the Met's search API after sustained volume) — everything
+│                              goes through BROWSER_HEADERS, and a Met rate-limit block
+│                              just means re-run later; idempotency makes that free.
+│                              ~150 Met pieces still owed from the blocked 2026-08-03 run
 ├── start_lynceus.sh           the launcher behind just lynceus-dev/-dev-telemetry/-release;
 │                              resolves the repo root, exports LYNCEUS_MODELS_DIR, and
 │                              documents the pnpm `--` trap inline. Never invoked directly

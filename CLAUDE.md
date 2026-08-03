@@ -29,7 +29,8 @@ Mnemosyne/
 ├── apps/                 product tier — one app per folder (see apps/CLAUDE.md)
 ├── crates/
 │   └── engine/           Mnemosyne the engine, v0.5.6 (own CLAUDE.md tree)
-├── scripts/              Python/bash helpers: model download/quantize, test corpus, launcher
+├── scripts/              Python/bash helpers: model download/quantize, test corpus,
+│                         CC0 demo/marketing library fetch, launcher
 ├── models/               gitignored ONNX weights, models/<modality>/ (image|audio|3d);
 │                         populated by scripts/download_models.py, bundled by Tauri at build
 ├── Store Screenshots/    App Store marketing pages per app + regenerating HTML sources

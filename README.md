@@ -27,7 +27,9 @@ Mnemosyne/                         monorepo root
 │   ├── image/                     OpenCLIP · DINOv2 · SigLIP-2
 │   ├── audio/                     (future — Syrinx)
 │   └── 3d/                        (future — Daedalus)
-├── scripts/                       model download / quantisation utilities
+├── scripts/                       model download / quantisation / demo & test corpus utilities
+├── Store Screenshots/             App Store marketing pages (per app) + the HTML sources
+│                                    each PNG regenerates from
 └── Cargo.toml                     workspace manifest
 ```
 
@@ -56,7 +58,7 @@ Everything runs locally. Embeddings are generated on your machine using ONNX Run
 - **Drag-to-reorder and smooth drag-to-resize** — drag any tile (including 2×2/3×3 spans) to reposition it, or grab any of its four corners to resize it smoothly (it snaps to a whole column span on release); a live placeholder telegraphs the landing slot and the tile settles exactly where the preview showed, with neighbours packing densely around user-placed tiles; aspect ratio is always preserved, and a stretched tile automatically loads a higher-resolution preview so it stays crisp
 - **Hover micro-interactions** (toggleable for low-power preference)
 - **Fullscreen modal inspector** with prev/next navigation, keyboard shortcuts, and inline tag/note editing
-- **Gesture-drawing timer** — a fullscreen, auto-advancing reference session over any view (main feed, tag-filtered results, search results, or an image's similar-set): configurable interval, pause/resume, pinch-to-zoom, two-finger pan, and Fit
+- **Gesture-drawing timer** — a fullscreen, auto-advancing reference session over any view (main feed, tag-filtered results, search results, or an image's similar-set): configurable interval, pause/resume, pinch-to-zoom, two-finger pan, Fit, and a reference-history strip — click any earlier reference to review it (the countdown freezes) and resume with your remaining time intact
 
 ### Multi-folder library
 
@@ -71,7 +73,7 @@ Everything runs locally. Embeddings are generated on your machine using ONNX Run
 - **Manual tags** with optional colours, added and removed per image from the inspector or search bar
 - **Tag autocomplete** with `#tag` syntax in the search bar; tags can be created on the fly by typing a new name
 - **AND / OR tag filtering** — show images that match all selected tags or any of them
-- **Library drawer (folders-as-tags)** — a slide-in left drawer where every tag _is_ a folder (no separate folder concept); open a folder to browse it, or compose the feed with include ("must have") and exclude ("must not have") filters, each showing a live per-folder image count. Applying a filter always acts on the visible feed, leaving any open similar-set or search
+- **Library panel (folders-as-tags)** — a left-edge slide-out panel (hover the screen edge or its icon to open, click to pin) where every tag _is_ a folder (no separate folder concept); open a folder to browse it, or compose the feed with include ("must have") and exclude ("must not have") filters, each showing a live per-folder image count. Applying a filter always acts on the visible feed, leaving any open similar-set or search
 - **Tag deletion** from the search bar dropdown, with optimistic UI updates throughout
 
 ### Notes

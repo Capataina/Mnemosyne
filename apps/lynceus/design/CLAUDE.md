@@ -8,4 +8,4 @@ design/
 └── store/    App Store listing copy + plain-English release runbook (see its CLAUDE.md)
 ```
 
-No other artefact classes yet; screenshots for the listing will be captured, not designed, and belong to the store/ plan when they exist.
+No other artefact classes yet; the listing's screenshots were captured rather than designed, so the eight finished pages live in the repo-root `Store Screenshots/` tree (founder-signed-off 2026-08-04) and only their spec and plan live under store/.

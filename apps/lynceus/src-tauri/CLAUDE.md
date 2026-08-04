@@ -11,7 +11,17 @@ src-tauri/
 │                         objc2/objc2-foundation for security-scoped bookmarks
 ├── tauri.conf.json       product identity + bundle config — see the pairing trap below
 ├── Entitlements.plist    the sandbox contract: four grants incl. network.client
-│                         (WKWebView needs it to render — see the story below)
+│                         (WKWebView needs it to render — see the story below);
+│                         identity-free, used by the ad-hoc lynceus-sandbox-test
+├── Entitlements.mas.plist  the store-signing variant: the same four keys plus
+│                         com.apple.application-identifier and
+│                         com.apple.developer.team-identifier, which MAS upload
+│                         validation requires (restricted — they break ad-hoc signing)
+├── Lynceus_Mac_App_Store.provisionprofile
+│                         the Mac App Store provisioning profile, committed on purpose
+│                         (profiles are public material; every shipped app embeds one).
+│                         lynceus-mas-package cp's it to Contents/embedded.provisionprofile
+│                         before codesign — Tauri 2.11 has no provisioningProfile config key
 ├── build.rs              stock tauri-build shim
 ├── capabilities/         Tauri v2 permission manifest for the main window (own CLAUDE.md)
 ├── src/                  the crate source (own CLAUDE.md)
@@ -21,13 +31,15 @@ src-tauri/
 └── target/               build output
 ```
 
-## Current state — 2026-08-02
+## Current state — 2026-08-04
 
-Store-shaped and repo-side release-ready (commits 5968d2e, f14aaa8; entitlements corrected 2026-08-03). The 5968d2e sandbox test was log-level only (container created, DB initialised, zero network attempts) and missed that the webview never rendered — the blank window surfaced on live founder tests and was fixed by the `network.client` grant (story below). Bundle slimmed 2.9GB → 674MB by naming exactly seven resource files (five int8 models + two tokenizers) instead of the whole models directory. Bundle ID is `com.capataina.lynceus` (Apple rejects personal-looking IDs; CAP-79 closed repo-side). Tests: 44 lib tests plus the integration suites, all green. What remains for release is outside this repo: Apple Developer enrolment, then the five-minute live folder-persistence pass (ad-hoc bookmark identity does not survive rebuilds, so that half can only be proven on a stable signed build).
+Store-shaped and repo-side release-ready (commits 5968d2e, f14aaa8; entitlements corrected 2026-08-03). The 5968d2e sandbox test was log-level only (container created, DB initialised, zero network attempts) and missed that the webview never rendered — the blank window surfaced on live founder tests and was fixed by the `network.client` grant (story below). Bundle slimmed 2.9GB → 674MB by naming exactly seven resource files (five int8 models + two tokenizers) instead of the whole models directory. Bundle ID is `com.capataina.lynceus` (Apple rejects personal-looking IDs; CAP-79 closed repo-side). Tests: 44 lib tests plus the integration suites, all green. As of 2026-08-04 the crate is at v1.0.0 and the store path is live end to end: real Apple Distribution + Mac Installer Distribution identities, the committed provisioning profile embedded by the recipe, `Entitlements.mas.plist` sealing the two identity keys, and a verified ~419MB signed `Lynceus.pkg` delivered to App Store Connect via Transporter. The five-minute live folder-persistence pass PASSED founder-driven on the ad-hoc sandbox build (b77145a); the standing caveat remains that ad-hoc bookmark identity does not survive rebuilds, so the real-certificate confirmation arrives via TestFlight. What remains for release is outside this repo: the Paid Applications Agreement's tax form, price entry, and submitting for review.
 
 ## The sandbox and entitlements story
 
-`Entitlements.plist` grants four things: the App Sandbox master switch, `files.user-selected.read-only` (Lynceus never writes into user folders — DB, previews, models all live in the app container), `files.bookmarks.app-scope` so granted folders persist across relaunches (`src/security_scope.rs` creates/resolves them), and `com.apple.security.network.client`. That last key is NOT for app networking — **sandboxed WKWebView refuses to render without it** (helper processes fail to start; the window stays permanently blank). Proven by A/B on 2026-08-03 after the founder hit the blank window on two live tests: identical .app, sandbox without the key = blank, with it = renders. The app's own code still makes zero network requests (models ship bundled; sealed-boot logs show no attempts), so the privacy claim survives — but as observed behaviour, not OS enforcement, and every doc that said "no network entitlement" was reworded in the same change. The old trap still binds in its narrower form: a sandboxed build attempting a model *download* is a bug in precision/presence resolution (see the int8 trap), and `network.client`'s presence must never be read as licence to add a network call.
+`Entitlements.plist` grants four things: the App Sandbox master switch, `files.user-selected.read-only` (Lynceus never writes into user folders — DB, previews, models all live in the app container), `files.bookmarks.app-scope` so granted folders persist across relaunches (`src/security_scope.rs` creates/resolves them), and `com.apple.security.network.client`. That last key is NOT for app networking — **sandboxed WKWebView refuses to render without it** (helper processes fail to start; the window stays permanently blank). Proven by A/B on 2026-08-03 after the founder hit the blank window on two live tests: identical .app, sandbox without the key = blank, with it = renders. The app's own code still makes zero network requests (models ship bundled; sealed-boot logs show no attempts), so the privacy claim survives — but as observed behaviour, not OS enforcement, and every doc that said "no network entitlement" was reworded in the same change.
+
+The plist split (2026-08-04, 1d783d6): the base `Entitlements.plist` stays identity-free and is what `just lynceus-sandbox-test` signs ad-hoc — the two identity entitlements are restricted and break an ad-hoc signature. Store signing uses `Entitlements.mas.plist` instead, the same four keys plus `com.apple.application-identifier` and `com.apple.developer.team-identifier`, which Mac App Store upload validation requires in the sealed signature. The packaging recipe also runs `xattr -cr` over the whole .app between embedding the profile and codesigning: a quarantine attribute on any bundled file is an App Store rejection (Apple's error 91109, hit on the first 1.0.0 delivery because the profile arrived via a browser download), and the strip must run before signing so the seal covers the final attribute state. The old trap still binds in its narrower form: a sandboxed build attempting a model *download* is a bug in precision/presence resolution (see the int8 trap), and `network.client`'s presence must never be read as licence to add a network call.
 
 ## Traps
 
@@ -44,10 +56,11 @@ From the repo root:
 ```
 just lynceus-sandbox-test   # free local sandbox loop: pnpm tauri build --bundles app,
                             # codesign ad-hoc with Entitlements.plist, verify, open
-just lynceus-mas-package    # the real MAS artifact: Apple Distribution + Installer
-                            # identities (fill APP_IDENTITY/PKG_IDENTITY from Keychain
-                            # after enrolment), productbuild wraps .app into the .pkg
-                            # Transporter uploads
+just lynceus-mas-package    # the real MAS artifact: APP_IDENTITY/PKG_IDENTITY are the
+                            # real keychain identities (filled 2026-08-04, team
+                            # VURQD42U5Z); the recipe embeds the provisioning profile,
+                            # runs xattr -cr, signs with Entitlements.mas.plist, then
+                            # productbuild wraps the .app into the .pkg Transporter uploads
 cargo test                  # from apps/lynceus/src-tauri — 44 lib + integration suites
 ```
 

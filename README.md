@@ -4,6 +4,8 @@
 
 The names are a matched pair from Greek myth: Mnemosyne is the goddess of memory — the layer that remembers every asset — and Lynceus the Argonaut whose sight was sharp enough to see through the earth: the eye that searches it.
 
+**Status (2026-08-04):** Lynceus is at **1.0.0** — the version line crossed for its first Mac App Store submission. The signed, sandboxed 1.0.0 package is built by `just lynceus-mas-package`, has been delivered to App Store Connect through Transporter, and is attached to its version record; the remaining steps are App Store Connect paperwork rather than code. The Mnemosyne engine versions independently and sits at 0.5.6.
+
 ---
 
 ## Repository layout
@@ -331,6 +333,11 @@ pnpm --filter ./apps/lynceus run tauri build
 
 # Store-shaped build sealed with a free ad-hoc signature, sandbox enforced — the local App Store rehearsal
 just lynceus-sandbox-test
+
+# The real Mac App Store artefact: same .app, but the provisioning profile embedded, extended
+# attributes stripped, signed with the Apple Distribution identity and Entitlements.mas.plist,
+# then wrapped by productbuild into the Lynceus.pkg Transporter uploads (needs Apple identities)
+just lynceus-mas-package
 ```
 
 To run the test suites:

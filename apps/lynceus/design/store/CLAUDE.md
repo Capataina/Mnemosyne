@@ -19,11 +19,12 @@ store/
                          is already done, then the founder's ~1-hour enrolment path
 ```
 
-## Open decisions (founder's, not the agent's)
+## Decisions — all closed 2026-08-04 (founder's calls)
 
-- **Pricing** — three options framed in listing.md; recommendation on record is paid-up-front with a launch price (~$9.99 rising later). Not yet decided.
-- **Apple Silicon only vs Intel** — runbook recommends Silicon-only at launch.
-- **Seller name** — an individual account shows the legal name, not "Capataina".
+- **Pricing** — paid up front, **£9.99 launch price** (UK base storefront, Apple auto-equalises the other 174; mechanics recorded in listing.md's pricing section). Rising later is the plan.
+- **Apple Silicon only** — no Intel build; Apple Silicon is the product's floor.
+- **Seller name** — the legal name (Ata Caner Çetinkaya) is accepted for now; account transfers are easy if a company entity comes later.
+- **Listing copy and the eight screenshot pages** — both signed off as-is 2026-08-04.
 
 ## The owed live test
 

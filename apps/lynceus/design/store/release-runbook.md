@@ -41,8 +41,9 @@
 | Build config (`tauri.conf.json`) | ✅ sandbox wired, category Graphics & Design, minimum macOS 12 |
 | Store-shaped build recipe | ✅ `just lynceus-sandbox-test` (free local test) and `just lynceus-mas-package` (the real thing, two blanks to fill) |
 | AI models bundled inside the app | ✅ so the shipped app makes zero network requests |
-| Listing copy (name, description, keywords) | ✅ drafted — `listing.md` next to this file, awaiting your sign-off |
-| Support + privacy pages | ✅ built into the capataina.dev site (deploy pending) |
+| Listing copy (name, description, keywords) | ✅ draft 2 in `listing.md`, founder-signed-off 2026-08-04 |
+| Support + privacy pages | ✅ live at capataina.dev/lynceus/support/ and /privacy/ (curl-verified 200) |
+| Screenshots | ✅ eight pages in `Store Screenshots/`, spec-verified (2880×1800, no alpha, sRGB), founder-signed-off 2026-08-04 |
 | Sandbox smoke test | ✅/⏳ app boots and runs inside the sandbox; the folder-permission persistence check is a 5-minute live test with you (below) |
 
 ## The 5-minute live test (you + me, before paying Apple anything)
@@ -63,11 +64,9 @@ certificate makes it permanent.
 
 ## What you do, when you're ready (~1 hour of your time + waiting)
 
-1. **Enrol**: developer.apple.com → Account → enrol in the Apple
-   Developer Program as an individual. $99/year. Approval usually
-   24–48h. ⚠️ Your **legal name** (not "Capataina") appears as the
-   seller on the store listing for individual accounts — decide if
-   that's fine before paying.
+1. **Enrol**: ✅ done 2026-08-03 — individual Apple Developer account,
+   approved in ~30 minutes. The legal-name-as-seller point was accepted
+   (transfers to a company entity are straightforward later).
 2. **Two certificates** (Apple's site → Certificates): "Apple
    Distribution" (seals the app) and "Mac Installer Distribution"
    (seals the installer package). Xcode can generate both for you via
@@ -94,17 +93,17 @@ certificate makes it permanent.
   this MacBook Pro.
 - PNG with **no transparency** (alpha channel must be flattened, or the
   upload is rejected).
-- The six planned shots are in `listing.md`; capture once the library
-  is dressed with good art.
+- Done: the eight final pages live in `Store Screenshots/`, composed
+  over the CC0 museum demo library and script-verified against this
+  spec (2026-08-03).
 
-## Decisions still open (yours)
+## Decisions — all closed 2026-08-04
 
-1. **Price** — see the pricing block in `listing.md` (recommendation:
-   paid up front with a launch price).
-2. **Apple Silicon only vs Intel too** — recommendation: Apple Silicon
-   only at launch (every Mac since 2020; halves build complexity); the
-   store simply lists the requirement. Intel can be added later.
-3. **Seller name** — the legal-name point in step 1 above.
+1. **Price** — £9.99 paid up front, UK base storefront; full mechanics
+   in `listing.md`'s pricing section.
+2. **Apple Silicon only** — no Intel build at launch; the store lists
+   the requirement. Intel can be added later if ever wanted.
+3. **Seller name** — legal name accepted; transfer later if needed.
 
 ## Known watch-items (flagged honestly)
 

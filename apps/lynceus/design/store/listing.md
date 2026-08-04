@@ -91,21 +91,11 @@ Declare "Data is not collected" for every category.
 | 5 | Gesture timer fullscreen, zoomed reference, countdown bar + history strip visible | The artist audience |
 | 6 | Onboarding scene 2 mid-animation | Polish signal |
 
-## Pricing — DECISION NEEDED
+## Pricing — DECIDED (2026-08-04)
 
-Options on the table (no subscription — it would contradict the
-local-first pitch):
+**Paid up front, £9.99 launch price, rising later.** Founder's call, from the three options considered (a $14.99–19.99 pro-tool price: hardest cold-start for an unknown developer; a free tier with one-time unlock: best funnel but needs StoreKit gating the local-first pitch doesn't want). No subscription — it would contradict the local-first pitch. £9.99 sits at the try-it threshold for a first release with zero reviews, and raising a price later reads as success where lowering one reads as distress.
 
-1. **Paid up front, ~$14.99–19.99** — matches the "pro tool, own it"
-   positioning; smallest support surface; hardest cold-start.
-2. **Paid up front, launch price ~$9.99 rising later** — momentum lever
-   for the launch window ("early supporter" price).
-3. **Free + one-time in-app unlock** (e.g. library size cap until
-   unlock) — best funnel, more engineering (StoreKit + gating).
-
-Recommendation: option 2. One-time pricing is the honest match for a
-no-account, no-cloud app, and a visible launch discount gives the
-launch story urgency without a free tier's gating work.
+Mechanics: the base storefront is the United Kingdom at £9.99; Apple auto-generates equalised prices for the other 174 storefronts (VAT-inclusive regions offset the FX conversion, so the US lands near $9.99–10.99, not naive-FX $12.99). Review the generated sheet in App Store Connect at record creation; override the US to $9.99 by hand if it generates at $10.99. Enrol in the Small Business Program once the record exists (30% → 15% commission under $1M/year).
 
 ## Review-risk self-check
 

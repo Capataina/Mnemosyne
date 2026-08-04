@@ -26,9 +26,9 @@ store/
 - **Seller name** — the legal name (Ata Caner Çetinkaya) is accepted for now; account transfers are easy if a company entity comes later.
 - **Listing copy and the eight screenshot pages** — both signed off as-is 2026-08-04.
 
-## The owed live test
+## The owed live test — PASSED 2026-08-04
 
-The one repo-side remaining check is the 5-minute live folder-persistence run: `just lynceus-sandbox-test`, founder adds a folder, quits, relaunches — the folder must load without re-asking. It needs a human because only a human can drive the system folder picker. Trap that motivated it: **ad-hoc signing's bookmark identity survives relaunches but NOT rebuilds** — folder memory "breaking" after a rebuild is a known property of test signing, not a bug; the real certificate makes it permanent (and re-runs the same test once).
+The 5-minute live folder-persistence run passed founder-driven on the ad-hoc sandbox build: folder added via the system picker, indexed, app fully quit, relaunched — the folder loaded without re-asking. The same pass live-re-verified the AUTOINCREMENT id fix (bc01c71): the founder swapped the museum demo folder for a wallpapers folder and the fresh images showed correct thumbnails, the exact scenario that used to resurrect a deleted root's thumbs. Standing trap, still true: **ad-hoc signing's bookmark identity survives relaunches but NOT rebuilds** — folder memory "breaking" after a local rebuild is a property of test signing, not a bug. The real-certificate confirmation of the same behaviour arrives free via TestFlight once the signed .pkg is uploaded (a distribution-signed .app cannot be launched locally by design).
 
 ## Staleness notes
 

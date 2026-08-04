@@ -44,7 +44,7 @@
 | Listing copy (name, description, keywords) | ✅ draft 2 in `listing.md`, founder-signed-off 2026-08-04 |
 | Support + privacy pages | ✅ live at capataina.dev/lynceus/support/ and /privacy/ (curl-verified 200) |
 | Screenshots | ✅ eight pages in `Store Screenshots/`, spec-verified (2880×1800, no alpha, sRGB), founder-signed-off 2026-08-04 |
-| Sandbox smoke test | ✅/⏳ app boots and runs inside the sandbox; the folder-permission persistence check is a 5-minute live test with you (below) |
+| Sandbox smoke test | ✅ complete — boots, runs, AND the live folder-persistence test passed 2026-08-04 (founder-driven: folder added via picker, indexed, app quit and relaunched, folder loaded without re-asking; the same pass also live-re-verified the AUTOINCREMENT thumbnail fix by swapping library folders) |
 
 ## The 5-minute live test (you + me, before paying Apple anything)
 

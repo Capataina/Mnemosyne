@@ -1,6 +1,6 @@
 [package]
 name = "lynceus"
-version = "0.7.20"
+version = "1.0.0"
 description = "Lynceus — local-first semantic image browser; the image vertical of the Mnemosyne engine."
 authors = ["Ata Caner Cetinkaya"]
 edition = "2021"

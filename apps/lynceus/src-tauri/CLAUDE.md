@@ -1,12 +1,12 @@
 # apps/lynceus/src-tauri/
 
-The Lynceus product crate — Cargo bin `lynceus` v0.7.20, the Tauri v2 desktop host around the media-agnostic Mnemosyne engine (`crates/engine/`, path dependency, no frozen API). Everything image-specific lives here: the ONNX image/text encoders, the thumbnailer, the indexing pipeline, the filesystem watcher, and the Tauri command surface the React frontend (`../src/`) invokes. The engine owns DB, paths, perf, cosine/RRF; this crate re-exports those modules at their old crate-root paths (`lib.rs`) so `crate::db::…` call sites survived the extraction unchanged.
+The Lynceus product crate — Cargo bin `lynceus` v1.0.0, the Tauri v2 desktop host around the media-agnostic Mnemosyne engine (`crates/engine/`, path dependency, no frozen API). Everything image-specific lives here: the ONNX image/text encoders, the thumbnailer, the indexing pipeline, the filesystem watcher, and the Tauri command surface the React frontend (`../src/`) invokes. The engine owns DB, paths, perf, cosine/RRF; this crate re-exports those modules at their old crate-root paths (`lib.rs`) so `crate::db::…` call sites survived the extraction unchanged.
 
 ## Map
 
 ```
 src-tauri/
-├── Cargo.toml            crate manifest v0.7.20; platform-gated ort (CoreML on macOS,
+├── Cargo.toml            crate manifest v1.0.0; platform-gated ort (CoreML on macOS,
 │                         CUDA elsewhere), fast_image_resize, blake3 via engine,
 │                         objc2/objc2-foundation for security-scoped bookmarks
 ├── tauri.conf.json       product identity + bundle config — see the pairing trap below

@@ -45,6 +45,7 @@ PKG_IDENTITY := "3rd Party Mac Developer Installer: Ata Caner Çetinkaya (VURQD4
 lynceus-mas-package:
     cd apps/lynceus && pnpm tauri build --bundles app
     cp apps/lynceus/src-tauri/Lynceus_Mac_App_Store.provisionprofile       "target/release/bundle/macos/Lynceus.app/Contents/embedded.provisionprofile"
+    xattr -cr "target/release/bundle/macos/Lynceus.app"
     codesign --force --deep --sign "{{APP_IDENTITY}}"       --entitlements apps/lynceus/src-tauri/Entitlements.mas.plist       "target/release/bundle/macos/Lynceus.app"
     xcrun productbuild --sign "{{PKG_IDENTITY}}"       --component "target/release/bundle/macos/Lynceus.app" /Applications       "target/release/bundle/macos/Lynceus.pkg"
 

@@ -30,15 +30,21 @@ lynceus-sandbox-test:
     codesign --display --entitlements -       "target/release/bundle/macos/Lynceus.app"
     open "target/release/bundle/macos/Lynceus.app"
 
-# Mac App Store build + package — the real thing, once the Apple
-# Developer account exists. Fill the two identity strings from
-# Keychain Access after installing the certificates, and set
-# bundle.macOS.provisioningProfile in tauri.conf.json to the downloaded
-# profile. The .pkg this produces is what Transporter uploads.
-APP_IDENTITY := "Apple Distribution: YOUR NAME (TEAMID)"
-PKG_IDENTITY := "3rd Party Mac Developer Installer: YOUR NAME (TEAMID)"
+# Mac App Store build + package — the real thing. Identities filled
+# 2026-08-04 from the login keychain (certificates created via Xcode
+# that day; "3rd Party Mac Developer Installer" is Apple's on-disk name
+# for the Mac Installer Distribution certificate). The provisioning
+# profile is embedded by the recipe itself (cp before codesign, so the
+# seal covers it) — Tauri 2.11 has no provisioningProfile config field.
+# Signing uses Entitlements.mas.plist (base four keys + the two
+# identity entitlements MAS validation requires; the base plist stays
+# identity-free because restricted entitlements break the ad-hoc
+# sandbox-test build). The .pkg this produces is what Transporter uploads.
+APP_IDENTITY := "Apple Distribution: Ata Caner Çetinkaya (VURQD42U5Z)"
+PKG_IDENTITY := "3rd Party Mac Developer Installer: Ata Caner Çetinkaya (VURQD42U5Z)"
 lynceus-mas-package:
     cd apps/lynceus && pnpm tauri build --bundles app
-    codesign --force --deep --sign "{{APP_IDENTITY}}"       --entitlements apps/lynceus/src-tauri/Entitlements.plist       "target/release/bundle/macos/Lynceus.app"
+    cp apps/lynceus/src-tauri/Lynceus_Mac_App_Store.provisionprofile       "target/release/bundle/macos/Lynceus.app/Contents/embedded.provisionprofile"
+    codesign --force --deep --sign "{{APP_IDENTITY}}"       --entitlements apps/lynceus/src-tauri/Entitlements.mas.plist       "target/release/bundle/macos/Lynceus.app"
     xcrun productbuild --sign "{{PKG_IDENTITY}}"       --component "target/release/bundle/macos/Lynceus.app" /Applications       "target/release/bundle/macos/Lynceus.pkg"
 

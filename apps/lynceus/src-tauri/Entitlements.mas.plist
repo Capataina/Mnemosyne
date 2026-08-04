@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- Mac App Store variant of Entitlements.plist — used ONLY by the
+	     `just lynceus-mas-package` signing step. The four functional
+	     keys are identical to Entitlements.plist (which stays the
+	     source of truth for their rationale comments); this file adds
+	     the two identity entitlements the App Store's upload validation
+	     requires (per Tauri's App Store distribution guide). They must
+	     NOT be added to the base plist: they are "restricted"
+	     entitlements that break the ad-hoc-signed sandbox-test build,
+	     which has no provisioning profile to authorise them. -->
+	<key>com.apple.security.app-sandbox</key>
+	<true/>
+	<key>com.apple.security.files.user-selected.read-only</key>
+	<true/>
+	<key>com.apple.security.files.bookmarks.app-scope</key>
+	<true/>
+	<key>com.apple.security.network.client</key>
+	<true/>
+	<!-- Ties the signature to the App ID the provisioning profile
+	     names. Must byte-match the profile: VURQD42U5Z.com.capataina.lynceus -->
+	<key>com.apple.application-identifier</key>
+	<string>VURQD42U5Z.com.capataina.lynceus</string>
+	<key>com.apple.developer.team-identifier</key>
+	<string>VURQD42U5Z</string>
+</dict>
+</plist>

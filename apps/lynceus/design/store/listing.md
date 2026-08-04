@@ -16,44 +16,40 @@ Carries three search terms the name doesn't (private, photo, search) plus the mo
 
 ## Promotional text (170 chars max — editable without review)
 
-**Every image you've ever saved, one keystroke away. Search by meaning,
-follow visual trails, arrange your board by hand — all on your Mac,
-nothing in the cloud.** (159)
+**Every image you've ever saved, one keystroke away. Search by meaning, follow visual trails, arrange your board by hand. All on your Mac, nothing in the cloud.** (158)
 
 ## Description (4000 chars max; not indexed by App Store search — its jobs are conversion and Google. First ~170 chars carry the fold.)
 
-Lynceus is for people who collect images — reference art, family photos, screenshots, inspiration — and then can never find them again.
+Lynceus is for people who collect images: reference art, family photos, screenshots, inspiration. The ones you save carefully and then can never find again.
 
 Point it at your folders and it builds a fast, private library on your Mac. Nothing is uploaded. Nothing is moved. Your files stay exactly where they are; Lynceus just sees them.
 
 FIND BY DESCRIBING
-Type what you remember — "red armour concept art", "birthday cake in the garden", "foggy mountain at dawn" — and Lynceus finds it, even when the filename is IMG_4302. Three on-device AI encoders read your images once, locally; their rankings are fused so the strongest matches surface first, and from then on search is instant and entirely offline.
+Type what you remember, like "red armour concept art", "birthday cake in the garden", or "foggy mountain at dawn", and Lynceus finds it, even when the filename is IMG_4302. Three on-device AI encoders read your images once, locally. Their rankings are fused so the strongest matches surface first, and from then on search is instant and entirely offline.
 
 FOLLOW VISUAL TRAILS
-Click any image to see the ones that look like it. Click again to go deeper — the trail remembers where you came from. It's the "more like this" your file browser never had, and the fastest way to rediscover a collection you forgot you owned.
+Click any image to see the ones that look like it. Click again to go deeper. The trail remembers where you came from. It's the "more like this" your file browser never had, and the fastest way to rediscover a collection you forgot you owned.
 
 A BOARD, NOT A LIST
-The masonry board packs your images edge to edge like a moodboard. Drag any image exactly where you want it — the board telegraphs where it will land and settles precisely there. Stretch the ones that matter to 2×2 or 3×3. Your arrangement is yours, and it survives restarts, rescans, and reshuffles.
+The masonry board packs your images edge to edge like a moodboard. Drag any image exactly where you want it: the board telegraphs where it will land and settles precisely there. Stretch the ones that matter to 2×2 or 3×3. Your arrangement is yours, and it survives restarts, rescans, and reshuffles.
 
 TAGS THAT ACT LIKE FOLDERS
-Tag images without moving a single file. Every tag becomes a folder in the library panel, and filters combine — must have this, must not have that — to cut a thousand images down to the twelve you meant.
+Tag images without moving a single file. Every tag becomes a folder in the library panel, and filters combine (must have this, must not have that) to cut a thousand images down to the twelve you meant.
 
 PRACTISE FROM YOUR OWN COLLECTION
-The gesture timer turns any similarity range into a timed drawing session: the countdown advances references automatically, zoom rides your cursor, and a history strip keeps every reference one click away — revisit an earlier pose without losing your place, then resume the clock. Set the interval, hit start, and draw.
+The gesture timer turns any similarity range into a timed drawing session. The countdown advances references automatically, zoom rides your cursor, and a history strip keeps every reference one click away, so you can revisit an earlier pose without losing your place, then resume the clock. Set the interval, hit start, and draw.
 
 MADE FOR COLLECTIONS OF EVERY KIND
-- Artists — build reference boards, then practise from them in timed sessions.
-- Photographers — rediscover ten years of shoots by describing the frame you half-remember.
-- Families — your photo archive, searchable in plain words, on your own machine.
-- Designers — moodboards that search themselves, by subject, colour, or feel.
-- Collectors and researchers — a thousand scans become a browsable, taggable archive.
+- Artists: build reference boards, then practise from them in timed sessions.
+- Photographers: rediscover ten years of shoots by describing the frame you half-remember.
+- Families: your photo archive, searchable in plain words, on your own machine.
+- Designers: moodboards that search themselves, by subject, colour, or feel.
+- Collectors and researchers: a thousand scans become a browsable, taggable archive.
 
 PRIVATE BY ARCHITECTURE
-Lynceus is local-first the whole way down. The library index, the previews, the AI models — all of it ships inside the app and lives on your Mac. There is no account, no telemetry, no cloud, and no network request — ever. Unplug the internet and nothing changes. Settings shows you the whole index — every image catalogued, previewed, and encoded, live.
+Lynceus is local-first the whole way down. The library index, the previews, the AI models: all of it ships inside the app and lives on your Mac. There is no account, no telemetry, no cloud, and no network request. Ever. Unplug the internet and nothing changes. Settings shows you the whole index, every image catalogued, previewed, and encoded, live.
 
-—
-
-Lynceus watches your folders and keeps itself current: add files, move them, rename them, restructure everything — images keep their tags, their notes, and their place on your board, because Lynceus recognises files by their content, not their path. A short onboarding tour shows you the whole app in under a minute, replayable any time from Settings.
+Lynceus watches your folders and keeps itself current. Add files, move them, rename them, restructure everything: images keep their tags, their notes, and their place on your board, because Lynceus recognises files by their content, not their path. A short onboarding tour shows you the whole app in under a minute, replayable any time from Settings.
 
 ## Keywords (100 chars max, comma-separated)
 
@@ -68,17 +64,12 @@ No term repeats the name or subtitle (repeats waste the slot — Apple already i
 
 ## Privacy nutrition label
 
-**Data Not Collected** — the app has no account system, no analytics,
-no third-party SDKs, and makes no network requests at all (the store
-build bundles its models; sealed-boot logs verified zero attempts).
-Declare "Data is not collected" for every category.
+**Data Not Collected** — the app has no account system, no analytics, no third-party SDKs, and makes no network requests at all (the store build bundles its models; sealed-boot logs verified zero attempts). Declare "Data is not collected" for every category.
 
 ## URLs (required by App Store Connect)
 
-- Support URL: `https://capataina.dev/lynceus/support/` (LIVE —
-  verified 200 with content, 2026-08-03)
-- Privacy policy URL: `https://capataina.dev/lynceus/privacy/` (LIVE —
-  verified 200 with content, 2026-08-03)
+- Support URL: `https://capataina.dev/lynceus/support/` (LIVE — verified 200 with content, 2026-08-03)
+- Privacy policy URL: `https://capataina.dev/lynceus/privacy/` (LIVE — verified 200 with content, 2026-08-03)
 
 ## Screenshot plan (2880×1800 native Retina PNG, alpha flattened — per Apple's current spec)
 

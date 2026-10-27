@@ -1,378 +1,274 @@
-# Mnemosyne
+# Mnemosyne: a local engine for searching your own media, and Lynceus, the image browser built on it
 
-> A monorepo of local-first asset browsers built on one shared engine. **Mnemosyne** (the engine) owns the asset catalogue, embedding storage, and retrieval; each product built on it turns that core into a browser for one kind of media. The first shipping product is **Lynceus**, a desktop image browser — Pinterest-style masonry, manual tagging, multi-encoder visual similarity, and natural-language semantic search, all running entirely on your machine with no cloud, no accounts, and no external services.
+> Lynceus is a desktop image browser that turns the folders already on your disk into a dense, searchable library: type a sentence or pick an image, and it finds the matching pictures by what they look like, with every model running on your own machine. Mnemosyne is the media-agnostic engine underneath it, which owns the catalogue, the stored embeddings and the ranking.
 
-The names are a matched pair from Greek myth: Mnemosyne is the goddess of memory — the layer that remembers every asset — and Lynceus the Argonaut whose sight was sharp enough to see through the earth: the eye that searches it.
+The names are a matched pair from Greek myth: Mnemosyne is the goddess of memory, the layer that remembers every asset, and Lynceus the Argonaut whose sight was sharp enough to see through the earth, the eye that searches it.
 
-**Status (2026-08-04):** Lynceus is at **1.0.0** — the version line crossed for its first Mac App Store submission. The signed, sandboxed 1.0.0 package is built by `just lynceus-mas-package`, has been delivered to App Store Connect through Transporter, and is attached to its version record; the remaining steps are App Store Connect paperwork rather than code. The Mnemosyne engine versions independently and sits at 0.5.6.
+## Showcase: the grid, the search and the similarity trail as they actually render
 
----
+These are the store screenshots, captured from real runs of the application on an openly licensed museum library rather than composed mock-ups.
 
-## Repository layout
+| | |
+|---|---|
+| ![The library as a masonry grid](Store%20Screenshots/Lynceus/01-library.png) | ![Searching in plain language](Store%20Screenshots/Lynceus/02-semantic-search.png) |
+| ![From a search into a similarity trail](Store%20Screenshots/Lynceus/03-search-to-trail.png) | ![Visual similarity from one image](Store%20Screenshots/Lynceus/04-visual-similarity.png) |
+| ![The inspector](Store%20Screenshots/Lynceus/05-inspector.png) | ![Tags and folders](Store%20Screenshots/Lynceus/06-tags-and-folders.png) |
+| ![The gesture-drawing timer](Store%20Screenshots/Lynceus/07-gesture-timer.png) | ![Private by architecture](Store%20Screenshots/Lynceus/08-private-by-architecture.png) |
 
-A Cargo workspace (the engine + product crates) mirrored by a pnpm workspace (the product frontends). The engine is a path dependency with no frozen public API until a second product proves the seams.
+## Overview: a search box for the images already on your disk, and nothing ever leaves the machine
 
-```
-Mnemosyne/                         monorepo root
-├── crates/
-│   └── engine/                    Mnemosyne — media-agnostic core (Cargo lib `mnemosyne`)
-│                                    catalogue (SQLite/WAL) · flat mmap embedding stores ·
-│                                    cosine + RRF fusion · domain types · paths · profiling
-├── apps/
-│   └── lynceus/                   Lynceus — the image-browser product
-│       ├── src/                   React 19 frontend (pnpm pkg `lynceus-ui`)
-│       ├── src-tauri/             Tauri app crate (Cargo bin `lynceus`)
-│       │                            image encoders · thumbnailer · indexing pipeline ·
-│       │                            filesystem watcher · Tauri command surface
-│       └── design/                brand mark, App Store listing, release runbook
-├── models/                        gitignored weights, fetched by the script below
-│   ├── image/                     OpenCLIP · DINOv2 · SigLIP-2
-│   ├── audio/                     (future — Syrinx)
-│   └── 3d/                        (future — Daedalus)
-├── scripts/                       model download / quantisation / demo & test corpus utilities
-├── Store Screenshots/             App Store marketing pages (per app) + the HTML sources
-│                                    each PNG regenerates from
-└── Cargo.toml                     workspace manifest
-```
+### What it is and is not: a lens onto your folders, never a new home for them
 
-Only the encoders, thumbnailer, indexing pipeline, and Tauri surface are image-specific — everything below that line is media-agnostic. Future asset browsers — **Syrinx** (audio) and **Daedalus** (3D) — join as sibling `apps/<product>/` units that depend on the same engine.
+Lynceus draws the image folders you point it at as a Pinterest-style masonry grid, lets you hang tags on them by hand, and answers two different questions about them: *show me more that look like this one*, and *show me the ones that match this sentence*. Folders are scanned where they sit and never copied, moved or renamed, so the library on disk stays the library and you can stop using Lynceus without extracting anything.
 
----
+It deliberately is not several neighbouring products:
 
-# Lynceus
+- **Not a cloud photo library.** Those services search pictures in words very well, and they need the pictures on their computers to do it. Here that never happens, which costs you every device but your own and buys a library that works with the network unplugged.
+- **Not a photo editor or a professional catalogue.** There is no develop step, no raw processing and no export pipeline. It is built for finding images, not producing them.
+- **Not Pinterest, despite borrowing the grid.** There is no network, no feed, no recommendations and nothing you do not already own.
+- **Not a file manager or a search bar for the whole machine.** It knows one kind of media at a time, in the folders you chose.
 
-## Why Lynceus exists
+### Who it is for: anyone whose gathered image collection has outgrown its folder tree
 
-File explorers are built for files, not images. When you have thousands of images across nested folders — reference collections, inspiration boards, photography libraries, art assets — navigating them with a file explorer means clicking through directories one by one with no way to search by meaning, find visually similar images, or organise by anything other than filename or date.
+Illustrators and concept artists with reference boards, designers with years of saved inspiration, photographers with an archive they can no longer navigate by filename, and anyone whose downloads folder became an accidental library. What they share is a collection that was gathered rather than shot, so it has no chronology to sort by, and a memory of what an image *looked like* that is far better than their memory of where they filed it. They will not move the library, and they will not upload it.
 
-Lynceus treats your local image library as a first-class collection: thumbnailed, indexed, tagged, annotated, and searchable — both by text labels and by semantic meaning. Type "dark cinematic lighting" or "forest path at dusk" and find matching images without having manually tagged them. Click any image to instantly surface the visually similar ones from across your entire library. Add per-image notes to capture context the filename can't.
+### Why it exists: a filesystem indexes images by the wrong key
 
-Everything runs locally. Embeddings are generated on your machine using ONNX Runtime. Store-shaped builds bundle the encoder models inside the app and run fully sandboxed, making **zero network requests** — no accounts, no telemetry, no cloud. Dev builds without local weights make exactly one kind of network call: a first-launch model download; after that, you can disconnect entirely.
+A filesystem addresses images by name and location; a person remembers them by appearance and subject. A folder puts each image in exactly one place, while a picture can be a cityscape, a lighting reference and that particular blue all at once, so any tree you build loses two of those three searches. Cloud services solve the search and require the upload; catalogue tools keep files local but only search what someone typed in; hand-tagging decays because nobody keeps it up. What changed is that image encoders which put pictures and sentences in one space became small enough to bundle in a desktop application and run on an ordinary laptop, so the search can finally run where the pictures already are.
 
-## Features
+## Features: every way to find an image by something you can actually remember
 
-### Browsing
+### Browsing: a dense grid that keeps every image's own shape
 
-- **Pinterest-style masonry grid** with dense occupancy packing and aspect-ratio-preserving thumbnails — handles tens of thousands of images without performance degradation
-- **Infinite scroll** with virtualised loading via TanStack Query
-- **Adjustable column count, tile scale, and animation level**
-- **Shuffle-on-entry feed** — the grid shuffles fresh each time you open it or return from a search, and newly-indexed images pop into place as their thumbnails finish, without existing tiles ever jumping
-- **Drag-to-reorder and smooth drag-to-resize** — drag any tile (including 2×2/3×3 spans) to reposition it, or grab any of its four corners to resize it smoothly (it snaps to a whole column span on release); a live placeholder telegraphs the landing slot and the tile settles exactly where the preview showed, with neighbours packing densely around user-placed tiles; aspect ratio is always preserved, and a stretched tile automatically loads a higher-resolution preview so it stays crisp
-- **Hover micro-interactions** (toggleable for low-power preference)
-- **Fullscreen modal inspector** with prev/next navigation, keyboard shortcuts, and inline tag/note editing
-- **Gesture-drawing timer** — a fullscreen, auto-advancing reference session over any view (main feed, tag-filtered results, search results, or an image's similar-set): configurable interval, pause/resume, pinch-to-zoom, two-finger pan, Fit, and a reference-history strip — click any earlier reference to review it (the countdown freezes) and resume with your remaining time intact
+- **Masonry grid with aspect-ratio-preserving thumbnails**, packed densely by column, because a reference library is looked at for composition as much as subject and a cropped thumbnail shows something that is not the picture.
+- **Infinite, virtualised scrolling** that stays fluid at libraries of tens of thousands of images, because the packing runs off the main thread.
+- **Drag to reorder and drag a corner to resize**, snapping to whole column spans; the placeholder shown during the drag is exactly where the tile lands, and neighbours pack around it.
+- **Shuffle on entry**, so the grid surfaces a fresh slice of the collection each time instead of the same first screen.
+- **A full-screen inspector** with previous and next navigation, keyboard shortcuts, and inline tag and note editing.
+- **Adjustable column count, tile scale and animation level**, with a reduced-motion mode.
 
-### Multi-folder library
+### Finding by appearance: three encoders, one fused ranking
 
-- **Add multiple root folders** to a single library — each scanned recursively, with per-folder enable/disable toggles
-- **Live filesystem watcher** with 5-second debounce picks up new, moved, or deleted files — and rebuilds its watch set the moment folders are added, removed, or toggled
-- **Moved files keep their identity** — BLAKE3 content-hash relinking recognises a relocated file and preserves its tags, manual placement, and embeddings through any folder restructure
-- **Orphan detection and cleanup** — images whose source files disappear are hidden, not lost, and a scoped "Clean up" purge removes the permanently dead entries when you say so
-- **Per-root thumbnail isolation** so adding or removing a folder never invalidates other folders' caches
+- **Visual similarity from any image.** Open an image and ask for more like it; follow the trail from one result to the next, with a breadcrumb strip to step back.
+- **Plain-language search.** Type "forest path at dusk" or "dynamic pose" and get matching images you never tagged.
+- **Three independently trained encoders, fused.** OpenCLIP ViT-B/32 is strong on captionable concepts, DINOv2-Base on visual structure and texture, and SigLIP-2 Base on whole-image semantics. Their rankings are combined with Reciprocal Rank Fusion, because no single model is good at every kind of resemblance.
+- **Per-encoder toggles**, so any subset can run and the fusion adapts to whichever are enabled.
+- **Filename and tag matches join the search**, and an exact tag match takes priority over a semantic reading.
 
-### Tagging
+### Organising: tags that cost nothing to keep
 
-- **Manual tags** with optional colours, added and removed per image from the inspector or search bar
-- **Tag autocomplete** with `#tag` syntax in the search bar; tags can be created on the fly by typing a new name
-- **AND / OR tag filtering** — show images that match all selected tags or any of them
-- **Library panel (folders-as-tags)** — a left-edge slide-out panel (hover the screen edge or its icon to open, click to pin) where every tag _is_ a folder (no separate folder concept); open a folder to browse it, or compose the feed with include ("must have") and exclude ("must not have") filters, each showing a live per-folder image count. Applying a filter always acts on the visible feed, leaving any open similar-set or search
-- **Tag deletion** from the search bar dropdown, with optimistic UI updates throughout
+- **Manual tags with optional colours**, added from the inspector or with `#tag` autocomplete in the search bar.
+- **AND and OR tag filtering**, and a library panel where every tag behaves like a folder you can open, include or exclude.
+- **Per-image notes** for context a filename cannot carry.
 
-### Notes
+### A library that follows your disk
 
-- **Per-image notes** — free-form text captured in the inspector and persisted to the local database
+- **Several root folders in one library**, each scanned recursively and individually switchable.
+- **A live filesystem watcher** that picks up new, moved and deleted files.
+- **Moved files keep their identity.** A file is recognised by a content hash, so renaming or reorganising folders keeps its tags, placement and embeddings.
+- **Missing files are hidden, not destroyed**, and are cleared only when you ask, because an unmounted drive should not cost you your tagging work.
 
-### Visual similarity search (image → image)
+### Practice: a gesture-drawing timer over any view
 
-- **Click any image** in the inspector to retrieve the most visually similar images from the entire library
-- **Similarity breadcrumb trail** — dive from one image into its similar-set and onward through a cascade, with a breadcrumb strip to rewind to any earlier image in the trail or step back one hop at a time
-- **Multi-encoder fusion** combining three independently-trained vision models via **Reciprocal Rank Fusion** (Cormack 2009, k=60):
-  - **CLIP ViT-B/32** (OpenCLIP, LAION-2B, MIT-licensed, 512-d) — strong on captionable visual concepts
-  - **DINOv2-Base** (Meta, 768-d) — strong on self-supervised visual structure and texture
-  - **SigLIP-2 Base 256** (Google, 768-d) — strong on full-image semantics with no centre-crop
-- **Per-encoder toggles** in settings — enable any subset; the fusion ranker adapts automatically
-- **ID-native fused retrieval** over per-encoder flat mmap embedding stores that survive restarts
+A full-screen, auto-advancing reference session over the main feed, a tag filter, a search or a similarity set, with a configurable interval, pause, pinch-to-zoom, pan, and a strip of recent references you can revisit without losing your remaining time.
 
-### Semantic search (text → image)
+### Learning it: a guided tour that shows the real interface
 
-- **Natural-language queries** — type "skull", "neon cityscape", "dynamic pose", or any free-form phrase
-- **Text-image fusion** runs the query through every enabled text-capable encoder (CLIP and SigLIP-2) and fuses the rankings via RRF, just like image-image search
-- **Tag search and semantic search coexist** — exact tag matches take priority; otherwise the query is treated as semantic
-- **Filename search joins the fusion** alongside the semantic rankers
-- **Debounced live search** with 300 ms input debouncing and 5-minute result caching
+A six-scene tour plays on first launch and can be replayed from Settings. Every scene depicts the actual interface, with the cursor arriving before anything responds, so it teaches rather than decorates.
 
-### Onboarding
+## Behaviour: what Lynceus is held to
 
-- **A six-scene guided tour** — looping skeleton demonstrations with an animated cursor teach folders, arranging, filtering, semantic search, similarity, and the gesture timer on first launch; replayable any time from Settings → **Restart onboarding**
-- **Reduced-motion aware** — with animations off (or `prefers-reduced-motion`), scenes render as captioned static filmstrips instead
+### Goals: private by architecture, read-only towards your files, honest about what it knows
 
-### Settings drawer
+- Nothing about your images leaves the machine, by design rather than by setting.
+- The folders on disk are the library; Lynceus derives from them and never writes to them.
+- Finding an image should rest on what you remember about it, not on upkeep you have to do by hand.
 
-- **Theme** — light, dark, or system
-- **Display** — column count, animation level, image scale
-- **Search** — result counts, tag-filter mode (AND/OR)
-- **Folders** — add, remove, enable/disable scan roots; trigger manual rescans; clean up orphaned entries
-- **Encoders** — per-encoder enable/disable toggles for image and text directions
-- **Library stats** — indexing progress, per-size preview breakdown, and pipeline health at a glance
-- **Reset** — clear preferences without touching the library
+### Behaviours: what you see when you use it
 
-### Performance and observability
+| id | when | you see |
+|---|---|---|
+| B1 | You add a folder | It is scanned in place; images appear in the grid as their thumbnails finish, and become searchable as their embeddings finish. The grid is browsable immediately |
+| B2 | You quit halfway through indexing | Indexing resumes on the next launch from where it stopped; searches meanwhile return results from what has been processed |
+| B3 | You rename or move a folder of tagged images | The images keep their tags, notes and placement, and no duplicates appear |
+| B4 | An image file cannot be decoded | It is left out of the library rather than given an empty vector that would surface as a confident wrong answer |
+| B5 | A drive holding a root is unplugged | Its images are hidden and kept; nothing is purged until you choose Clean up |
+| B6 | You drag a tile | The placeholder during the drag is exactly the arrangement you get on release |
+| B7 | You search with the network off | Everything works exactly as it does online |
 
-- **Parallel encoder execution** during indexing — all enabled encoders run concurrently with intra-thread tuning shared across the M2 P-cluster
-- **JPEG fast path** using native scaled IDCT (`jpeg-decoder` 1/8, 1/4, 1/2 factor) followed by NEON-optimised Lanczos3 (`fast_image_resize`)
-- **WAL-mode SQLite** with separate writer and read-only secondary connections, batched embedding upserts, and manual checkpointing between encoder batches
-- **Feed manifest + delta protocol** and **off-main-thread masonry packing** on typed arrays — the grid stays responsive at 100k-library scale
-- **Live indexing-status pill** showing scan, thumbnail, encoder, and preview progress in real time
-- **Optional profiling mode** (`--profiling` flag) — span timing, 1 Hz RSS/CPU sampler, interaction telemetry, on-exit markdown report; zero overhead when off
-- **INT8 quantized encoder weights** are the shipping default (~4× smaller than fp32); `scripts/quantize_models.py` produces the statically-calibrated variants, and `model_precision` in settings can switch a dev install between them
+### Guarantees and limits: where it deliberately stops
 
-### Privacy and offline operation
+- **It never modifies, moves or uploads an original image.** Only thumbnails, tags, notes and embeddings are derived, and they live in the application's own data directory.
+- **The store build makes no network requests.** The encoder weights ship inside the application. This is a behavioural guarantee rather than one the operating system enforces: the sandboxed web view needs the network-client entitlement merely to start its helper processes, so the claim rests on the application never opening a connection.
+- **Search quality depends on how much you have.** Fused rankers return the closest images that exist, so a sparse library gives looser neighbours than a dense one; it improves as the collection grows rather than with tuning.
+- **First indexing is real work on your own hardware**, and on a large library it takes noticeable time. Progress is shown as a proportion of the whole, never as a time estimate the application cannot honestly make.
+- **No accounts, no sharing, no sync, no plugins and no editing tools.** Each is a good idea for a different product.
 
-- **Local-only storage** — SQLite database, thumbnail cache, and ONNX model files all live in your platform's app-data directory
-- **No accounts, no telemetry, no API keys**
-- **Store builds are sandboxed and make zero network requests** — models ship inside the app; nothing ever leaves the machine
-- **Original images are never modified or moved** — only metadata, thumbnails, and embeddings are derived
+## Getting started: build Lynceus from source and point it at a folder
 
-## How to use
+### Requirements: an Apple Silicon Mac, Rust, Node with pnpm, and Python for the model script
 
-### First launch
+- macOS on Apple Silicon is the shipping target. The code also builds on Linux and Windows, with ONNX Runtime using CUDA where available, but those builds are not maintained releases.
+- Rust (stable, 2021 edition), Node with `pnpm`, and Python 3 for fetching the encoder weights.
+- [`just`](https://github.com/casey/just) is optional and recommended.
+- About 2.5 GB of free space for the full-precision weights.
 
-1. Launch the app. A short onboarding tour (six looping demonstrations) plays on first launch and can be replayed any time from Settings → **Restart onboarding**. Store-shaped builds bundle the int8 encoder models inside the app; dev builds without local models download them from HuggingFace on first launch instead.
-2. Open the **Settings drawer** (gear icon, top-right) and add at least one folder under the **Folders** section. The folder is scanned recursively for images (`.jpg`, `.jpeg`, `.png`, `.webp`, `.gif`, `.bmp`, `.tiff`).
-3. The **indexing-status pill** in the top-right tracks progress through the pipeline phases:
-   - **Scan** — discovering image files on disk (and content-hashing new ones so moved files keep their identity)
-   - **Thumbnails** — generating the 480px base previews
-   - **Encoders** — generating embeddings via the enabled encoders
-   - **Previews** — pre-generating the larger 960/1440/2048 preview sizes (after search is already usable)
-4. As thumbnails finish, images appear in the grid. As embeddings finish, similarity and semantic search become available for those images. Both run in the background; the grid is browsable immediately.
-
-### Browsing the grid
-
-- **Scroll** to load more images. The grid is infinite-scrolling with virtualised paging.
-- **Click** any image to open the inspector modal.
-- **Arrow keys** in the inspector navigate to the previous / next image.
-- **Esc** closes the inspector.
-- Use the **timer pill** on a selected image to start a fullscreen, auto-advancing reference session (the gesture timer): configurable interval, pause/resume, pinch-to-zoom, two-finger pan, and Fit — works over the main feed, tag-filtered results, and search results.
-
-### Searching
-
-- The search bar at the top of the page accepts both **tag queries** and **natural-language queries**.
-- Type `#` to autocomplete from existing tags. Multiple tag pills can be combined; the AND/OR mode is configurable in the Search section of settings.
-- Type plain text (no `#`) to run a **semantic search** across the library — for example, `forest path at dusk`, `geometric pattern`, or `portrait of a woman in red`.
-- If your query matches an existing tag exactly, the tag filter takes priority; otherwise it is treated as semantic.
-
-### Visual similarity
-
-- Open any image in the inspector and click **View Similar** to retrieve images visually similar to it from across the library.
-- Results are ranked by fused similarity across all enabled image encoders.
-- The similarity view feeds the gesture timer too — start a timed session over the similarity ranking to practise from visually-related references at speed.
-
-### Tagging and notes
-
-- Open an image in the inspector. Use the **tag combobox** to add or remove tags; type a new name to create a tag on the fly.
-- Use the **notes textarea** to capture any free-form context for the image. Notes are saved automatically.
-- Tags are deletable from the search bar's autocomplete dropdown — useful for cleaning up stray tags.
-
-### Encoder toggles
-
-- Open settings and find the **Encoders** section. Each encoder (CLIP image, CLIP text, DINOv2 image, SigLIP-2 image, SigLIP-2 text) can be independently enabled or disabled.
-- Disabling an encoder skips its computation during indexing and removes it from the fusion ranker. Re-enabling it triggers a background re-index for any images that don't yet have embeddings from that encoder.
-- The fusion ranker operates over whichever encoders are enabled at query time.
-
-### Profiling mode
-
-If you're investigating performance, launch with the profiling flag:
+### Install: clone, install, fetch the weights
 
 ```bash
-pnpm run tauri dev -- -- --profiling
-```
-
-(The double `--` is required: the first separates `tauri` from its CLI, the second passes the flag through to the Rust binary.) An on-exit markdown report is written to the app-data directory. The flag is `--profiling`, not `--profile` — the latter collides with Tauri's own cargo-profile flag.
-
----
-
-## Architecture
-
-Lynceus runs as a Tauri 2 desktop application — React 19 frontend, Rust backend, the Mnemosyne engine crate beneath it, SQLite persistence, ONNX Runtime inference.
-
-```
-┌─────────────────────────────────────────────────────────────┐
-│                      React 19 Frontend                      │
-│                                                             │
-│  • pages/[...slug].tsx   — single catch-all route           │
-│  • Masonry / SearchBar / inspector / library drawer /       │
-│    settings/ / onboarding/ / gesture-timer/                 │
-│  • TanStack Query hooks for image, tag, root, search state  │
-│  • Off-main-thread masonry packing (worker, typed arrays)   │
-│  • Tauri event subscription for indexing-progress           │
-│  • Optional PerfOverlay + telemetry (--profiling only)      │
-└──────────────────────────────┬──────────────────────────────┘
-                               │ Tauri IPC (typed ApiError)
-┌──────────────────────────────▼──────────────────────────────┐
-│               Rust Backend (apps/lynceus/src-tauri)         │
-│                                                             │
-│  • commands/   — ~38 Tauri commands, grouped by concern     │
-│  • indexing.rs — single-flight pipeline (scan → thumbs →    │
-│                  encoders → previews)                       │
-│  • thumbnail/  — JPEG scaled IDCT + Lanczos3, 480px base    │
-│                  + 960/1440/2048 preview buckets            │
-│  • watcher.rs  — notify-debouncer-mini, 5 s debounce,       │
-│                  rebuilt on every root mutation             │
-│  • similarity_and_semantic_search/                          │
-│    ├── encoders/   CLIP / DINOv2 / SigLIP-2 (image + text)  │
-│    └── ort_session — shared M2-tuned Session builder        │
-│  • model_download.rs — HuggingFace dev-build fallback       │
-└──────────────────────────────┬──────────────────────────────┘
-                               │
-┌──────────────────────────────▼──────────────────────────────┐
-│             Mnemosyne engine (crates/engine)                │
-│                                                             │
-│  • db/      — SQLite catalogue (WAL, writer + read-only     │
-│               secondary), tags, notes, roots, orphans,      │
-│               BLAKE3 content-hash relinking                 │
-│  • cosine/  — per-encoder retrieval + RRF fusion,           │
-│               versioned flat mmap embedding stores          │
-│  • paths.rs — platform app-data dir resolution              │
-│  • profiling — span timing, samplers, on-exit report        │
-└──────────────────────────────┬──────────────────────────────┘
-                               │
-┌──────────────────────────────▼──────────────────────────────┐
-│                       Local Storage                         │
-│                                                             │
-│  <app-data-dir>/                                            │
-│    images.db                  — metadata, tags, notes,      │
-│                                  roots, content hashes      │
-│    thumbnails/<root>/...      — 480px JPEG base previews    │
-│                                  + 960/1440/2048 buckets    │
-│    models/                    — CLIP, DINOv2, SigLIP-2      │
-│    embstore_<encoder>.bin     — versioned flat mmap stores  │
-└──────────────────────────────┬──────────────────────────────┘
-                               │
-┌──────────────────────────────▼──────────────────────────────┐
-│                       ONNX Runtime                          │
-│                                                             │
-│  • CLIP ViT-B/32 vision + text (OpenCLIP, 512-d)            │
-│  • DINOv2-Base vision (Meta, 768-d)                         │
-│  • SigLIP-2 Base 256 vision + text (Google, 768-d shared)   │
-│                                                             │
-│  CPU on macOS (CoreML produces runtime errors for these     │
-│  graphs); CUDA on non-macOS with CPU fallback.              │
-└─────────────────────────────────────────────────────────────┘
-```
-
-All durable architecture and engineering knowledge lives in per-folder `CLAUDE.md` files beside the code each one describes — each carries its folder's purpose, invariants, decisions, and traps.
-
----
-
-## Design principles
-
-- **Local-first** — all computation, storage, and inference runs on your machine. No cloud dependencies, no API keys, and in store builds not a single network request.
-- **Privacy by construction** — original images are never modified or uploaded; thumbnails, notes, and embeddings are derived locally and stored in a local SQLite database.
-- **Performance at scale** — adaptive preview buckets, batched encoder inference, per-encoder versioned mmap embedding stores, ID-native fused retrieval, a feed manifest/delta protocol, and off-main-thread masonry packing keep the UI responsive at large-library scale.
-- **Offline ML inference** — every encoder runs entirely via ONNX Runtime. No Python, no external ML service, no GPU required (CUDA used on non-macOS when available).
-- **Modularity and toggleability** — encoders are swappable; per-encoder toggles let you enable any subset without rebuilding. The fusion ranker adapts to whichever encoders are active.
-- **Separation of concerns** — React frontend, Tauri IPC layer, product Rust crate, media-agnostic engine crate, and SQLite persistence are cleanly separated and independently testable; the full Rust and Vitest suites gate every change.
-- **Observability when you need it, zero overhead when you don't** — the profiling layer is opt-in via a CLI flag and produces a structured markdown report on exit.
-
----
-
-## Tech stack
-
-| Layer | Tools |
-| --- | --- |
-| Desktop shell | Tauri 2 |
-| Frontend | React 19, Vite 7, TanStack Query 5, Tailwind CSS 4, Radix UI, framer-motion, cmdk, lucide-react |
-| Frontend testing | Vitest 4, Testing Library, JSDOM |
-| Backend | Rust 2021 edition (product crate `lynceus` + engine crate `mnemosyne`) |
-| Persistence | SQLite (WAL mode) via `rusqlite` |
-| Content identity | `blake3` streaming content hashes |
-| Image I/O | `image-rs`, `jpeg-decoder`, `fast_image_resize` |
-| ML runtime | `ort = 2.0.0-rc.10` (ONNX Runtime bindings) |
-| Tokenisation | HuggingFace `tokenizers` (BPE for CLIP, SentencePiece for SigLIP-2) |
-| Filesystem watcher | `notify` + `notify-debouncer-mini` |
-| Profiling | `tracing` + custom `PerfLayer`, `sysinfo` for RSS/CPU sampler |
-| Concurrency | `rayon` for parallel encoder execution and content hashing |
-
----
-
-## Running locally
-
-```bash
-# Clone the repository
 git clone https://github.com/Capataina/Mnemosyne
 cd Mnemosyne
-
-# Install workspace dependencies (pnpm workspace — installs all apps)
 pnpm install
-
-# Fetch the encoder weights into the gitignored models/ tree (~2.4 GB, commercial-licensed)
 python3 scripts/download_models.py --modality image
 ```
 
-The fastest way to run Lynceus — a `just`/`pnpm` wrapper that points `LYNCEUS_MODELS_DIR` at the repo-local weights automatically, so you never type that env var:
+Success is a populated `models/image/` folder holding the OpenCLIP, DINOv2 and SigLIP-2 ONNX files. The weights are not committed; all three carry commercial-friendly licences (OpenCLIP LAION weights MIT, DINOv2 and SigLIP-2 Apache-2.0).
+
+### Quick start: run it and add your first folder
 
 ```bash
-just lynceus-dev       # dev mode, hot-reloading frontend
-just lynceus-release   # optimized release build, opens the .app — for real perf testing
-# or, without `just` installed:
-pnpm run lynceus:dev
-pnpm run lynceus:release
+just lynceus-dev        # or, without just: pnpm run lynceus:dev
 ```
 
-For everything else — profiling mode, a manual release bundle, a sealed sandbox test, or targeting a non-default models directory — the underlying commands:
+The window opens and the tour plays. Open Settings (the gear, top right), add a folder under **Folders**, and watch the status pill move through Scan, Thumbnails, Encoders and Previews. Once Encoders has progressed, type a sentence into the search bar or open an image and choose **View Similar**.
+
+### Usage: commands, settings and where your data lives
+
+| command | what it does |
+|---|---|
+| `just lynceus-dev` | Development build with hot-reloading frontend, using the repository's own weights |
+| `just lynceus-dev-telemetry` | The same, with the profiling layer on; writes a markdown report on exit |
+| `just lynceus-release` | Optimised release `.app`, built and opened, for real performance testing |
+| `just lynceus-sandbox-test` | A store-shaped build, ad-hoc signed with the sandbox enforced, to rehearse the sealed app locally |
+| `just lynceus-mas-package` | The signed Mac App Store package (needs the Apple distribution identities) |
+
+The profiling flag is `--profiling` (not `--profile`, which collides with Tauri's own cargo-profile flag), or `PROFILING=1` in the environment.
+
+Derived state (the SQLite catalogue, thumbnails, embedding stores and settings) lives in the application's data directory, for example `~/Library/Application Support/com.capataina.lynceus/` on macOS. Override it with `LYNCEUS_DATA_DIR`, and the weights directory with `LYNCEUS_MODELS_DIR`.
+
+## How it works: two journeys that meet at one catalogue
+
+### Architecture: an engine that knows assets, and an application that knows images
+
+```
+  a folder you pick
+          │
+          ▼
+  [ indexing pipeline ]  walks it, decides what is new or changed      (Lynceus)
+          │
+          ├──▶ [ thumbnailer ] ──▶ small renditions the grid can draw  (Lynceus)
+          │
+          └──▶ [ encoders ×3 ] ──▶ three vectors per image             (Lynceus)
+                     │
+                     ▼
+               [ engine ] stores assets, vectors, tags: one catalogue  (Mnemosyne)
+                     │
+   a query ──────────┤  a sentence, or "more like this one"
+                     ▼
+               [ encoders ] turn the query into a vector               (Lynceus)
+                     │
+                     ▼
+               [ engine ] ranks the library once per encoder,           (Mnemosyne)
+                     │    then fuses the orderings by position
+                     ▼
+              [ desktop shell ] draws it as a masonry grid             (Lynceus)
+```
+
+Indexing and querying are not one pipeline but two journeys that share a store. Indexing is slow, rare and in the background; querying is fast, constant and has to feel instant. They share the encoders, which is the whole mechanism by which words find pictures: the model that described an image at index time interprets your sentence at query time. Fusion combines the encoders' orderings by *where* each image placed rather than by their scores, because scores from different models are not on a common scale.
+
+| part | owns | lives in |
+|---|---|---|
+| Mnemosyne engine | The catalogue (assets, roots, tags, notes, content hashes), the embedding stores, cosine retrieval and rank fusion, app-data paths, profiling spans. Knows nothing about images | `crates/engine` |
+| Encoders | Turning an image or a sentence into a vector, and nothing else | `apps/lynceus/src-tauri` |
+| Indexing pipeline | Scheduling the expensive work (scan, thumbnails, encoders, previews) so it is interruptible and resumable | `apps/lynceus/src-tauri` |
+| Thumbnailer | The base and preview renditions the grid draws | `apps/lynceus/src-tauri` |
+| Filesystem watcher | Noticing disk changes and re-entering at the indexing pipeline, the only route into the catalogue | `apps/lynceus/src-tauri` |
+| Desktop shell | Everything you see: grid, search, inspector, tagging, tour, timer. It asks the engine for answers and computes none of its own | `apps/lynceus/src` |
+| Packaging pipeline | Turning source into a signed, sandboxed, uploadable package | `justfile`, `apps/lynceus/src-tauri` |
+
+**The stack, and what each choice beat:**
+
+- **Rust** for everything that owns anything, because running three models over tens of thousands of images on a consumer laptop is expensive, and shipping a Python interpreter inside a desktop application is a distribution problem. Python remains only in offline scripts that never ship.
+- **Tauri 2 over Electron**, because the application already carries hundreds of megabytes of model weights and Electron would add a whole browser engine on top. A fully native interface lost on the grid, which is exactly what web layout and animation do well.
+- **ONNX Runtime over a hosted embeddings service.** The service would have been simpler in every engineering respect and would send your images to someone else's computer. ONNX also runs models from three different training ecosystems through one runtime.
+- **SQLite, embedded, with vectors in memory-mapped flat files beside it**, over a server database or a dedicated vector index. There is one writer on one machine, and at the target library sizes an exhaustive comparison is fast enough without a second store to keep consistent.
+- **React 19** for the grid, because thousands of items whose positions keep changing want stable per-item identity and cheap re-rendering.
+- **INT8 quantised weights as the shipping default**, which cut the bundle from several gigabytes to well under one, because download size decides whether people finish installing.
+
+### Key concepts: the words this project uses
+
+- **Lynceus**: the application you launch. **Mnemosyne**: the engine beneath it, and the repository's name.
+- **Engine**: the media-agnostic half. If a sentence about it needs the word "picture", the behaviour is in the wrong place.
+- **Encoder**: a trained model that turns an image or a sentence into a vector, so that resemblance becomes arithmetic.
+- **Fusion**: combining several encoders' rankings by position, using Reciprocal Rank Fusion.
+- **Root**: a folder you have pointed Lynceus at. A library is a set of roots.
+- **Local-first**: there is no remote half at all. The offline case is not a degraded mode; it is the only mode.
+
+### Invariants: what is always true of the system
+
+- Only the engine opens the library or the catalogue.
+- An asset's identity comes from its content, not its path.
+- An identifier is never reused, so a new image can never inherit a deleted one's thumbnail.
+- The engine contains no image-specific concept, and nothing outside the shell depends on the shell.
+- Ranking happens in one place, the engine; the shell never re-sorts a result itself.
+- Every persisted cache carries a header naming its format and inputs, is written to a temporary file and renamed into place, and refuses to load when either does not match.
+- The shipping build makes no network request.
+
+## Design: the images are the interface
+
+Everything Lynceus draws that is not an image competes with the images for attention, so chrome is thin, quiet and mostly absent until summoned. The grid is dense on purpose: it would rather show three more rows than breathe, because the calm comes from how many images you can scan in one look. Images keep their own proportions, never cropped to tidy squares. Panels slide in from an edge and float over the grid instead of re-packing it, so opening the inspector never loses your place. Colour comes from your images: the interface's own palette is narrow and low in saturation, one family of type carries the text, and motion is short and decelerates into place like an object being handled.
+
+What was tried and rejected, as kinds of thing:
+
+- **A packer that recomputed the layout on release** was replaced, because a direct-manipulation surface must show during the gesture exactly what the gesture will produce.
+- **An onboarding of pleasant abstract animations** was rebuilt, because motion that does not depict the real product teaches nothing.
+- **Panels styled as distinct floating objects** were pulled back to edge-anchored slide-outs, because a free-floating panel invites the question of whether it can be moved and resized.
+- **Anything dashboard-shaped** (statistic tiles, charts, a headline count of your images) is refused outright. A product about looking at images has no business displaying counts of them.
+
+## Project layout: one engine crate, one application, and the scripts around them
+
+```
+Mnemosyne/
+├── crates/engine/        Mnemosyne, the media-agnostic engine (Rust library `mnemosyne`)
+├── apps/lynceus/         Lynceus, the image browser
+│   ├── src/              the React frontend
+│   ├── src-tauri/        the Tauri application crate: encoders, thumbnailer, indexing, watcher
+│   └── design/           the brand mark, store listing and release runbook
+├── scripts/              model download and quantisation, demo and test corpus fetchers
+├── Store Screenshots/    the store marketing pages and the HTML each one is regenerated from
+├── models/               the encoder weights, fetched by the script and never committed
+└── justfile              the command runner
+```
+
+Every folder carries a `CLAUDE.md` with its purpose, invariants, decisions and traps in depth.
+
+## Development: building, testing and the conventions every change follows
 
 ```bash
-# Dev mode, explicit models path
-LYNCEUS_MODELS_DIR="$(pwd)/models/image" pnpm --filter ./apps/lynceus run tauri dev
-
-# Profiling mode (writes a markdown report on exit)
-LYNCEUS_MODELS_DIR="$(pwd)/models/image" pnpm --filter ./apps/lynceus run tauri dev -- -- --profiling
-
-# Release bundle (full, including DMG — see `just lynceus-release` for a faster .app-only build)
-pnpm --filter ./apps/lynceus run tauri build
-
-# Store-shaped build sealed with a free ad-hoc signature, sandbox enforced — the local App Store rehearsal
-just lynceus-sandbox-test
-
-# The real Mac App Store artefact: same .app, but the provisioning profile embedded, extended
-# attributes stripped, signed with the Apple Distribution identity and Entitlements.mas.plist,
-# then wrapped by productbuild into the Lynceus.pkg Transporter uploads (needs Apple identities)
-just lynceus-mas-package
+cargo test --workspace                    # engine and application Rust tests
+pnpm --filter ./apps/lynceus run test     # the frontend suite (Vitest)
 ```
 
-To run the test suites:
+Both suites should finish green with exit code 0. The integration tests that load real model weights are marked `#[ignore]` and run with `cargo test --workspace -- --ignored` once the weights are fetched.
 
-```bash
-pnpm --filter ./apps/lynceus run test   # Vitest (frontend)
-cargo test --workspace                  # cargo (engine + product)
-```
+- Every command, pipeline phase and long-running operation carries a tracing span named `subsystem.action` (`pipeline.`, `cosine.`, `watcher.` and so on); nothing reports by printing.
+- Tests live beside the code they cover.
+- Lynceus's version lives in three manifests that move together (`apps/lynceus/package.json`, `apps/lynceus/src-tauri/Cargo.toml`, `apps/lynceus/src-tauri/tauri.conf.json`); the engine versions independently and moves only when its own code changes.
+- Small changes land on `main`; larger ones go through a branch named `<kind>/<issue>-<slug>` and a pull request merged as a merge commit.
 
-No API keys required, and no internet connection required once the weights are fetched. Model weights are **not** committed — `scripts/download_models.py` downloads them into the gitignored `models/<modality>/` tree at the repo root so they are inspectable on disk and ready for the Tauri bundler to package into a shipped app. All three encoders carry commercial-friendly licences (OpenCLIP LAION MIT, DINOv2 and SigLIP-2 Apache-2.0).
+## Direction: more eyes on the same memory
 
-### App data location
+Mnemosyne exists because the hard parts of a local asset browser (the catalogue, the embedding stores, the fused retrieval) are the same for every kind of media. Lynceus is the first browser on it; sibling browsers for audio and for 3D models are meant to join as new applications on the same engine, and the engine's interface stays deliberately unfrozen until a second one proves where its seams belong. Open work is tracked privately.
 
-Derived state (SQLite DB, thumbnails, embedding stores, settings) lives under:
+## Related work and acknowledgements: the models and ideas Lynceus stands on
 
-| Platform | Path                                                   |
-| -------- | ------------------------------------------------------ |
-| macOS    | `~/Library/Application Support/com.capataina.lynceus/` |
-| Linux    | `~/.local/share/com.capataina.lynceus/`                |
-| Windows  | `%APPDATA%\com.capataina.lynceus\`                     |
+- [OpenCLIP](https://github.com/mlfoundations/open_clip) and its LAION-2B ViT-B/32 weights, for the text-aligned encoder.
+- [DINOv2](https://github.com/facebookresearch/dinov2) from Meta, for self-supervised visual similarity.
+- [SigLIP-2](https://huggingface.co/google/siglip2-base-patch16-256) from Google, for whole-image semantics.
+- Reciprocal Rank Fusion, after Cormack, Clarke and Büttcher (SIGIR 2009), for combining rankings that are not on a common scale.
+- [ONNX Runtime](https://onnxruntime.ai) and the [`ort`](https://github.com/pykeio/ort) bindings, [Tauri](https://tauri.app), [SQLite](https://sqlite.org) and [BLAKE3](https://github.com/BLAKE3-team/BLAKE3).
+- The demo library and store imagery come from museum open-access collections released with all rights waived.
 
-Override the state directory with `LYNCEUS_DATA_DIR`, and the model-weights directory with `LYNCEUS_MODELS_DIR` (used above to point the app at the repo-local `models/image`). There is no separate dev-vs-release state path.
+## License: none granted yet
 
----
-
-## Project documentation
-
-| Artefact | Purpose |
-| --- | --- |
-| [`README.md`](./README.md) | This file — monorepo intent, Lynceus features, usage, high-level architecture |
-| per-folder `CLAUDE.md` | Each folder's complete knowledge — purpose, architecture, invariants, decisions, traps, and current state, kept beside the code it describes |
-| git history | The full narrative record — every decision's story lives in its commit body |
-
----
-
-## Summary
-
-Mnemosyne is a monorepo built around one bet: the hard parts of a great local asset browser — the catalogue, the embedding stores, the fused retrieval — are the same for every kind of media, so they live in one media-agnostic engine and each product only adds the layer that sees its medium. Lynceus, the first product, brings intelligent image search to personal libraries without any cloud dependency: a Rust backend, Tauri 2 desktop shell, React 19 frontend, SQLite persistence layer, and ONNX Runtime inference pipeline, with three independently-trained vision encoders (OpenCLIP, DINOv2, SigLIP-2) fused via Reciprocal Rank Fusion to power both image-to-image and natural-language search, entirely offline on consumer hardware. Syrinx (audio) and Daedalus (3D) are the next eyes to open on the same memory.
+No licence file is published, so all rights are reserved by default. Open an issue if you want to use the code.
